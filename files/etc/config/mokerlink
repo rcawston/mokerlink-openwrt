@@ -1,0 +1,9 @@
+config switch 'switch'
+	# Energy-Efficient Ethernet (802.3az) on the copper ports. Off by
+	# default: EEE on multi-gig copper is a common cause of link drops and
+	# latency spikes, and saves only a few watts.
+	option eee '0'
+
+	# Seconds to wait for a DHCP lease on "lan" before the fallback
+	# address in network.mgmt (192.168.2.1/24) is brought up.
+	option fallback_delay '60'

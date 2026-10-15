@@ -1,0 +1,213 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * MokerLink POE-10G07110GSM
+ * 7x 10GBASE-T (PoE++) + 1x 10G SFP+, Realtek RTL9303
+ *
+ * STAGE 1 DEVICE TREE: a conservative starting point, not a verified port.
+ *
+ * Everything marked UNVERIFIED is copied from the closest supported board
+ * (Hasivo S1100WP-8XGT-SE: RTL9303 + 2x RTL8264, same flash layout) and
+ * must be confirmed on real hardware with the tools in this repository
+ * (see docs/05-porting.md) before the image is written to flash.
+ *
+ * Deliberately left out until confirmed, because a wrong guess there can
+ * hurt stability rather than just disable a feature:
+ *   - reset button: a floating or wrong GPIO makes /etc/rc.button/reset
+ *     reboot or factory-reset the switch at random
+ *   - GPIO LEDs: driving the wrong GPIO as an output can hold a PHY or the
+ *     PoE controller in reset
+ *   - port LED sets: without a "realtek,rtl9300-leds" node the switch keeps
+ *     the LED setup the boot loader programmed
+ *   - SFP cage I2C/GPIOs and the PoE controller (PSE) bus
+ *   - RAM above 128 MiB (declaring more RAM than fitted crashes the kernel;
+ *     declaring less only leaves it unused)
+ */
+
+/dts-v1/;
+
+#include "rtl930x.dtsi"
+
+#include <dt-bindings/phy/phy.h>
+
+/ {
+	compatible = "mokerlink,poe-10g07110gsm", "realtek,rtl9303-soc";
+	model = "MokerLink POE-10G07110GSM";
+
+	/*
+	 * UNVERIFIED: rtl930x.dtsi declares 128 MiB. U-Boot prints the fitted
+	 * size ("DRAM: ... MB"). For 512 MiB use the Hasivo S1100W layout:
+	 *	reg = <0x00000000 0x10000000>, <0x20000000 0x10000000>;
+	 */
+
+	chosen {
+		/* UNVERIFIED: 38400 baud is the RTL930x U-Boot default */
+		stdout-path = "serial0:38400n8";
+	};
+};
+
+&spi0 {
+	status = "okay";
+
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+
+		/*
+		 * UNVERIFIED: standard Realtek SDK layout for 16 MiB NOR, as used
+		 * by the Hasivo S1100W(P)-8XGT-SE and MokerLink 2G080GM. Confirm
+		 * with the stock firmware's /proc/mtd or the boot log.
+		 *
+		 * Everything except "firmware" is read-only so that OpenWrt never
+		 * touches the boot loader, its environment, the board info or the
+		 * stock configuration. That keeps a return to stock possible.
+		 */
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			/* stock: LOADER */
+			partition@0 {
+				label = "u-boot";
+				reg = <0x0000000 0x00e0000>;
+				read-only;
+			};
+
+			/* stock: BDINFO */
+			partition@e0000 {
+				label = "u-boot-env";
+				reg = <0x00e0000 0x0010000>;
+				read-only;
+			};
+
+			/* stock: SYSINFO */
+			partition@f0000 {
+				label = "u-boot-env2";
+				reg = <0x00f0000 0x0010000>;
+				read-only;
+			};
+
+			/* stock: JFFS2_CFG */
+			partition@100000 {
+				label = "jffs";
+				reg = <0x0100000 0x0100000>;
+				read-only;
+			};
+
+			/* stock: JFFS2_LOG */
+			partition@200000 {
+				label = "jffs2";
+				reg = <0x0200000 0x0100000>;
+				read-only;
+			};
+
+			/* stock: RUNTIME */
+			partition@300000 {
+				compatible = "openwrt,uimage", "denx,uimage";
+				/* must match UIMAGE_MAGIC in image/rtl930x.mk */
+				openwrt,ih-magic = <0x83800000>;
+				label = "firmware";
+				reg = <0x0300000 0x0c00000>;
+			};
+
+			/* stock: OEMINFO */
+			partition@f00000 {
+				label = "oeminfo";
+				reg = <0x0f00000 0x0100000>;
+				read-only;
+			};
+		};
+	};
+};
+
+/*
+ * UNVERIFIED PHY wiring: one RTL8264 (quad 10GBASE-T) for lan1-4 on SMI
+ * bus 0 and three PHYs of a second RTL8264 for lan5-7 on SMI bus 3, as on
+ * the Hasivo S1100W-8XGT-SE with its eighth copper port swapped for SFP+.
+ * mokerlink-probe prints the PHY ID found at every address declared here.
+ */
+&mdio_bus0 {
+	ethernet-phy-package@0 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <0>;
+
+		PHY_C45(0, 0)
+		PHY_C45(8, 1)
+		PHY_C45(16, 2)
+		PHY_C45(20, 3)
+	};
+};
+
+&mdio_bus3 {
+	ethernet-phy-package@16 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <16>;
+
+		PHY_C45(24, 16)
+		PHY_C45(25, 17)
+		PHY_C45(26, 18)
+	};
+};
+
+/*
+ * UNVERIFIED host-side SerDes lane polarity, copied from the Hasivo board.
+ * The RTL826x driver programs these on every PHY init and defaults to
+ * "normal", so a wrong value silently kills traffic on that port: the link
+ * LED comes up but no frames pass. mokerlink-polarity-scan finds the right
+ * values on real hardware.
+ */
+&phy0 { tx-polarity = <PHY_POL_INVERT>; };
+&phy8 { rx-polarity = <PHY_POL_INVERT>; };
+&phy16 { tx-polarity = <PHY_POL_INVERT>; };
+&phy20 { rx-polarity = <PHY_POL_INVERT>; };
+&phy24 { tx-polarity = <PHY_POL_INVERT>; };
+&phy25 { rx-polarity = <PHY_POL_INVERT>; };
+&phy26 { tx-polarity = <PHY_POL_INVERT>; };
+
+&switch0 {
+	ethernet-ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* RJ45 10GBASE-T ports, lan1-7 */
+		SWITCH_PORT_SDS(0, 1, 2, 0, usxgmii)
+		SWITCH_PORT_SDS(8, 2, 3, 0, usxgmii)
+		SWITCH_PORT_SDS(16, 3, 4, 0, usxgmii)
+		SWITCH_PORT_SDS(20, 4, 5, 0, usxgmii)
+		SWITCH_PORT_SDS(24, 5, 6, 0, usxgmii)
+		SWITCH_PORT_SDS(25, 6, 7, 0, usxgmii)
+		SWITCH_PORT_SDS(26, 7, 8, 0, usxgmii)
+
+		/*
+		 * SFP+ cage, lan8. UNVERIFIED: MAC port 27 on SerDes 9.
+		 *
+		 * Stage 1 runs the cage as a bare 10GBASE-R link with in-band
+		 * status instead of a "sff,sfp" node, so no unconfirmed I2C bus
+		 * or GPIO is touched. 10G optics, DAC cables and 10GBASE-T SFP+
+		 * modules link up this way; 1G modules and module EEPROM/DOM
+		 * readout need the full SFP description (docs/05-porting.md).
+		 */
+		port27: port@27 {
+			reg = <27>;
+			label = "lan8";
+			pcs-handle = <&serdes9 0>;
+			phy-mode = "10gbase-r";
+			managed = "in-band-status";
+		};
+
+		/* CPU port */
+		port@28 {
+			ethernet = <&ethernet0>;
+			reg = <28>;
+			phy-mode = "internal";
+
+			fixed-link {
+				speed = <1000>;
+				full-duplex;
+			};
+		};
+	};
+};

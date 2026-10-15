@@ -1,0 +1,28 @@
+CONFIG_TARGET_realtek=y
+CONFIG_TARGET_realtek_rtl930x=y
+CONFIG_TARGET_realtek_rtl930x_DEVICE_mokerlink_poe-10g07110gsm=y
+
+# Also build a RAM-only image. It is booted from U-Boot over TFTP and never
+# touches flash, which is how every new build should be tested first.
+CONFIG_TARGET_ROOTFS_INITRAMFS=y
+
+# A switch must never hand out addresses or route: no DHCP/DNS server, no
+# firewall (forwarding between ports happens in the switch chip; the CPU
+# only sees management traffic).
+# CONFIG_PACKAGE_dnsmasq is not set
+# CONFIG_PACKAGE_odhcpd-ipv6only is not set
+# CONFIG_PACKAGE_firewall4 is not set
+# CONFIG_PACKAGE_ppp is not set
+
+# Web interface for layer-2 devices (no firewall or PPP pages)
+CONFIG_PACKAGE_luci-layer2=y
+
+# Hardware bring-up and diagnostics, used by the mokerlink-* tools
+CONFIG_PACKAGE_mdio-tools=y
+CONFIG_PACKAGE_i2c-tools=y
+CONFIG_PACKAGE_ethtool-full=y
+# /dev/mem + devmem: mokerlink-gpio-watch reads the GPIO data register
+# without changing any pin's direction
+CONFIG_KERNEL_DEVMEM=y
+CONFIG_BUSYBOX_CUSTOM=y
+CONFIG_BUSYBOX_CONFIG_DEVMEM=y

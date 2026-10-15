@@ -1,0 +1,52 @@
+#!/bin/sh
+# mokerlink-gpio-watch
+#
+# Print every change of the SoC GPIO inputs until Ctrl-C. Use it to find the
+# reset button: start it, press and release the button a few times, and note
+# which GPIO toggles and whether it reads 0 or 1 while pressed.
+#
+# Read-only: the GPIO data and direction registers are only read, so no pin
+# changes direction or level (unlike gpioget, which turns the line into an
+# input).
+
+DIR_REG=0x18003308   # RTL930x GPIO direction register (1 = output)
+DATA_REG=0x1800330c  # RTL930x GPIO data register, bit n = GPIO n
+
+if ! command -v devmem >/dev/null || [ ! -e /dev/mem ]; then
+	echo "ERROR: needs devmem and /dev/mem (see config/mokerlink.diffconfig)" >&2
+	exit 1
+fi
+
+bits() {
+	local v=$(($1)) i=0 out=""
+	while [ $i -lt 32 ]; do
+		[ $(((v >> i) & 1)) -eq 1 ] && out="$out $i"
+		i=$((i + 1))
+	done
+	echo "${out:- none}"
+}
+
+dir=$(devmem $DIR_REG 32)
+prev=$(devmem $DATA_REG 32)
+echo "outputs (driven by the SoC, not inputs):$(bits "$dir")"
+echo "initial levels, high:$(bits "$prev")"
+echo "watching for changes, Ctrl-C to stop"
+
+while :; do
+	cur=$(devmem $DATA_REG 32)
+	if [ "$cur" != "$prev" ]; then
+		changed=$((cur ^ prev))
+		i=0
+		while [ $i -lt 32 ]; do
+			if [ $(((changed >> i) & 1)) -eq 1 ]; then
+				lvl=$(((cur >> i) & 1))
+				kind=input
+				[ $(((dir >> i) & 1)) -eq 1 ] && kind=output
+				echo "$(date +%T) GPIO $i ($kind) -> $lvl"
+			fi
+			i=$((i + 1))
+		done
+		prev=$cur
+	fi
+	usleep 100000 2>/dev/null || sleep 1
+done

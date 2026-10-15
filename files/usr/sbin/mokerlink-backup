@@ -1,0 +1,68 @@
+#!/bin/sh
+# mokerlink-backup [DIR]
+#
+# Copy the complete SPI flash (boot loader, its environment, board info,
+# stock configuration and stock firmware) into RAM, verify it, and make it
+# available for download. Run this from the OpenWrt RAM image BEFORE writing
+# anything to flash, and keep the files somewhere safe: full-flash.bin is the
+# only way back to the stock firmware.
+#
+# Read-only: flash is only read.
+
+set -eu
+
+DIR=${1:-/tmp/mokerlink-backup}
+# Top-level partitions in flash order, as declared in the device tree
+PARTS="u-boot u-boot-env u-boot-env2 jffs jffs2 firmware oeminfo"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+mkdir -p "$DIR"
+rm -f "$DIR"/*.bin "$DIR"/sha256sums
+
+expected=0
+for name in $PARTS; do
+	mtd=$(grep "\"$name\"" /proc/mtd | cut -d: -f1)
+	[ -n "$mtd" ] || die "partition '$name' not found in /proc/mtd"
+
+	size=$(cat "/sys/class/mtd/$mtd/size")
+	offset=$(cat "/sys/class/mtd/$mtd/offset" 2>/dev/null || echo "$expected")
+	[ "$offset" -eq "$expected" ] ||
+		die "$name starts at $offset, expected $expected: partitions are not contiguous"
+
+	printf 'reading %-12s %-6s offset 0x%07x size 0x%07x\n' "$name" "$mtd" "$offset" "$size"
+	# Read twice and compare, to catch an unreliable SPI read.
+	dd if="/dev/$mtd" of="$DIR/$name.bin" bs=64k 2>/dev/null
+	a=$(sha256sum "$DIR/$name.bin" | cut -d' ' -f1)
+	b=$(dd if="/dev/$mtd" bs=64k 2>/dev/null | sha256sum | cut -d' ' -f1)
+	[ "$a" = "$b" ] || die "$name read back differently twice, flash reads are unreliable"
+	[ "$(wc -c < "$DIR/$name.bin")" -eq "$size" ] || die "$name: short read"
+
+	expected=$((offset + size))
+done
+
+# The chip size as detected by the SPI NOR driver, e.g. "(16384 Kbytes)"
+chip_kb=$(dmesg | sed -n 's/.*spi-nor.*(\([0-9]*\) Kbytes).*/\1/p' | head -n 1)
+if [ -n "$chip_kb" ] && [ "$((chip_kb * 1024))" -ne "$expected" ]; then
+	echo
+	echo "WARNING: the flash chip is ${chip_kb} KiB but the partitions cover $((expected / 1024)) KiB."
+	echo "         full-flash.bin would be incomplete, so it is not created."
+	echo "         Report this: the device tree flash layout must be fixed first."
+else
+	for name in $PARTS; do
+		cat "$DIR/$name.bin"
+	done > "$DIR/full-flash.bin"
+fi
+
+(cd "$DIR" && sha256sum -- *.bin > sha256sums)
+
+echo
+cat "$DIR/sha256sums"
+echo
+echo "Backup in $DIR ($(du -sh "$DIR" | cut -f1)). It is in RAM and lost on reboot. Copy it now:"
+echo "  scp -O 'root@<switch-ip>:$DIR/*' ."
+if [ -d /www ]; then
+	ln -sfn "$DIR" /www/mokerlink-backup
+	echo "or download it with a browser from http://<switch-ip>/mokerlink-backup/"
+fi
+echo "Then verify on your PC with: sha256sum -c sha256sums"

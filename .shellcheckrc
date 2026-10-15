@@ -1,0 +1,4 @@
+# The on-device scripts run under BusyBox ash (OpenWrt's /bin/sh), which
+# supports `local`. ShellCheck 0.9 has no BusyBox dialect.
+disable=SC3043
+source-path=SCRIPTDIR

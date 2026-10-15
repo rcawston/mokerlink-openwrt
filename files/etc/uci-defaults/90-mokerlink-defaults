@@ -1,0 +1,61 @@
+#!/bin/sh
+# First-boot defaults for running the POE-10G07110GSM as a layer-2 switch.
+# OpenWrt runs this once, after /bin/config_generate created the network
+# config, and deletes it when it succeeds.
+
+# shellcheck source=/dev/null
+. /usr/share/libubox/jshn.sh
+
+[ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = "mokerlink,poe-10g07110gsm" ] || exit 0
+
+uci set system.@system[0].hostname='mokerlink-switch'
+
+# Management address from DHCP, like any other host on the network. The
+# switch never runs a DHCP server. If no lease arrives, /etc/init.d/mokerlink
+# brings up the fallback address in "mgmt" so that a directly connected PC
+# can still reach it. The management interface stays at MTU 1500 even though
+# the ports allow jumbo frames.
+lan_device=$(uci -q get network.lan.device)
+uci set network.lan.proto='dhcp'
+uci -q delete network.lan.ipaddr
+uci -q delete network.lan.netmask
+uci -q delete network.lan.ip6assign
+uci set network.lan.mtu='1500'
+
+uci -q delete network.mgmt
+uci set network.mgmt='interface'
+uci set network.mgmt.device="$lan_device"
+uci set network.mgmt.proto='static'
+uci add_list network.mgmt.ipaddr='192.168.2.1/24'
+uci set network.mgmt.auto='0'
+
+# Allow jumbo frames on every switch port. Hosts with MTU 9000 are common on
+# 10G networks, and a 1500-byte port limit drops their frames silently. This
+# only raises the largest frame the switch forwards; hosts using 1500 are not
+# affected.
+port_device_section() {
+	local port="$1" sec
+
+	sec=$(uci -X show network | sed -n "s/^network\.\([^.]*\)\.name='$port'$/\1/p" | head -n 1)
+	if [ -z "$sec" ]; then
+		sec=$(uci add network device)
+		uci set "network.$sec.name=$port"
+	fi
+	echo "$sec"
+}
+
+ports=""
+json_init
+json_load_file /etc/board.json
+json_select network
+json_select lan
+json_get_values ports ports
+json_select ..
+json_select ..
+
+for port in $ports; do
+	uci set "network.$(port_device_section "$port").mtu=9216"
+done
+
+uci commit
+exit 0

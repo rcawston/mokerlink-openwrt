@@ -1,0 +1,185 @@
+#!/bin/sh
+# mokerlink-probe [OUTPUT_FILE]
+#
+# Collect the hardware facts needed to finish the POE-10G07110GSM board
+# support: PHY IDs and their SerDes polarity, link states, flash layout,
+# boot loader environment, temperatures, GPIO register state and the kernel
+# log. Prints a port summary and writes everything to one text file.
+#
+# Read-only: it changes nothing on the switch or in flash.
+
+OUT=${1:-/tmp/mokerlink-probe-$(date +%Y%m%d-%H%M%S).txt}
+
+GPIO_DIR_REG=0x18003308   # RTL930x GPIO direction register (1 = output)
+GPIO_DATA_REG=0x1800330c  # RTL930x GPIO data register, bit n = GPIO n
+
+section() { printf '\n========== %s ==========\n' "$*"; }
+run() { printf '\n$ %s\n' "$*"; "$@" 2>&1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+mtd_dev() { # partition label -> mtdN
+	grep "\"$1\"" /proc/mtd | cut -d: -f1
+}
+
+# PHY behind a switch port: sets PHY_BUS, PHY_ADDR (decimal), PHY_DRIVER
+phy_of_port() {
+	local link name drv
+	PHY_BUS="" PHY_ADDR="" PHY_DRIVER=""
+	link=$(readlink "/sys/class/net/$1/phydev" 2>/dev/null) || return 1
+	name=${link##*/}                    # e.g. realtek-mdio-3:10
+	PHY_BUS=${name%:*}
+	PHY_ADDR=$((0x${name##*:}))
+	drv=$(readlink "/sys/class/net/$1/phydev/driver" 2>/dev/null)
+	PHY_DRIVER=${drv##*/}
+}
+
+# RTL826x host-side SerDes polarity: VEND1 (MMD 30) register 0xc1,
+# bit 6 = HSI_INV (rx-polarity), bit 7 = HSO_INV (tx-polarity)
+polarity_of_port() {
+	local val
+	phy_of_port "$1" || { echo "-"; return; }
+	case "$PHY_DRIVER" in
+	RTL82[56]*) ;;
+	*) echo "n/a"; return ;;
+	esac
+	have mdio || { echo "no mdio tool"; return; }
+	val=$(mdio "$PHY_BUS" mmd "$PHY_ADDR:30" raw 0xc1 2>/dev/null) || { echo "read error"; return; }
+	printf 'tx=%s rx=%s (%s)' \
+		"$( [ $((val & 0x80)) -ne 0 ] && echo invert || echo normal)" \
+		"$( [ $((val & 0x40)) -ne 0 ] && echo invert || echo normal)" "$val"
+}
+
+ports() {
+	local p
+	for p in /sys/class/net/lan*; do
+		[ -e "$p" ] && echo "${p##*/}"
+	done | sort -t n -k 2 -n
+}
+
+summary() {
+	local p speed carrier
+	printf '%-5s %-5s %-20s %-30s %-8s %-9s %s\n' \
+		PORT MAC PHY DRIVER LINK SPEED "SERDES POLARITY"
+	for p in $(ports); do
+		phy_of_port "$p"
+		carrier=$(cat "/sys/class/net/$p/carrier" 2>/dev/null)
+		speed=$(cat "/sys/class/net/$p/speed" 2>/dev/null)
+		[ "$carrier" = 1 ] && carrier=up || carrier=down
+		[ "$carrier" = up ] || speed=-
+		printf '%-5s %-5s %-20s %-30s %-8s %-9s %s\n' "$p" \
+			"$(cat "/sys/class/net/$p/phys_port_name" 2>/dev/null)" \
+			"${PHY_BUS:+$PHY_BUS:$PHY_ADDR}" "${PHY_DRIVER:-(none: SerDes port)}" \
+			"$carrier" "$speed" "$(polarity_of_port "$p")"
+	done
+}
+
+dump_env() { # partition label
+	local mtd
+	mtd=$(mtd_dev "$1")
+	[ -n "$mtd" ] || { echo "(no $1 partition)"; return; }
+	echo "--- $1 ($mtd), printable key=value strings:"
+	dd if="/dev/$mtd" bs=64k count=1 2>/dev/null | tr '\000' '\n' |
+		tr -cd '[:print:]\n' | grep '=' | head -n 200
+}
+
+gpio_bits() { # value -> list of set bit numbers
+	local v=$(($1)) i=0 out=""
+	while [ $i -lt 32 ]; do
+		[ $(((v >> i) & 1)) -eq 1 ] && out="$out $i"
+		i=$((i + 1))
+	done
+	echo "${out:- none}"
+}
+
+{
+	section "summary"
+	summary
+
+	section "system"
+	run cat /tmp/sysinfo/model
+	run cat /tmp/sysinfo/board_name
+	run uname -a
+	run cat /proc/cmdline
+	run cat /proc/cpuinfo
+	run head -n 5 /proc/meminfo
+	run uptime
+
+	section "flash"
+	run cat /proc/mtd
+	for m in /sys/class/mtd/mtd*; do
+		[ -f "$m/name" ] || continue
+		printf '%-6s %-12s size=0x%x offset=%s\n' "${m##*/}" "$(cat "$m/name")" \
+			"$(cat "$m/size")" "$(cat "$m/offset" 2>/dev/null || echo ?)"
+	done
+	printf '\n$ dmesg | grep -i spi\n'
+	dmesg | grep -i -e spi -e nor -e mtd
+
+	section "boot loader environment"
+	dump_env u-boot-env
+	dump_env u-boot-env2
+
+	section "PHYs"
+	for p in $(ports); do
+		phy_of_port "$p" || { echo "$p: no PHY (SerDes port)"; continue; }
+		d=/sys/class/net/$p/phydev
+		echo "$p: bus=$PHY_BUS addr=$PHY_ADDR driver=$PHY_DRIVER phy_id=$(cat "$d/phy_id" 2>/dev/null)" \
+			"mmd1_id=$(cat "$d/c45_phy_ids/mmd1_device_id" 2>/dev/null || echo ?)" \
+			"interface=$(cat "$d/phy_interface" 2>/dev/null || echo ?)"
+		echo "    polarity: $(polarity_of_port "$p")"
+	done
+
+	section "ports"
+	for p in $(ports); do
+		run ethtool "$p"
+		run ethtool --show-eee "$p"
+		printf '\n$ ethtool -S %s  (non-zero counters)\n' "$p"
+		ethtool -S "$p" 2>&1 | grep -v ': 0$'
+	done
+	have ethtool && run ethtool --show-module lan8
+
+	section "bridge"
+	run ip -d link show
+	have bridge && run bridge link show
+	have bridge && run bridge vlan show
+	have bridge && run bridge fdb show
+	run cat /etc/config/network
+
+	section "temperatures"
+	for h in /sys/class/hwmon/hwmon*; do
+		[ -d "$h" ] || continue
+		for t in "$h"/temp*_input; do
+			[ -f "$t" ] || continue
+			v=$(cat "$t" 2>/dev/null) || continue
+			echo "$(cat "$h/name" 2>/dev/null) ${h##*/} ${t##*/}: $((v / 1000)).$(((v % 1000) / 100)) C"
+		done
+	done
+	for z in /sys/class/thermal/thermal_zone*; do
+		[ -d "$z" ] || continue
+		v=$(cat "$z/temp" 2>/dev/null) || continue
+		echo "thermal ${z##*/} ($(cat "$z/type")): $((v / 1000)).$(((v % 1000) / 100)) C"
+	done
+
+	section "GPIO"
+	if have devmem && [ -e /dev/mem ]; then
+		dir=$(devmem $GPIO_DIR_REG 32)
+		data=$(devmem $GPIO_DATA_REG 32)
+		echo "direction $dir  outputs:$(gpio_bits "$dir")"
+		echo "data      $data  high:$(gpio_bits "$data")"
+	else
+		echo "devmem or /dev/mem not available"
+	fi
+	[ -r /sys/kernel/debug/gpio ] && run cat /sys/kernel/debug/gpio
+	[ -r /sys/kernel/debug/pinctrl/pinctrl-handles ] && run cat /sys/kernel/debug/pinctrl/pinctrl-handles
+
+	section "I2C"
+	have i2cdetect && run i2cdetect -l
+	run ls -l /sys/bus/i2c/devices/
+
+	section "kernel log"
+	run dmesg
+} > "$OUT" 2>&1
+
+summary
+echo
+echo "Full report: $OUT"
+echo "Copy it off the switch with: scp -O root@<switch-ip>:$OUT ."

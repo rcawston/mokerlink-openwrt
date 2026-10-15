@@ -1,0 +1,127 @@
+#!/bin/sh
+# mokerlink-polarity-scan PORT TARGET_IP
+#
+# Find the host-side SerDes lane polarity of the 10GBASE-T PHY behind PORT.
+#
+# If the polarity in the device tree is wrong, the port shows link but no
+# frames pass. This tool tries all four tx/rx combinations at runtime and
+# reports which one passes traffic, plus the device tree lines for it.
+#
+# Setup: one cable from PORT to a host that answers ping at TARGET_IP, in the
+# same subnet as the switch (e.g. host 192.168.2.100/24, switch fallback
+# 192.168.2.1/24). Run it from the serial console, since the port under test
+# loses connectivity for a few seconds per attempt.
+#
+# Changes are runtime only: the device tree value is applied again on the
+# next boot.
+
+set -u
+
+VEND1_SERDES_CFG=0xc1
+HSI_INV=0x40  # rx-polarity
+HSO_INV=0x80  # tx-polarity
+KEEP_MASK=0xff3f
+
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+[ $# -eq 2 ] || usage
+port=$1
+target=$2
+
+command -v mdio >/dev/null || die "the mdio tool (package mdio-tools) is missing"
+[ -e "/sys/class/net/$port" ] || die "no such port: $port"
+
+link=$(readlink "/sys/class/net/$port/phydev") || die "$port has no PHY (the SFP+ port has none)"
+name=${link##*/}
+bus=${name%:*}
+addr=$((0x${name##*:}))
+drv=$(readlink "/sys/class/net/$port/phydev/driver")
+drv=${drv##*/}
+case "$drv" in
+RTL82[56]*) ;;
+*) die "$port PHY uses driver '$drv'; only RTL826x PHYs keep their polarity in VEND1 0xc1" ;;
+esac
+
+# DSA reports the switch port as "p<N>"; the device tree label is phy<N>
+dt_label=phy$(sed 's/^p//' "/sys/class/net/$port/phys_port_name" 2>/dev/null)
+
+[ "$(cat "/sys/class/net/$port/carrier" 2>/dev/null)" = 1 ] ||
+	die "$port has no link. Connect the test host to $port first."
+
+reg_read() { mdio "$bus" mmd "$addr:30" raw $VEND1_SERDES_CFG; }
+reg_set() { mdio "$bus" mmd "$addr:30" raw $VEND1_SERDES_CFG "$1/$KEEP_MASK" >/dev/null; }
+pol() { [ $(($1)) -ne 0 ] && echo invert || echo normal; }
+
+# Bounce the port so the MAC side re-syncs to the changed lanes, then wait
+# for the copper link (10GBASE-T autonegotiation takes a few seconds).
+# Taking the port down does not re-run the PHY init, so the register value
+# written above survives.
+bounce_and_wait() {
+	local i=0
+	ip link set dev "$port" down
+	sleep 1
+	ip link set dev "$port" up
+	while [ $i -lt 20 ]; do
+		[ "$(cat "/sys/class/net/$port/carrier" 2>/dev/null)" = 1 ] && { sleep 2; return 0; }
+		sleep 1
+		i=$((i + 1))
+	done
+	return 1
+}
+
+orig=$(reg_read) || die "cannot read $bus addr $addr MMD 30 reg $VEND1_SERDES_CFG"
+echo "$port: $drv on $bus address $addr ($dt_label)"
+echo "current: tx=$(pol $((orig & HSO_INV))) rx=$(pol $((orig & HSI_INV))) (reg $orig)"
+echo
+
+working=""
+for bits in 0x00 $HSO_INV $HSI_INV $((HSO_INV | HSI_INV)); do
+	tx=$(pol $((bits & HSO_INV)))
+	rx=$(pol $((bits & HSI_INV)))
+	printf 'tx=%-6s rx=%-6s ... ' "$tx" "$rx"
+	reg_set "$bits" || { echo "write failed"; continue; }
+	bounce_and_wait || { echo "no link"; continue; }
+	ip neigh flush to "$target" >/dev/null 2>&1
+	if ping -c 3 -W 2 "$target" >/dev/null 2>&1; then
+		echo "traffic passes"
+		working="$working $bits"
+	else
+		echo "no traffic"
+	fi
+done
+echo
+
+count=$(echo "$working" | wc -w)
+if [ "$count" -eq 0 ]; then
+	reg_set $((orig & (HSO_INV | HSI_INV)))
+	bounce_and_wait || true
+	echo "No combination passed traffic; restored the original value."
+	echo "Check that $target answers ping from a PC on its own, that it is in the"
+	echo "switch's subnet, and that only $port leads to it. If it still fails, the"
+	echo "PHY address or SerDes mapping of $port is wrong (docs/05-porting.md)."
+	exit 1
+fi
+if [ "$count" -gt 1 ]; then
+	reg_set $((orig & (HSO_INV | HSI_INV)))
+	bounce_and_wait || true
+	echo "Several combinations passed ($working), so the test is not conclusive;"
+	echo "restored the original value. Make sure $target is reachable only through $port."
+	exit 1
+fi
+
+bits=$(echo "$working" | tr -d ' ')
+reg_set "$bits"
+bounce_and_wait || true
+echo "Result for $port: tx-polarity $(pol $((bits & HSO_INV))), rx-polarity $(pol $((bits & HSI_INV)))"
+echo "Left active until reboot. Device tree line for"
+echo "openwrt/target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts:"
+echo
+props=""
+[ $((bits & HSO_INV)) -ne 0 ] && props="tx-polarity = <PHY_POL_INVERT>;"
+[ $((bits & HSI_INV)) -ne 0 ] && props="${props:+$props }rx-polarity = <PHY_POL_INVERT>;"
+if [ -n "$props" ]; then
+	echo "&$dt_label { $props };"
+else
+	echo "(no line: normal polarity is the default; remove any &$dt_label polarity line)"
+fi

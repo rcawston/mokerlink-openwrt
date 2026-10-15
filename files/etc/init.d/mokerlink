@@ -1,0 +1,54 @@
+#!/bin/sh /etc/rc.common
+# Port tuning and fallback management address. Settings: /etc/config/mokerlink
+
+# shellcheck disable=SC2034  # read by /etc/rc.common
+START=99
+
+apply_eee() {
+	local state="$1" dev
+
+	for dev in /sys/class/net/lan*; do
+		[ -e "$dev/phydev" ] || continue
+		ethtool --set-eee "${dev##*/}" eee "$state" 2>/dev/null ||
+			logger -t mokerlink "${dev##*/}: cannot set EEE $state"
+	done
+}
+
+fallback_check() {
+	local delay="$1" addr
+
+	sleep "$delay"
+	addr=$(ifstatus lan 2>/dev/null | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null)
+	[ -n "$addr" ] && return 0
+
+	logger -t mokerlink "no DHCP lease on lan after ${delay}s, bringing up fallback address"
+	ifup mgmt
+}
+
+start() {
+	local eee delay
+
+	config_load mokerlink
+	config_get_bool eee switch eee 0
+	config_get delay switch fallback_delay 60
+
+	if [ "$eee" = 1 ]; then
+		apply_eee on
+	else
+		apply_eee off
+	fi
+
+	fallback_check "$delay" >/dev/null 2>&1 &
+}
+
+reload() {
+	local eee
+
+	config_load mokerlink
+	config_get_bool eee switch eee 0
+	if [ "$eee" = 1 ]; then
+		apply_eee on
+	else
+		apply_eee off
+	fi
+}
