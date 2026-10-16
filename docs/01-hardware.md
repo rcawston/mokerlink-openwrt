@@ -25,7 +25,7 @@ Confirmed from the chip markings and the stock boot log:
 | PoE | two **RTL8239-VB** PSE chips behind a PSE MCU | chip marking, stock log `find RTL8239-VB` (twice) |
 | PoE MCU link | most likely **UART** | stock SDK: `UART probe: (found)`, no I²C device |
 | GPIO expander | Realtek **RTL8231** (LEDs/GPIOs) | stock SDK: `RTL8231 probe: (found)` |
-| Console | header **J4** (GND, TXD, RXD, 3V3, 3.3 V logic) | board |
+| Console | header **J4** (GND, TXD, RXD, 3V3, 3.3 V logic), **115200 8N1** | board, boot log |
 | Boot loader | Realtek U-Boot 2011.12 (1.0.0.2, Dec 2024), **Esc** stops autoboot | boot log |
 | Stock firmware | "KT-NOS" 1.1.1.34 | boot log |
 
@@ -36,7 +36,6 @@ Still assumed:
 | PHY addresses | RTL8264B on SMI bus 0 at 0-3; RTL8261BEs on bus 1 at 4-6 | common to similar boards; MokerLink 10GT080M numbering |
 | Lane polarity | normal on both ends of every link | hardware default |
 | SFP+ | MAC port 27 on SerDes 9 | eighth RTL9303 10G lane |
-| Console speed | 38400 8N1 | RTL930x U-Boot default |
 | uImage magic | `0x83800000` | MokerLink 2G080GM and 10GT080M |
 | PoE MCU | `uart1`, 115200 baud, gen2 protocol | Zyxel XMG1915-10EP (RTL930x, RTL8239 MCU on `uart1`) |
 

@@ -23,8 +23,7 @@ Declaring more RAM than fitted crashes the kernel, so leave it.
 
 ## Console speed
 
-If U-Boot runs at 115200 rather than 38400, change `stdout-path` in
-`chosen` to `"serial0:115200n8"`.
+Confirmed: 115200 8N1, the `rtl930x.dtsi` default.
 
 ## Flash layout
 

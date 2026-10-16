@@ -13,7 +13,7 @@ switch and tools to bring up the hardware safely.
 > 16 MiB flash with the expected layout, one RTL8264B plus three RTL8261BE
 > 10G PHYs, two RTL8239 PoE chips. Still to confirm on your unit before
 > anything is written to flash: PHY addresses, lane polarity, SFP+ lane,
-> console speed, uImage magic and the PoE MCU link. Most of them can be
+> uImage magic and the PoE MCU link. Most of them can be
 > read from U-Boot with `scripts/uboot-wiring.py`. Every test runs from RAM,
 > and the stock firmware stays untouched until the very end.
 
@@ -92,7 +92,7 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 | `patches/` | OpenWrt changes: image recipe and MAC address source |
 | `files/` | Files added to the firmware: switch defaults and bring-up tools |
 | `config/` | Pinned OpenWrt and feed revisions, package selection |
-| `scripts/` | `build.sh`, `check-dts.sh`, `uimage-remagic.py`, `uboot-wiring.py` (reads the port wiring from U-Boot) |
+| `scripts/` | `build.sh`, `check-dts.sh`, `uimage-remagic.py`, `uboot-wiring.py` (reads the port wiring from U-Boot), `uboot-md2bin.py` (turns a U-Boot flash dump into a binary) |
 | `tests/` | Simulation test for `uboot-wiring.py` |
 | `docs/` | Hardware notes, console, install, recovery, porting, everyday use |
 

@@ -8,6 +8,7 @@
  * Confirmed from the board and the stock boot log:
  *   - SoC RTL9303, 128 MiB RAM, 16 MiB Winbond W25Q128 SPI NOR
  *   - stock flash layout as declared below
+ *   - console on header J4 at 115200 8N1
  *   - vendor hardware profile RTL9303_8264B_3X8261BE_XGE_POE: one RTL8264B
  *     quad PHY plus three discrete RTL8261BE PHYs
  *   - PoE: two RTL8239-VB behind a PSE MCU; the stock SDK registers a UART
@@ -42,12 +43,10 @@
 	compatible = "mokerlink,poe-10g07110gsm", "realtek,rtl9303-soc";
 	model = "MokerLink POE-10G07110GSM";
 
-	/* 128 MiB RAM ("DRAM: 128 MB"): the rtl930x.dtsi default */
-
-	chosen {
-		/* UNVERIFIED: 38400 baud is the RTL930x U-Boot default */
-		stdout-path = "serial0:38400n8";
-	};
+	/*
+	 * 128 MiB RAM ("DRAM: 128 MB") and the 115200 baud console of the
+	 * vendor U-Boot are both the rtl930x.dtsi defaults.
+	 */
 };
 
 &spi0 {

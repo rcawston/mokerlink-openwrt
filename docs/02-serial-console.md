@@ -24,14 +24,13 @@ pads, solder in a 4-pin 2.54 mm header. Never use an RS-232 adapter: its
 ±12 V levels destroy the SoC's pins. When powering the switch with the case
 open, route the cable away from the power supply board.
 
-Terminal settings: **38400 baud, 8N1, no flow control**. If you see
-garbage, try 115200. For example:
+Terminal settings: **115200 baud, 8N1, no flow control**. For example:
 
 ```sh
-picocom -b 38400 /dev/ttyUSB0      # Linux/macOS (Ctrl-A Ctrl-X quits)
+picocom -b 115200 /dev/ttyUSB0     # Linux/macOS (Ctrl-A Ctrl-X quits)
 ```
 
-On Windows, use PuTTY with *Serial*, the COM port, and 38400.
+On Windows, use PuTTY with *Serial*, the COM port, and 115200.
 
 ## Capture the stock boot log
 
@@ -158,6 +157,28 @@ mw.l bb0003b0 00000025; md.l bb0003b0 2
    polarity) and the device tree lines to use.
 
 The command list comes from `python3 scripts/uboot-wiring.py commands`.
+
+## Back up the flash from U-Boot
+
+The whole flash can be read without booting anything: it is mapped at
+`0xb4000000`. With the terminal logging to a file:
+
+```
+md.l b4000000 400000
+crc32 b4000000 1000000
+```
+
+`md.l` prints the 16 MiB as text, which takes well over an hour at 115200
+baud. Then convert the log on the PC and check it against U-Boot's CRC:
+
+```sh
+python3 scripts/uboot-md2bin.py dump.log full-flash.bin --base 0xb4000000 --size 0x1000000
+```
+
+It reports missing or inconsistent lines (dump that range again and add it
+to the log) and prints `MATCH` when the result equals U-Boot's CRC32. This
+backup is as good as the one `mokerlink-backup` makes from a RAM-booted
+OpenWrt, which is much faster.
 
 ## Network in U-Boot
 

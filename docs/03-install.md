@@ -45,7 +45,7 @@ Enter. You now have a root shell.
 |---|---|
 | `Bad Magic Number` | wrong uImage magic: use the other RAM image |
 | `TFTP error` / timeouts | PC firewall, wrong `serverip`, or cable not in a port U-Boot enabled. Try `ping 192.168.2.100` in U-Boot |
-| garbage after `Starting kernel` | console speed: U-Boot is not at 38400. Report it; the device tree needs the right speed |
+| garbage after `Starting kernel` | console speed mismatch: the kernel uses 115200, like the stock U-Boot. Report it |
 | stops at `Starting kernel` | report the full log |
 | kernel panic mentioning memory | report the full log |
 
