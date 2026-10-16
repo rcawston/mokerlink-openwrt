@@ -58,12 +58,16 @@ Run these and keep the output. None of them changes anything:
 
 ```
 printenv
-bdinfo
 md.b b4300000 40
 ```
 
-- `printenv`: note **`bootcmd`** (needed to go back to stock), `ipaddr`,
-  `serverip`, `ethaddr`, and anything that mentions a board model.
+Addresses must be exactly 8 hex digits. A typo such as `b43000000` reads
+an invalid address and resets the switch, which looks like a hang but is
+harmless.
+
+- `printenv`: on this unit `bootcmd=boota`, `ipaddr=192.168.2.1`,
+  `serverip=192.168.2.254`, `boardmodel=RTL9303_8264B_3X8261BE_XGE_POE`,
+  plus `ethaddr` and `serialnumber`.
 - `md.b b4300000 40` shows the first 64 bytes of the firmware partition
   (flash is mapped at `0xb4000000`, firmware at offset `0x300000`). The
   first four bytes are the uImage magic the boot loader accepts:
@@ -182,19 +186,18 @@ OpenWrt, which is much faster.
 
 ## Network in U-Boot
 
-U-Boot's network is off until `rtk network on` is run. It uses `ipaddr` as
-its own address and `serverip` as the TFTP server. For a laptop with
-address `192.168.2.100` directly attached to port 1:
+U-Boot's network is off until `rtk network on` is run. It uses `ipaddr`
+(default `192.168.2.1`) as its own address and `serverip` (default
+`192.168.2.254`) as the TFTP server. With the PC at `192.168.2.254/24` on
+port 1:
 
 ```
-setenv ipaddr 192.168.2.2
-setenv serverip 192.168.2.100
 rtk network on
-ping 192.168.2.100
+ping 192.168.2.254
 ```
 
-These settings last only until the next reboot unless you run `saveenv`. The
-install guide uses `saveenv` exactly once, at the end.
+This U-Boot has `md`, `mw`, `crc32`, `sf`, `tftpboot`, `bootm` and `boota`,
+but no `bdinfo`.
 
 ## Stock firmware shell (optional)
 

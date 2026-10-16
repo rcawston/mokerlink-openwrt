@@ -61,36 +61,27 @@ A copper port is declared with two macros:
 SWITCH_PORT_SDS(0, 1, 2, 0, usxgmii)             /* MAC port 0 = lan1, SerDes 2 */
 ```
 
-On this board ports 1-4 sit on one RTL8264B quad PHY and ports 5-7 on three
-discrete RTL8261BE PHYs (vendor hardware profile
-`RTL9303_8264B_3X8261BE_XGE_POE`). Each discrete PHY has its own strapped
-address, possibly on a different SMI bus.
+On this board the vendor U-Boot maps the PHYs like this (read from the
+switch's SMI registers after `rtk network on`), and the device tree follows
+it:
 
-Signs that the PHY address or bus is wrong: `mokerlink-probe` shows no
+| MAC port | SMI bus | Address | PHY |
+|---|---|---|---|
+| 0 | 1 | 0 | RTL8261BE (ID `001c:caf3` read back) |
+| 8 | 2 | 0 | RTL8261BE |
+| 16 | 3 | 0 | RTL8261BE |
+| 20, 24, 25, 26 | 0 | 0, 1, 2, 3 | RTL8264B quad |
+| 27 | - | - | SFP+ (no PHY) |
+
+Which **front** port each MAC port is still needs the link test in
+[Read the port wiring](02-serial-console.md#read-the-port-wiring), step 4.
+The `lanN` labels follow the MAC port order until then.
+
+Signs that a PHY address or bus is wrong: `mokerlink-probe` shows no
 driver for a port, the port is missing entirely, or `dmesg` shows PHY
-errors for it.
-
-Where to find the real wiring:
-
-- **U-Boot (best).** [Read the port wiring](02-serial-console.md#read-the-port-wiring)
-  and decode the log with `scripts/uboot-wiring.py decode`. It prints the
-  `&mdio_busN` lines and the polarity lines ready to paste.
-- **The stock boot log.** Realtek SDK firmware usually prints its port, PHY
-  and SerDes table while initializing the switch. Look for lines
-  mentioning `RTL8264`, `RTL8261`, `SMI`, `SDS` or `serdes`, and for a
-  board/hardware-profile name.
-- **Board photos.** The PHY chip positions show which ports share a quad
-  PHY: RTL8264(B) is a quad, RTL8261 a single.
-- **Known layouts** to try, from supported boards:
-
-  | Board | Ports 1-4 | Ports 5-8 |
-  |---|---|---|
-  | Hasivo S1100W-8XGT-SE, 2× RTL8264 (assumed here) | bus 0, addr 0-3 | bus 3, addr 16-19 |
-  | XikeStor SKS8300-8T, 8× RTL8261N | bus 0, addr 0-3 | bus 1, addr 0-3 |
-  | Ubiquiti USW Pro XG 8 PoE, 2× RTL8264B (RTL9313) | bus 0, addr 0-3 | bus 0, addr 4-7 |
-  | Hasivo F1100W-4SX-4XGT (singles) | SFP | bus 2 addr 0, bus 3 addr 16, bus 0 addr 16, bus 1 addr 0 |
-  | MokerLink 2G080GM (2.5G) | bus 0, addr 1-4 | bus 1, addr 1-4 |
-  | MokerLink 10GT080M, 8× RTL8261BE (RTL9313) | bus 0, addr 0-3 | bus 1, addr 4-7 (assumed here for ports 5-7) |
+errors for it. For another board revision, read the wiring from U-Boot the
+same way and decode it with `scripts/uboot-wiring.py decode`. It prints
+the `&mdio_busN` lines and the polarity lines ready to paste.
 
 If the SFP+ cage is not the last port, swap its port node with the
 copper port that is really on SerDes 9.
@@ -107,11 +98,11 @@ MokerLink 10GT080M, for example, inverts on the SerDes side.
 The vendor U-Boot programs the correct values, so the
 [U-Boot wiring read](02-serial-console.md#read-the-port-wiring) gives them
 directly. To confirm them, or find them when U-Boot did not set them, run
-the scan from a RAM-booted OpenWrt with a host at `192.168.2.100` on the
+the scan from a RAM-booted OpenWrt with a host at `192.168.2.254` on the
 port under test:
 
 ```sh
-mokerlink-polarity-scan lan2 192.168.2.100
+mokerlink-polarity-scan lan2 192.168.2.254
 ```
 
 It tries all four combinations on the PHY side at runtime and prints the

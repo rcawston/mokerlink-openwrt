@@ -14,8 +14,8 @@ always reach U-Boot, and from U-Boot it can always boot the RAM image.
 
 ## Back to the stock firmware
 
-You need `firmware.bin` from the backup (the stock RUNTIME partition) and the
-original `bootcmd` you wrote down.
+You need `firmware.bin` from the backup (the stock RUNTIME partition). The
+stock boot command is `boota`.
 
 1. RAM-boot OpenWrt as in [step 1](03-install.md#1-boot-openwrt-from-ram).
    Don't do this from OpenWrt running from flash: it would overwrite the
@@ -30,11 +30,11 @@ original `bootcmd` you wrote down.
    mtd write /tmp/firmware.bin firmware
    ```
 
-3. Reboot, interrupt U-Boot, and restore the original boot command (if you
-   changed it):
+3. If you changed the boot command, reboot, interrupt U-Boot and restore
+   it:
 
    ```
-   setenv bootcmd '<the original bootcmd>'
+   setenv bootcmd boota
    saveenv
    reset
    ```

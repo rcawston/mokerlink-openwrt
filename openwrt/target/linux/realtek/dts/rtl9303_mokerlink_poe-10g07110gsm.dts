@@ -9,6 +9,8 @@
  *   - SoC RTL9303, 128 MiB RAM, 16 MiB Winbond W25Q128 SPI NOR
  *   - stock flash layout as declared below
  *   - console on header J4 at 115200 8N1
+ *   - stock firmware is a uImage with magic 0x83800000, booted by "boota"
+ *   - PHY bus/address map, read from the vendor U-Boot (see &mdio_bus*)
  *   - vendor hardware profile RTL9303_8264B_3X8261BE_XGE_POE: one RTL8264B
  *     quad PHY plus three discrete RTL8261BE PHYs
  *   - PoE: two RTL8239-VB behind a PSE MCU; the stock SDK registers a UART
@@ -17,7 +19,7 @@
  *   - stock U-Boot 2011.12 (1.0.0.2), firmware "KT-NOS" 1.1.1.34
  *
  * Everything marked UNVERIFIED still needs confirming. scripts/uboot-wiring.py
- * reads the PHY wiring and lane polarity from the vendor U-Boot
+ * reads the lane polarity from the vendor U-Boot
  * (docs/02-serial-console.md#read-the-port-wiring). Confirm everything before
  * the image is written to flash.
  *
@@ -108,8 +110,8 @@
 			partition@300000 {
 				compatible = "openwrt,uimage", "denx,uimage";
 				/*
-				 * UNVERIFIED: must match UIMAGE_MAGIC in image/rtl930x.mk
-				 * and the magic the boot loader accepts (md.b b4300000 4)
+				 * The stock RUNTIME image is a uImage with this magic.
+				 * Must match UIMAGE_MAGIC in image/rtl930x.mk.
 				 */
 				openwrt,ih-magic = <0x83800000>;
 				label = "firmware";
@@ -127,12 +129,13 @@
 };
 
 /*
- * PHYs: an RTL8264B quad for lan1-4 and three discrete RTL8261BE for lan5-7.
- *
- * UNVERIFIED addresses: the quad on SMI bus 0 at 0-3 is common to every
- * comparable board. The RTL8261BEs are assumed on bus 1 at 4-6, following
- * the MokerLink 10GT080M (discrete RTL8261BEs numbered by port, second group
- * on bus 1). scripts/uboot-wiring.py decode prints the real lines.
+ * PHYs, as the vendor U-Boot maps them (SMI_PORT_POLLING_SEL and
+ * SMI_PORT*_ADDR_CTRL read after `rtk network on`):
+ *   MAC  0: RTL8261BE, SMI bus 1, address 0 (PHY ID read back: 001c:caf3)
+ *   MAC  8: single PHY, SMI bus 2, address 0
+ *   MAC 16: single PHY, SMI bus 3, address 0
+ *   MAC 20, 24, 25, 26: RTL8264B quad, SMI bus 0, addresses 0-3
+ * The three single PHYs are the RTL8261BEs of the vendor hardware profile.
  */
 &mdio_bus0 {
 	ethernet-phy-package@0 {
@@ -140,17 +143,23 @@
 		#size-cells = <0>;
 		reg = <0>;
 
-		PHY_C45(0, 0)
-		PHY_C45(8, 1)
-		PHY_C45(16, 2)
-		PHY_C45(20, 3)
+		PHY_C45(20, 0)
+		PHY_C45(24, 1)
+		PHY_C45(25, 2)
+		PHY_C45(26, 3)
 	};
 };
 
 &mdio_bus1 {
-	PHY_C45(24, 4)
-	PHY_C45(25, 5)
-	PHY_C45(26, 6)
+	PHY_C45(0, 0)
+};
+
+&mdio_bus2 {
+	PHY_C45(8, 0)
+};
+
+&mdio_bus3 {
+	PHY_C45(16, 0)
 };
 
 /*
@@ -171,7 +180,11 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		/* RJ45 10GBASE-T ports, lan1-7 */
+		/*
+		 * RJ45 10GBASE-T ports, lan1-7. UNVERIFIED: labels follow the MAC
+		 * port order; which front port each MAC port is still needs the
+		 * link test (docs/02-serial-console.md#read-the-port-wiring).
+		 */
 		SWITCH_PORT_SDS(0, 1, 2, 0, usxgmii)
 		SWITCH_PORT_SDS(8, 2, 3, 0, usxgmii)
 		SWITCH_PORT_SDS(16, 3, 4, 0, usxgmii)

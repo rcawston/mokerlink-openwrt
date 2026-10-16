@@ -8,7 +8,7 @@
 # reports which one passes traffic, plus the device tree lines for it.
 #
 # Setup: one cable from PORT to a host that answers ping at TARGET_IP, in the
-# same subnet as the switch (e.g. host 192.168.2.100/24, switch fallback
+# same subnet as the switch (e.g. host 192.168.2.254/24, switch fallback
 # 192.168.2.1/24). Run it from the serial console, since the port under test
 # loses connectivity for a few seconds per attempt.
 #

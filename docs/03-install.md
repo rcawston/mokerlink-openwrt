@@ -7,8 +7,8 @@ firmware unchanged.
 ## 0. Prepare
 
 - Serial console working and the stock boot log captured
-  ([02-serial-console.md](02-serial-console.md)). Note the original
-  `bootcmd` from `printenv`.
+  ([02-serial-console.md](02-serial-console.md)). The stock boot command
+  is `bootcmd=boota`.
 - The port wiring read from U-Boot and put into the device tree
   ([02-serial-console.md](02-serial-console.md#read-the-port-wiring)). This
   is optional, but it usually makes the first RAM image work on every
@@ -18,8 +18,9 @@ firmware unchanged.
 - A PC with a TFTP server serving the image directory: `tftpd-hpa` or
   `dnsmasq --enable-tftp --tftp-root=DIR --port=0` on Linux, Tftpd64 on
   Windows. Allow UDP port 69 through the PC's firewall.
-- Give the PC the static address **192.168.2.100/24** and connect it to
-  **port 1** with a cable. Disconnect the switch from your network and
+- Give the PC the static address **192.168.2.254/24** (the TFTP server
+  address the stock U-Boot expects) and connect it to **port 1** with a
+  cable. Disconnect the switch from your network and
   unplug all PoE devices for now.
 
 ## 1. Boot OpenWrt from RAM
@@ -28,15 +29,15 @@ Interrupt U-Boot ([02-serial-console.md](02-serial-console.md#entering-u-boot))
 and run:
 
 ```
-setenv ipaddr 192.168.2.2
-setenv serverip 192.168.2.100
 rtk network on
 tftpboot 0x84f00000 openwrt-realtek-rtl930x-mokerlink_poe-10g07110gsm-initramfs-kernel.bin
 bootm 0x84f00000
 ```
 
-Use the `-stdmagic.bin` file instead if `md.b b4300000 40` showed
-`27 05 19 56`, or if `bootm` answers `Bad Magic Number`.
+U-Boot's defaults are `ipaddr=192.168.2.1` (the switch) and
+`serverip=192.168.2.254` (the PC), so no `setenv` is needed. The stock
+firmware uses the uImage magic `0x83800000`, which the normal RAM image
+has; use the `-stdmagic.bin` file only if `bootm` answers `Bad Magic Number`.
 
 When the console shows `Please press Enter to activate this console`, press
 Enter. You now have a root shell.
@@ -44,7 +45,7 @@ Enter. You now have a root shell.
 | Symptom | Likely cause |
 |---|---|
 | `Bad Magic Number` | wrong uImage magic: use the other RAM image |
-| `TFTP error` / timeouts | PC firewall, wrong `serverip`, or cable not in a port U-Boot enabled. Try `ping 192.168.2.100` in U-Boot |
+| `TFTP error` / timeouts | PC firewall, wrong `serverip`, or cable not in a port U-Boot enabled. Try `ping 192.168.2.254` in U-Boot |
 | garbage after `Starting kernel` | console speed mismatch: the kernel uses 115200, like the stock U-Boot. Report it |
 | stops at `Starting kernel` | report the full log |
 | kernel panic mentioning memory | report the full log |
@@ -100,8 +101,6 @@ rebuild and repeat from step 1 with the new RAM image.
 - [x] **RAM:** 128 MiB, as declared (stock boot log).
 - [x] **Flash layout:** matches the stock partition table
       ([01-hardware.md](01-hardware.md#flash-layout)).
-- [ ] **Boot command:** the stock `bootcmd` (from `printenv`) loads the
-      firmware partition at `0xb4300000`.
 - [ ] **Backup:** `full-flash.bin` is on your PC and `sha256sum -c` passes.
 - [ ] **PHYs:** the summary shows `RTL8264B 10Gbps PHY` for lan1-lan4 and
       `RTL8261BE 10Gbps PHY` for lan5-lan7.
@@ -110,7 +109,7 @@ rebuild and repeat from step 1 with the new RAM image.
       ping, run this from the serial console and put the line it prints
       into the device tree:
       ```sh
-      mokerlink-polarity-scan lan3 192.168.2.100
+      mokerlink-polarity-scan lan3 192.168.2.254
       ```
 - [ ] **SFP+ port** (lan8): with a 10G module or DAC cable to a 10G peer,
       it shows link and passes traffic.
@@ -141,18 +140,26 @@ sysupgrade -n -v /tmp/openwrt-realtek-rtl930x-mokerlink_poe-10g07110gsm-squashfs
 ```
 
 This writes only the 12 MiB `firmware` partition (the stock RUNTIME
-image) and reboots. Interrupt U-Boot on the way up and set the boot command:
+image) and reboots. The stock boot command `boota` loads the uImage from
+the firmware partition. OpenWrt's image has the same header format and
+magic, so it should boot without any change to U-Boot.
 
-```
-setenv bootcmd 'rtk network on; bootm 0xb4300000'
-saveenv
-reset
-```
+Two cases need a different boot command (interrupt U-Boot, then):
 
-`rtk network on` lets U-Boot bring up the switch and PHYs before Linux
-starts, the same state they were in during the RAM-boot tests (the
-supported Hasivo boards boot the same way). `bootm 0xb4300000` boots the
-image in the firmware partition.
+- **`boota` refuses the image** and stays at the U-Boot prompt:
+  ```
+  setenv bootcmd 'bootm 0xb4300000'
+  saveenv
+  reset
+  ```
+- **Ports that worked in the RAM test stay dead** after booting from flash.
+  The RAM test always runs after `rtk network on`, which lets U-Boot bring
+  up the switch and PHYs first, and OpenWrt may rely on that:
+  ```
+  setenv bootcmd 'rtk network on; boota'
+  saveenv
+  reset
+  ```
 
 The first boot from flash takes a minute longer while OpenWrt formats its
 settings area. Then:
