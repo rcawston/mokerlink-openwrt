@@ -9,13 +9,13 @@ pinned to an exact source revision, with defaults for a plain layer-2
 switch and tools to bring up the hardware safely.
 
 > **Status: stage 1. Not yet run on real hardware.**
-> Confirmed chips: RTL9303 SoC, RTL8264B 10G PHYs, RTL8239 PoE. The port
-> wiring is derived from the closest supported switch (Hasivo
-> S1100WP-8XGT-SE: same SoC and PHY family, same flash layout). Several
-> details (PHY addresses, lane polarity, SFP+ wiring, RAM size, PoE bus)
-> must be confirmed on your unit before anything is written to flash. Most
-> of them can be read from U-Boot with `scripts/uboot-wiring.py`. Every test
-> runs from RAM, and the stock firmware stays untouched until the very end.
+> Confirmed from the board and the stock boot log: RTL9303 SoC, 128 MiB RAM,
+> 16 MiB flash with the expected layout, one RTL8264B plus three RTL8261BE
+> 10G PHYs, two RTL8239 PoE chips. Still to confirm on your unit before
+> anything is written to flash: PHY addresses, lane polarity, SFP+ lane,
+> console speed, uImage magic and the PoE MCU link. Most of them can be
+> read from U-Boot with `scripts/uboot-wiring.py`. Every test runs from RAM,
+> and the stock firmware stays untouched until the very end.
 
 ## Why OpenWrt and not firmware from scratch
 
@@ -40,12 +40,13 @@ reviewable board description on top of it is the most reliable option.
 - Hardware watchdog: a hung system reboots itself
 - Bring-up tools on the switch: `mokerlink-probe`, `mokerlink-backup`,
   `mokerlink-polarity-scan`, `mokerlink-gpio-watch`
+- PoE through OpenWrt's `realtek-pse-mcu` driver, assuming the PoE MCU is
+  on `uart1` as the stock firmware suggests
+  ([docs/05-porting.md](docs/05-porting.md#poe))
 
-Not yet supported in stage 1: control of PoE from the firmware (whether
-PoE works without it depends on the RTL8239's MCU firmware; OpenWrt's
-`realtek-pse-mcu` driver supports it once its bus is known, see
-[docs/05-porting.md](docs/05-porting.md#poe)), SFP+ module EEPROM/DOM
-readout and 1G SFP modules, the reset button, and the system LED.
+Not yet supported in stage 1: SFP+ module EEPROM/DOM readout and 1G SFP
+modules, the reset button, the system LED, and anything behind the RTL8231
+GPIO expander.
 
 ## How to install, in short
 

@@ -14,60 +14,65 @@ From the MokerLink datasheet and manual:
 
 ## What is on the board
 
-Confirmed from the chip markings:
+Confirmed from the chip markings and the stock boot log:
 
-| | Chip | Notes |
+| | Fact | Source |
 |---|---|---|
-| SoC | Realtek **RTL9303** | 8× 10G MAC, MIPS 34Kc, 800 MHz |
-| 10G PHYs | Realtek **RTL8264B** | quad 10GBASE-T PHY: one for ports 1-4, a second for ports 5-7 |
-| PoE | Realtek **RTL8239** | PSE silicon, managed by a small MCU that the SoC talks to over I²C or UART |
+| SoC | Realtek **RTL9303** (8× 10G MAC, MIPS 34Kc, 800 MHz) | chip marking, U-Boot `Board: RTL9300` |
+| RAM | **128 MiB** | U-Boot `DRAM: 128 MB` |
+| Flash | **16 MiB** Winbond W25Q128 SPI NOR (ID `EF4018`) | U-Boot `SPI-F:` line |
+| 10G PHYs | one **RTL8264B** quad (ports 1-4) plus three single **RTL8261BE** (ports 5-7) | vendor hardware profile `RTL9303_8264B_3X8261BE_XGE_POE` |
+| PoE | two **RTL8239-VB** PSE chips behind a PSE MCU | chip marking, stock log `find RTL8239-VB` (twice) |
+| PoE MCU link | most likely **UART** | stock SDK: `UART probe: (found)`, no I²C device |
+| GPIO expander | Realtek **RTL8231** (LEDs/GPIOs) | stock SDK: `RTL8231 probe: (found)` |
+| Console | header **J4** (GND, TXD, RXD, 3V3, 3.3 V logic) | board |
+| Boot loader | Realtek U-Boot 2011.12 (1.0.0.2, Dec 2024), **Esc** stops autoboot | boot log |
+| Stock firmware | "KT-NOS" 1.1.1.34 | boot log |
 
-Still assumed, from similar supported switches:
+Still assumed:
 
 | | Assumption | Source of the assumption |
 |---|---|---|
-| PHY wiring | second RTL8264B on SMI bus 3, addresses 16-18 | Hasivo S1100W(P)-8XGT-SE |
+| PHY addresses | RTL8264B on SMI bus 0 at 0-3; RTL8261BEs on bus 1 at 4-6 | common to similar boards; MokerLink 10GT080M numbering |
+| Lane polarity | normal on both ends of every link | hardware default |
 | SFP+ | MAC port 27 on SerDes 9 | eighth RTL9303 10G lane |
-| Flash | 16 MiB SPI NOR, standard Realtek SDK layout | Hasivo S1100W, MokerLink 2G080GM |
-| RAM | at least 128 MiB (Hasivo: 512 MiB) | U-Boot prints the real size |
-| Console | header J4 (GND, TXD, RXD, 3V3, 3.3 V logic), 38400 8N1 | J4 seen on the board; speed is the RTL930x U-Boot default |
+| Console speed | 38400 8N1 | RTL930x U-Boot default |
 | uImage magic | `0x83800000` | MokerLink 2G080GM and 10GT080M |
-| PoE MCU | I²C, address `0x20`, gen2 protocol | Ubiquiti USW Pro XG 8 PoE and Zyxel XS1930-12HP (both RTL8239) |
+| PoE MCU | `uart1`, 115200 baud, gen2 protocol | Zyxel XMG1915-10EP (RTL930x, RTL8239 MCU on `uart1`) |
 
-The RTL8239 means this is not the Hasivo design (Hasivo uses HS104 PSE
-chips), so the Hasivo-derived PHY wiring and polarity are only a starting
-guess. The fastest way to replace the guesses with facts is to read them
-from U-Boot ([02-serial-console.md](02-serial-console.md#read-the-port-wiring)).
-The device tree marks each assumption as `UNVERIFIED`, and
+The PHY addresses and lane polarity can be read from U-Boot
+([02-serial-console.md](02-serial-console.md#read-the-port-wiring)). The
+device tree marks each assumption as `UNVERIFIED`, and
 [05-porting.md](05-porting.md) explains how to check each one.
 
-## Flash layout (assumed)
+## Flash layout
+
+Confirmed by the partition table the stock firmware prints at boot:
 
 | Offset | Size | Stock name | OpenWrt name | Written by OpenWrt? |
 |---|---|---|---|---|
 | `0x000000` | 896 KiB | LOADER | u-boot | never |
 | `0x0e0000` | 64 KiB | BDINFO | u-boot-env | never (read-only) |
 | `0x0f0000` | 64 KiB | SYSINFO | u-boot-env2 | never (read-only) |
-| `0x100000` | 1 MiB | JFFS2_CFG | jffs | never (read-only) |
-| `0x200000` | 1 MiB | JFFS2_LOG | jffs2 | never (read-only) |
+| `0x100000` | 1 MiB | JFFS2 CFG | jffs | never (read-only) |
+| `0x200000` | 1 MiB | JFFS2 LOG | jffs2 | never (read-only) |
 | `0x300000` | 12 MiB | RUNTIME | firmware | **yes**, by sysupgrade |
 | `0xf00000` | 1 MiB | OEMINFO | oeminfo | never (read-only) |
 
-The stock firmware prints its own partition table during boot. Compare it
-with this one before flashing.
+There is a single firmware slot (no second RUNTIME), so a firmware write
+always replaces the stock firmware. Keep the backup.
 
 ## Looking inside
 
-Not required for a RAM boot if the switch has an external console port, but
-the photos settle most open questions at once. Unplug power and PoE devices
-first. The 10G PHY heatsinks are glued or spring-loaded on most of these
+The case has to be opened anyway for the console header J4, and photos
+settle most open questions at once. Unplug power and PoE devices first. The 10G PHY heatsinks are glued or spring-loaded on most of these
 boards: leave them in place unless you have thermal pads to replace them.
 
 Note the markings of:
 
 - the main chip under the large heatsink (confirmed: RTL9303)
-- the PHY chips near the RJ45 ports (confirmed: RTL8264B), and how many
-- the PoE chips (confirmed: RTL8239), how many, and **the small
+- the PHY chips near the RJ45 ports (confirmed: one RTL8264B, three RTL8261BE)
+- the PoE chips (confirmed: two RTL8239-VB) and **the small
   microcontroller that manages them**: a 20-48 pin chip near the RTL8239s,
   marked e.g. Nuvoton, GD32, STM32, HK32 or Holtek. Its pins lead to the
   bus the SoC uses for PoE.

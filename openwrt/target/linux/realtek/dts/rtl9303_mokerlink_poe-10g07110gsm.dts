@@ -5,15 +5,20 @@
  *
  * STAGE 1 DEVICE TREE: a conservative starting point, not a verified port.
  *
- * Confirmed from the board: RTL9303 SoC, RTL8264B quad 10GBASE-T PHYs,
- * RTL8239 PoE controller(s) behind a PSE MCU.
+ * Confirmed from the board and the stock boot log:
+ *   - SoC RTL9303, 128 MiB RAM, 16 MiB Winbond W25Q128 SPI NOR
+ *   - stock flash layout as declared below
+ *   - vendor hardware profile RTL9303_8264B_3X8261BE_XGE_POE: one RTL8264B
+ *     quad PHY plus three discrete RTL8261BE PHYs
+ *   - PoE: two RTL8239-VB behind a PSE MCU; the stock SDK registers a UART
+ *     and no I2C device, as on the Zyxel XMG1915-10EP (RTL8239 MCU on uart1)
+ *   - an RTL8231 GPIO/LED expander (not used here yet)
+ *   - stock U-Boot 2011.12 (1.0.0.2), firmware "KT-NOS" 1.1.1.34
  *
- * Everything marked UNVERIFIED is copied from the closest supported board
- * (Hasivo S1100WP-8XGT-SE: RTL9303 + 2x RTL8264, same flash layout). The
- * PoE design differs from the Hasivo one (HS104), so this is probably a
- * different ODM. scripts/uboot-wiring.py reads the real PHY wiring and lane
- * polarity from the vendor U-Boot; see docs/05-porting.md. Confirm
- * everything before the image is written to flash.
+ * Everything marked UNVERIFIED still needs confirming. scripts/uboot-wiring.py
+ * reads the PHY wiring and lane polarity from the vendor U-Boot
+ * (docs/02-serial-console.md#read-the-port-wiring). Confirm everything before
+ * the image is written to flash.
  *
  * Deliberately left out until confirmed, because a wrong guess there can
  * hurt stability rather than just disable a feature:
@@ -24,11 +29,7 @@
  *   - port LED sets: without a "realtek,rtl9300-leds" node the switch keeps
  *     the LED setup the boot loader programmed
  *   - SFP cage I2C/GPIOs
- *   - the PoE MCU (RTL8239 PSE): it needs the "realtek,pse-mcu-gen2-*"
- *     driver on an I2C bus or UART that is not known yet
- *     (docs/05-porting.md#poe)
- *   - RAM above 128 MiB (declaring more RAM than fitted crashes the kernel;
- *     declaring less only leaves it unused)
+ *   - the RTL8231 expander and anything wired to it
  */
 
 /dts-v1/;
@@ -41,11 +42,7 @@
 	compatible = "mokerlink,poe-10g07110gsm", "realtek,rtl9303-soc";
 	model = "MokerLink POE-10G07110GSM";
 
-	/*
-	 * UNVERIFIED: rtl930x.dtsi declares 128 MiB. U-Boot prints the fitted
-	 * size ("DRAM: ... MB"). For 512 MiB use the Hasivo S1100W layout:
-	 *	reg = <0x00000000 0x10000000>, <0x20000000 0x10000000>;
-	 */
+	/* 128 MiB RAM ("DRAM: 128 MB"): the rtl930x.dtsi default */
 
 	chosen {
 		/* UNVERIFIED: 38400 baud is the RTL930x U-Boot default */
@@ -57,18 +54,16 @@
 	status = "okay";
 
 	flash@0 {
+		/* Winbond W25Q128 (JEDEC ID EF4018) */
 		compatible = "jedec,spi-nor";
 		reg = <0>;
 		spi-max-frequency = <10000000>;
 
 		/*
-		 * UNVERIFIED: standard Realtek SDK layout for 16 MiB NOR, as used
-		 * by the Hasivo S1100W(P)-8XGT-SE and MokerLink 2G080GM. Confirm
-		 * with the stock firmware's /proc/mtd or the boot log.
-		 *
-		 * Everything except "firmware" is read-only so that OpenWrt never
-		 * touches the boot loader, its environment, the board info or the
-		 * stock configuration. That keeps a return to stock possible.
+		 * Same layout as the stock firmware's partition table. Everything
+		 * except "firmware" is read-only so that OpenWrt never touches the
+		 * boot loader, its environment, the board info or the stock
+		 * configuration. That keeps a return to stock possible.
 		 */
 		partitions {
 			compatible = "fixed-partitions";
@@ -96,14 +91,14 @@
 				read-only;
 			};
 
-			/* stock: JFFS2_CFG */
+			/* stock: JFFS2 CFG */
 			partition@100000 {
 				label = "jffs";
 				reg = <0x0100000 0x0100000>;
 				read-only;
 			};
 
-			/* stock: JFFS2_LOG */
+			/* stock: JFFS2 LOG */
 			partition@200000 {
 				label = "jffs2";
 				reg = <0x0200000 0x0100000>;
@@ -113,7 +108,10 @@
 			/* stock: RUNTIME */
 			partition@300000 {
 				compatible = "openwrt,uimage", "denx,uimage";
-				/* must match UIMAGE_MAGIC in image/rtl930x.mk */
+				/*
+				 * UNVERIFIED: must match UIMAGE_MAGIC in image/rtl930x.mk
+				 * and the magic the boot loader accepts (md.b b4300000 4)
+				 */
 				openwrt,ih-magic = <0x83800000>;
 				label = "firmware";
 				reg = <0x0300000 0x0c00000>;
@@ -130,11 +128,12 @@
 };
 
 /*
- * UNVERIFIED PHY wiring: one RTL8264B (quad 10GBASE-T) for lan1-4 on SMI
- * bus 0 and three PHYs of a second RTL8264B for lan5-7 on SMI bus 3, as on
- * the Hasivo S1100W-8XGT-SE with its eighth copper port swapped for SFP+.
- * Other RTL9303/RTL8264B boards put the second quad on bus 1 or on bus 0 at
- * addresses 4-7. scripts/uboot-wiring.py decode prints the real lines.
+ * PHYs: an RTL8264B quad for lan1-4 and three discrete RTL8261BE for lan5-7.
+ *
+ * UNVERIFIED addresses: the quad on SMI bus 0 at 0-3 is common to every
+ * comparable board. The RTL8261BEs are assumed on bus 1 at 4-6, following
+ * the MokerLink 10GT080M (discrete RTL8261BEs numbered by port, second group
+ * on bus 1). scripts/uboot-wiring.py decode prints the real lines.
  */
 &mdio_bus0 {
 	ethernet-phy-package@0 {
@@ -149,33 +148,24 @@
 	};
 };
 
-&mdio_bus3 {
-	ethernet-phy-package@16 {
-		#address-cells = <1>;
-		#size-cells = <0>;
-		reg = <16>;
-
-		PHY_C45(24, 16)
-		PHY_C45(25, 17)
-		PHY_C45(26, 18)
-	};
+&mdio_bus1 {
+	PHY_C45(24, 4)
+	PHY_C45(25, 5)
+	PHY_C45(26, 6)
 };
 
 /*
- * UNVERIFIED host-side SerDes lane polarity, copied from the Hasivo board.
- * The RTL826x driver programs these on every PHY init and defaults to
- * "normal", so a wrong value silently kills traffic on that port: the link
- * LED comes up but no frames pass. scripts/uboot-wiring.py reads the values
- * the vendor U-Boot programs; mokerlink-polarity-scan confirms them from a
- * running OpenWrt.
+ * UNVERIFIED lane polarity: left at "normal" on both ends of every link.
+ *
+ * The RTL826x PHY driver (&phyN) and the switch SerDes driver (&serdesN)
+ * both program polarity on every init and default to "normal", so a wrong
+ * value silently kills traffic on that port: the link LED comes up but no
+ * frames pass. scripts/uboot-wiring.py reads the values the vendor U-Boot
+ * programs on both ends and prints the lines to add here, e.g.
+ *	&phy8 { rx-polarity = <PHY_POL_INVERT>; };
+ *	&serdes3 { rx-polarity = <PHY_POL_INVERT>; };
+ * mokerlink-polarity-scan confirms a port from a running OpenWrt.
  */
-&phy0 { tx-polarity = <PHY_POL_INVERT>; };
-&phy8 { rx-polarity = <PHY_POL_INVERT>; };
-&phy16 { tx-polarity = <PHY_POL_INVERT>; };
-&phy20 { rx-polarity = <PHY_POL_INVERT>; };
-&phy24 { tx-polarity = <PHY_POL_INVERT>; };
-&phy25 { rx-polarity = <PHY_POL_INVERT>; };
-&phy26 { tx-polarity = <PHY_POL_INVERT>; };
 
 &switch0 {
 	ethernet-ports {
@@ -221,3 +211,42 @@
 		};
 	};
 };
+
+/*
+ * PoE: the PSE MCU in front of the two RTL8239-VB.
+ *
+ * UNVERIFIED: uart1 at 115200 baud, as on the Zyxel XMG1915-10EP. If the
+ * MCU does not answer, the driver logs an error and does nothing else;
+ * check with: dmesg | grep -i pse. The PI order (which MCU port powers
+ * which front port) is also UNVERIFIED: plug a PoE device into port 1 and
+ * check that `ethtool --show-pse lan1` reports it.
+ */
+&uart1 {
+	status = "okay";
+
+	pse: ethernet-pse {
+		compatible = "mokerlink,poe-10g07110gsm-pse", "realtek,pse-mcu-gen2";
+		current-speed = <115200>;
+
+		pse-pis {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			PSE_PI(0)
+			PSE_PI(1)
+			PSE_PI(2)
+			PSE_PI(3)
+			PSE_PI(4)
+			PSE_PI(5)
+			PSE_PI(6)
+		};
+	};
+};
+
+&phy0 { pses = <&pse_pi0>; };
+&phy8 { pses = <&pse_pi1>; };
+&phy16 { pses = <&pse_pi2>; };
+&phy20 { pses = <&pse_pi3>; };
+&phy24 { pses = <&pse_pi4>; };
+&phy25 { pses = <&pse_pi5>; };
+&phy26 { pses = <&pse_pi6>; };

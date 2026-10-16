@@ -6,11 +6,12 @@
 
 After `rtk network on`, the vendor U-Boot has set up the switch from the
 manufacturer's own board profile: which SMI bus and address each port's PHY
-is on, the mode of each SerDes lane, and the host-side lane polarity of each
-RTL826x PHY. All of this can be read with `md`. The PHY registers are read
-through the switch's MDIO command registers with `mw` + `md`: those commands
-only request a read. The port mask register is set to 0, so even a mistyped
-command bit cannot write to a PHY.
+is on, the mode of each SerDes lane, and the lane polarity on both ends of
+each PHY link (switch SerDes and RTL826x PHY). The switch registers are read
+with `md`. PHY and SerDes registers are read through the switch's indirect
+access registers with `mw` + `md`: those commands only request a read. For
+the PHY reads the port mask register is set to 0, so even a mistyped command
+bit cannot write to a PHY.
 
 The decoder prints a port table and the device tree lines for
 openwrt/target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts.
@@ -36,6 +37,15 @@ CMD_READ_C45 = 0x2
 CMD_RUN = 0x1
 CMD_FAIL = 1 << 25
 
+# SerDes indirect access: command [17:13] reg, [12:7] page, [6:2] SerDes,
+# bit 0 busy (bit 1 would be write, never set here); data in the next word
+SDS_ACCESS_CMD = 0x03B0
+SDS_ACCESS_DATA = 0x03B4
+SDS_CMD_BUSY = 0x1
+# Lane polarity bits, as programmed by pcs-rtl-otto.c (rtpcs_930x_sds_config_polarity)
+SDS_POL_10G = (6, 0x02, 1 << 14, 1 << 13)  # page, reg, tx (INV_HSO), rx (INV_HSI)
+SDS_POL_1G = (0, 0x00, 1 << 8, 1 << 9)
+
 # RTL9303: the eight 10G MAC ports and their fixed SerDes lanes
 MAC_TO_SDS = {0: 2, 8: 3, 16: 4, 20: 5, 24: 6, 25: 7, 26: 8, 27: 9}
 
@@ -57,8 +67,18 @@ HSI_INV = 0x40  # rx-polarity
 HSO_INV = 0x80  # tx-polarity
 
 PHY_NAMES = {
-    0x001CC813: "RTL8264B", 0x001CCAF2: "RTL8264", 0x001CCAF3: "RTL8261N",
+    0x001CC813: "RTL8264B", 0x001CCAF2: "RTL8264",
+    0x001CCAF3: "RTL8261N/BE",  # the RTL8261BE reports the RTL8261N ID
 }
+
+
+def sds_phys(sds, page):
+    """SerDes 3 keeps its pages below 4 in physical SerDes 10 (pcs-rtl-otto.c)."""
+    return 10 if sds == 3 and page < 4 else sds
+
+
+def sds_cmd(sds, page, reg):
+    return reg << 13 | page << 7 | sds_phys(sds, page) << 2 | SDS_CMD_BUSY
 
 
 def a(off):
@@ -85,6 +105,10 @@ def commands():
                 f"mw.l {a(SMI_ACCESS_CTRL_1)} {CMD_READ_C45 | CMD_RUN:x}; "
                 f"md.l {a(SMI_ACCESS_CTRL_1)} 3"
             )
+    for sds in MAC_TO_SDS.values():
+        for page, reg, _, _ in (SDS_POL_10G, SDS_POL_1G):
+            out.append(f"mw.l {a(SDS_ACCESS_CMD)} {sds_cmd(sds, page, reg):08x}; "
+                       f"md.l {a(SDS_ACCESS_CMD)} 2")
     out += [
         "# Then move the cable to each other front port in turn and run this",
         "# once per port, noting which front port it was:",
@@ -96,12 +120,14 @@ def commands():
 MD_LINE = re.compile(r"^\s*([0-9a-fA-F]{8}):((?:\s+[0-9a-fA-F]{8}){1,4})")
 MW_CTRL2 = re.compile(r"mw\.l\s+(?:0x)?%s\s+(?:0x)?([0-9a-fA-F]+)" % a(SMI_ACCESS_CTRL_2), re.I)
 MW_CTRL3 = re.compile(r"mw\.l\s+(?:0x)?%s\s+(?:0x)?([0-9a-fA-F]+)" % a(SMI_ACCESS_CTRL_3), re.I)
+MW_SDS = re.compile(r"mw\.l\s+(?:0x)?%s\s+(?:0x)?([0-9a-fA-F]+)" % a(SDS_ACCESS_CMD), re.I)
 
 
 def parse(log):
     regs = {}
     link_samples = []
     phy = {}  # (port, mmd, reg) -> value or None (failed)
+    sds = {}  # (physical SerDes, page, reg) -> value or None (failed)
     pending = None
     for line in log.splitlines():
         c2, c3 = MW_CTRL2.search(line), MW_CTRL3.search(line)
@@ -114,6 +140,11 @@ def parse(log):
             continue
         addr = int(m.group(1), 16)
         words = [int(w, 16) for w in m.group(2).split()]
+        if addr == BASE + SDS_ACCESS_CMD and len(words) >= 2:
+            cmd = words[0]
+            key = ((cmd >> 2) & 0x1F, (cmd >> 7) & 0x3F, (cmd >> 13) & 0x1F)
+            sds[key] = None if cmd & SDS_CMD_BUSY else words[1] & 0xFFFF
+            continue
         if addr == BASE + SMI_ACCESS_CTRL_1 and len(words) >= 2:
             status, data = words[0], words[1]
             port = pending[0] if pending else data >> 16
@@ -128,7 +159,7 @@ def parse(log):
                 link_samples.append(w)
             else:
                 regs[off] = w
-    return regs, link_samples, phy
+    return regs, link_samples, phy, sds
 
 
 def bits(value, lsb, width):
@@ -136,7 +167,7 @@ def bits(value, lsb, width):
 
 
 def decode(log):
-    regs, link_samples, phy = parse(log)
+    regs, link_samples, phy, sds_regs = parse(log)
     missing = [f"{off:#06x}" for off in
                (SMI_GLB_CTRL, SMI_POLLING_SEL, SMI_POLLING_SEL + 4,
                 *range(SMI_PORT_ADDR, SMI_PORT_ADDR + 20, 4), 0x0194, 0x02A0, 0x02A4)
@@ -180,6 +211,30 @@ def decode(log):
         print(f"{port:>3} {sds:>3} {mode:<11} {bus if bus is not None else '?':>3} "
               f"{addr if addr is not None else '?':>4}  {phy_txt:<18} {pol}")
 
+    print()
+    print("Switch-side SerDes lane polarity:")
+    print(f"{'SDS':>3} {'10G path':<22} {'1G path':<22}")
+    sds_pol = {}
+    for port, sds in MAC_TO_SDS.items():
+        cells = []
+        for page, reg, tx_bit, rx_bit in (SDS_POL_10G, SDS_POL_1G):
+            key = (sds_phys(sds, page), page, reg)
+            val = sds_regs.get(key)
+            if key not in sds_regs:
+                cells.append(("not read", None))
+            elif val is None:
+                cells.append(("read failed", None))
+            else:
+                pol = (bool(val & tx_bit), bool(val & rx_bit))
+                cells.append((f"tx={'invert' if pol[0] else 'normal'} rx={'invert' if pol[1] else 'normal'}", pol))
+        print(f"{sds:>3} {cells[0][0]:<22} {cells[1][0]:<22}")
+        mode = next(r[2] for r in rows if r[1] == sds)
+        primary, other = (cells[1], cells[0]) if mode in ("SGMII", "1000BASE-X") else cells
+        if primary[1] and other[1] and primary[1] != other[1]:
+            print(f"    note: SerDes {sds} has different 10G and 1G polarity; using the {mode} path")
+        if primary[1]:
+            sds_pol[sds] = primary[1]
+
     if link_samples:
         print()
         print("Link status samples (MAC_LINK_STS), in the order they were taken:")
@@ -222,6 +277,11 @@ def decode(log):
                 ([("rx-polarity = <PHY_POL_INVERT>;")] if rx else [])
         if props:
             print(f"&phy{port} {{ {' '.join(props)} }};")
+    for sds, (tx, rx) in sds_pol.items():
+        props = (["tx-polarity = <PHY_POL_INVERT>;"] if tx else []) + \
+                (["rx-polarity = <PHY_POL_INVERT>;"] if rx else [])
+        if props:
+            print(f"&serdes{sds} {{ {' '.join(props)} }};")
     print()
     for port, sds, mode, *_ in rows:
         if not any(r[0] == port for r in phys):

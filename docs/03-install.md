@@ -97,13 +97,14 @@ Then go through this list, fixing the device tree as described in
 [05-porting.md](05-porting.md) whenever an item fails. After each fix,
 rebuild and repeat from step 1 with the new RAM image.
 
-- [ ] **RAM:** U-Boot's `DRAM:` line matches the device tree (128 MiB is
-      declared by default; more RAM only needs a one-line change).
-- [ ] **Flash layout:** the stock boot log or `/proc/mtd` of the stock
-      firmware matches [the assumed layout](01-hardware.md#flash-layout-assumed),
-      and the stock `bootcmd` boots from `0xb4300000`.
+- [x] **RAM:** 128 MiB, as declared (stock boot log).
+- [x] **Flash layout:** matches the stock partition table
+      ([01-hardware.md](01-hardware.md#flash-layout)).
+- [ ] **Boot command:** the stock `bootcmd` (from `printenv`) loads the
+      firmware partition at `0xb4300000`.
 - [ ] **Backup:** `full-flash.bin` is on your PC and `sha256sum -c` passes.
-- [ ] **PHYs:** the summary shows an RTL826x driver for lan1-lan7.
+- [ ] **PHYs:** the summary shows `RTL8264B 10Gbps PHY` for lan1-lan4 and
+      `RTL8261BE 10Gbps PHY` for lan5-lan7.
 - [ ] **Every copper port passes traffic.** Move the PC cable from port to
       port and `ping 192.168.2.1` from the PC. If a port has link but no
       ping, run this from the serial console and put the line it prints
@@ -122,8 +123,9 @@ rebuild and repeat from step 1 with the new RAM image.
       link flaps or errors in `dmesg`.
 - [ ] **Heat:** fans running, and the temperatures in `mokerlink-probe`
       stay below about 100 °C under load.
-- [ ] **PoE** (if you need it): plug in one known PoE device and check that
-      it powers up. Stage 1 does not control PoE (see
+- [ ] **PoE** (if you need it): `dmesg | grep -i pse` shows the MCU and its
+      RTL8239 chips, and one known PoE device on port 1 powers up and
+      appears in `ethtool --show-pse lan1` (see
       [05-porting.md](05-porting.md#poe)).
 
 ## 4. Write OpenWrt to flash

@@ -43,10 +43,10 @@ types, and the boot command.
 
 ## Entering U-Boot
 
-Power-cycle the switch and watch for a line like `Hit Esc key to stop
-autoboot` or `Hit any key to stop autoboot`, then press that key (Esc,
-Ctrl-C or Space) repeatedly right away. You should get a prompt such as
-`RTL9300#`.
+This U-Boot prints `Hit Esc key to stop autoboot:  0`: the delay is zero,
+so there is no time to react. Press **Esc** repeatedly (or hold it down)
+while you switch the power on, until a prompt such as `RTL9300#` appears
+instead of `## Booting kernel`.
 
 Some vendors protect U-Boot with a password. The Hasivo boards ask for one
 after Esc (`Hs2021cfgmg`, then type `XXXX`). If yours asks for a password,
@@ -80,13 +80,14 @@ md.b b4300000 40
 
 Once U-Boot has brought up the switch (`rtk network on`), its registers hold
 the manufacturer's own port configuration: which bus and address each 10G
-PHY is on, the mode of every SerDes lane, and the lane polarity of every
-RTL8264B. Reading them settles the biggest open questions before OpenWrt
+PHY is on, the mode of every SerDes lane, and the lane polarity on both
+ends of every PHY link (switch SerDes and PHY). Reading them settles the biggest open questions before OpenWrt
 is ever booted.
 
 The `md` commands only display registers. The `mw` lines ask the switch to
-read one PHY register (the port mask is set to 0, so they cannot write to a
-PHY). Nothing is saved, and a power cycle clears it all.
+read one PHY or SerDes register (for the PHY reads the port mask is set to
+0, so they cannot write to a PHY). Nothing is saved, and a power cycle
+clears it all.
 
 1. Start logging the terminal to a file.
 2. Connect a cable from **front port 1** to a running PC.
@@ -126,6 +127,22 @@ mw.l bb00cb70 0; mw.l bb00cb78 001a0000; mw.l bb00cb7c 001e00c1; mw.l bb00cb74 3
 mw.l bb00cb70 0; mw.l bb00cb78 001b0000; mw.l bb00cb7c 00010002; mw.l bb00cb74 3; md.l bb00cb74 3
 mw.l bb00cb70 0; mw.l bb00cb78 001b0000; mw.l bb00cb7c 00010003; mw.l bb00cb74 3; md.l bb00cb74 3
 mw.l bb00cb70 0; mw.l bb00cb78 001b0000; mw.l bb00cb7c 001e00c1; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb0003b0 00004309; md.l bb0003b0 2
+mw.l bb0003b0 00000009; md.l bb0003b0 2
+mw.l bb0003b0 0000430d; md.l bb0003b0 2
+mw.l bb0003b0 00000029; md.l bb0003b0 2
+mw.l bb0003b0 00004311; md.l bb0003b0 2
+mw.l bb0003b0 00000011; md.l bb0003b0 2
+mw.l bb0003b0 00004315; md.l bb0003b0 2
+mw.l bb0003b0 00000015; md.l bb0003b0 2
+mw.l bb0003b0 00004319; md.l bb0003b0 2
+mw.l bb0003b0 00000019; md.l bb0003b0 2
+mw.l bb0003b0 0000431d; md.l bb0003b0 2
+mw.l bb0003b0 0000001d; md.l bb0003b0 2
+mw.l bb0003b0 00004321; md.l bb0003b0 2
+mw.l bb0003b0 00000021; md.l bb0003b0 2
+mw.l bb0003b0 00004325; md.l bb0003b0 2
+mw.l bb0003b0 00000025; md.l bb0003b0 2
 ```
 
 4. Move the cable to front port 2 and run `md.l bb00cb10 1` again. Repeat for every

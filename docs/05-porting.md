@@ -18,20 +18,8 @@ Every detail that still needs confirming on real hardware is marked
 
 ## RAM size
 
-U-Boot prints `DRAM: <size>` at power-on. The device tree declares 128 MiB,
-which is safe on any unit: declaring more RAM than fitted crashes the
-kernel, while declaring less only leaves memory unused. For 512 MiB add,
-inside `/ { ... }`:
-
-```dts
-memory@0 {
-	device_type = "memory";
-	reg = <0x00000000 0x10000000>, /* 256 MiB lowmem */
-	      <0x20000000 0x10000000>; /* 256 MiB highmem */
-};
-```
-
-For 256 MiB: `reg = <0x00000000 0x10000000>;`.
+Confirmed: 128 MiB (`DRAM: 128 MB`), the default in `rtl930x.dtsi`.
+Declaring more RAM than fitted crashes the kernel, so leave it.
 
 ## Console speed
 
@@ -40,14 +28,11 @@ If U-Boot runs at 115200 rather than 38400, change `stdout-path` in
 
 ## Flash layout
 
-Compare the partition table printed by the stock firmware during boot (or
-its `/proc/mtd`) with the table in [01-hardware.md](01-hardware.md#flash-layout-assumed).
-Also check the stock `bootcmd`: booting from `0xb4300000` confirms that the
-firmware starts at offset `0x300000`. If the chip is larger than 16 MiB
-(`mokerlink-backup` warns about it), the layout definitely differs. Copy
-the stock table into the `partitions` node, keep everything except
-`firmware` read-only, and set `IMAGE_SIZE` in the patch to the new firmware
-partition size.
+Confirmed: the device tree matches the partition table the stock firmware
+prints at boot ([01-hardware.md](01-hardware.md#flash-layout)). If a future
+hardware revision differs, copy its table into the `partitions` node, keep
+everything except `firmware` read-only, and set `IMAGE_SIZE` in the patch
+to the new firmware partition size.
 
 ## uImage magic
 
@@ -77,6 +62,11 @@ A copper port is declared with two macros:
 SWITCH_PORT_SDS(0, 1, 2, 0, usxgmii)             /* MAC port 0 = lan1, SerDes 2 */
 ```
 
+On this board ports 1-4 sit on one RTL8264B quad PHY and ports 5-7 on three
+discrete RTL8261BE PHYs (vendor hardware profile
+`RTL9303_8264B_3X8261BE_XGE_POE`). Each discrete PHY has its own strapped
+address, possibly on a different SMI bus.
+
 Signs that the PHY address or bus is wrong: `mokerlink-probe` shows no
 driver for a port, the port is missing entirely, or `dmesg` shows PHY
 errors for it.
@@ -101,15 +91,19 @@ Where to find the real wiring:
   | Ubiquiti USW Pro XG 8 PoE, 2× RTL8264B (RTL9313) | bus 0, addr 0-3 | bus 0, addr 4-7 |
   | Hasivo F1100W-4SX-4XGT (singles) | SFP | bus 2 addr 0, bus 3 addr 16, bus 0 addr 16, bus 1 addr 0 |
   | MokerLink 2G080GM (2.5G) | bus 0, addr 1-4 | bus 1, addr 1-4 |
+  | MokerLink 10GT080M, 8× RTL8261BE (RTL9313) | bus 0, addr 0-3 | bus 1, addr 4-7 (assumed here for ports 5-7) |
 
 If the SFP+ cage is not the last port, swap its port node with the
 copper port that is really on SerDes 9.
 
 ## SerDes lane polarity
 
-The RTL826x PHY driver programs the lane polarity between switch chip and
-PHY from the device tree on every boot. A wrong value makes a port show
-link but pass no frames in one or both directions.
+The lane polarity between switch chip and PHY can be set on either end: on
+the PHY (`&phyN { tx-polarity/rx-polarity }`, RTL826x driver) or on the
+switch SerDes (`&serdesN { ... }`, PCS driver). Both drivers program it
+from the device tree on every boot and default to "normal". A wrong value
+makes a port show link but pass no frames in one or both directions. The
+MokerLink 10GT080M, for example, inverts on the SerDes side.
 
 The vendor U-Boot programs the correct values, so the
 [U-Boot wiring read](02-serial-console.md#read-the-port-wiring) gives them
@@ -121,9 +115,10 @@ port under test:
 mokerlink-polarity-scan lan2 192.168.2.100
 ```
 
-It tries all four combinations at runtime and prints the line to use, e.g.
-`&phy8 { rx-polarity = <PHY_POL_INVERT>; };`. Replace the line for that
-PHY in the device tree. "Normal" needs no line.
+It tries all four combinations on the PHY side at runtime and prints the
+line to use, e.g. `&phy8 { rx-polarity = <PHY_POL_INVERT>; };`. A
+mismatch on a differential lane can be corrected at either end, so this
+works whichever side the board needs it on. "Normal" needs no line.
 
 ## SFP+ cage (full support)
 
@@ -211,30 +206,41 @@ instead of `SWITCH_PORT_SDS`. A wrong LED set only lights the wrong LEDs.
 
 ## PoE
 
-The board uses Realtek **RTL8239** PSE chips. They are not driven by the
-SoC directly but by a small microcontroller (the "PSE MCU") running
-Realtek's PoE firmware. The SoC talks to that MCU over I²C or a UART.
-OpenWrt supports this with the `realtek-pse-mcu` driver (headed for Linux
-7.3), which handles the RTL8239 with the "gen2" protocol.
+The board has two Realtek **RTL8239-VB** PSE chips. They are not driven by
+the SoC directly but by a small microcontroller (the "PSE MCU") running
+Realtek's PoE firmware. OpenWrt supports it with the `realtek-pse-mcu`
+driver (headed for Linux 7.3), which handles the RTL8239 with the "gen2"
+protocol over I²C or UART.
 
-**Without the driver (stage 1)** it depends on the MCU firmware: some boards
-power PoE devices on their own after detection, others wait for the host to
-enable the PSE system first. Test with one PoE device.
+The stock firmware's driver registers a UART and no I²C device, which
+matches the Zyxel XMG1915-10EP: an RTL930x switch with its RTL8239 MCU on
+`uart1` at 115200 baud. The device tree therefore declares the MCU there
+(`kmod-pse-realtek-mcu-uart`). After a RAM boot, check:
 
-**With the driver**, PoE is enabled at boot and every port can be switched
-and monitored (`ethtool --show-pse lanN`, `ethtool --set-pse lanN
-c33-pse-admin-control disable`). Adding it needs one fact: where the MCU is
-connected. On all supported RTL8239 boards it is an I²C channel at address
-`0x20`:
+```sh
+dmesg | grep -i -e pse -e rtl8239
+ethtool --show-pse lan1
+```
+
+- **The driver found the MCU:** it reports the RTL8239 chips, enables the
+  PSE system and creates a PSE port per front port. Plug one PoE device
+  into port 1 and check that `ethtool --show-pse lan1` shows it delivering
+  power. If another port reports it, the PI order in the device tree
+  (`pses = <&pse_piN>`) needs reordering. Ports can be switched with
+  `ethtool --set-pse lanN c33-pse-admin-control disable` (or `enable`).
+- **No answer from the MCU:** the driver logs an error and does nothing
+  else. Try `current-speed = <19200>` (the driver's default), then I²C:
+  on all supported I²C-attached RTL8239 boards the MCU is at `0x20`:
 
 | Board | Bus | Address | Compatible |
 |---|---|---|---|
+| Zyxel XMG1915-10EP | `uart1`, 115200 baud | - | `realtek,pse-mcu-gen2` |
 | Ubiquiti USW Pro XG 8 PoE | `i2c_mst2` channel 6 | `0x20` | `realtek,pse-mcu-gen2-smbus` |
 | Ubiquiti USW Pro Max 24 PoE | `i2c_mst2` channel 0 | `0x20` | `realtek,pse-mcu-gen2-smbus` |
 | Zyxel XS1930-12HP | `i2c_mst1` channel 3 | `0x20` | `realtek,pse-mcu-gen2-smbus` |
 | Linksys LGS328MPC v2 | bit-banged I²C, SDA GPIO 9, SCL GPIO 17 | `0x2a` | `realtek,pse-mcu-gen2-i2c` |
 
-To find the channel:
+To find an I²C channel, if it comes to that:
 
 1. **Photos:** identify the MCU next to the RTL8239s and look up its pinout.
    Its I²C (or UART) pins lead towards the SoC.
@@ -245,7 +251,7 @@ To find the channel:
    harmlessly if not. Don't scan with `i2cdetect` first: a scan toggles
    every address on the bus.
 
-The device tree addition, with `i2c_mst2` channel 6 as an example:
+An I²C variant, with `i2c_mst2` channel 6 as an example (remove the `&uart1` node first):
 
 ```dts
 &i2c_mst2 {
@@ -285,10 +291,8 @@ The device tree addition, with `i2c_mst2` channel 6 as an example:
 &phy26 { pses = <&pse_pi6>; };
 ```
 
-Then add `kmod-pse-realtek-mcu-i2c` to `DEVICE_PACKAGES` in the patch. The
-order of the MCU's port numbers (PI 0-6) relative to the front ports is
-another assumption: plug a PoE device into port 1 and check with
-`ethtool --show-pse lan1` that lan1 is the port that reports power.
+Then replace `kmod-pse-realtek-mcu-uart` with `kmod-pse-realtek-mcu-i2c` in
+`DEVICE_PACKAGES` in the patch.
 
 ## Fans and temperature
 
