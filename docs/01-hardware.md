@@ -12,25 +12,34 @@ From the MokerLink datasheet and manual:
 | Management | web, L2 managed (VLAN, LACP, QoS, ACL, mirroring, SNMP) |
 | Cooling | fan(s), "smart" speed control |
 
-## What the board most likely is
+## What is on the board
 
-MokerLink sells rebranded designs from Chinese ODMs. Eight 10G ports with
-10GBASE-T copper points to the same platform as several switches OpenWrt
-already supports:
+Confirmed from the chip markings:
 
-| | Assumed for this board | Source of the assumption |
+| | Chip | Notes |
 |---|---|---|
-| SoC | Realtek RTL9303 (8× 10G MAC, MIPS 34Kc, 800 MHz) | the only Realtek chip in this class with 8× 10G |
-| 10G PHYs | RTL8264/RTL8264B quad PHY for ports 1-4, a second one (3 ports used) for ports 5-7 | Hasivo S1100W(P)-8XGT-SE |
+| SoC | Realtek **RTL9303** | 8× 10G MAC, MIPS 34Kc, 800 MHz |
+| 10G PHYs | Realtek **RTL8264B** | quad 10GBASE-T PHY: one for ports 1-4, a second for ports 5-7 |
+| PoE | Realtek **RTL8239** | PSE silicon, managed by a small MCU that the SoC talks to over I²C or UART |
+
+Still assumed, from similar supported switches:
+
+| | Assumption | Source of the assumption |
+|---|---|---|
+| PHY wiring | second RTL8264B on SMI bus 3, addresses 16-18 | Hasivo S1100W(P)-8XGT-SE |
 | SFP+ | MAC port 27 on SerDes 9 | eighth RTL9303 10G lane |
 | Flash | 16 MiB SPI NOR, standard Realtek SDK layout | Hasivo S1100W, MokerLink 2G080GM |
 | RAM | at least 128 MiB (Hasivo: 512 MiB) | U-Boot prints the real size |
 | Console | 38400 8N1 | RTL930x U-Boot default |
 | uImage magic | `0x83800000` | MokerLink 2G080GM and 10GT080M |
+| PoE MCU | I²C, address `0x20`, gen2 protocol | Ubiquiti USW Pro XG 8 PoE and Zyxel XS1930-12HP (both RTL8239) |
 
-Every one of these must be confirmed on your unit. The device tree marks
-each as `UNVERIFIED`, and [05-porting.md](05-porting.md) explains how to
-check each one.
+The RTL8239 means this is not the Hasivo design (Hasivo uses HS104 PSE
+chips), so the Hasivo-derived PHY wiring and polarity are only a starting
+guess. The fastest way to replace the guesses with facts is to read them
+from U-Boot ([02-serial-console.md](02-serial-console.md#read-the-port-wiring)).
+The device tree marks each assumption as `UNVERIFIED`, and
+[05-porting.md](05-porting.md) explains how to check each one.
 
 ## Flash layout (assumed)
 
@@ -56,13 +65,15 @@ boards: leave them in place unless you have thermal pads to replace them.
 
 Note the markings of:
 
-- the main chip under the large heatsink (expected: RTL9303)
-- the PHY chips near the RJ45 ports (expected: RTL8264, RTL8264B or RTL8261)
+- the main chip under the large heatsink (confirmed: RTL9303)
+- the PHY chips near the RJ45 ports (confirmed: RTL8264B), and how many
+- the PoE chips (confirmed: RTL8239), how many, and **the small
+  microcontroller that manages them**: a 20-48 pin chip near the RTL8239s,
+  marked e.g. Nuvoton, GD32, STM32, HK32 or Holtek. Its pins lead to the
+  bus the SoC uses for PoE.
 - the SPI flash (8-pin chip, e.g. FM25Q128, W25Q128, GD25Q256)
 - the RAM chips, which give the RAM size
-- the PoE controllers near the RJ45 ports and any small microcontroller
-  near them or the fans. Hasivo boards use HS104 PSE chips plus an STC8
-  MCU on an I²C bus.
+- any small chip near the fans (fan controller or MCU)
 - the serial console header, usually 4 pins: GND, TX, RX, 3.3 V
 
 Take a sharp photo of both sides of the board. These answer most questions

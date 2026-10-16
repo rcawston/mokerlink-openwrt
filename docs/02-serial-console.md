@@ -65,6 +65,72 @@ md.b b4300000 40
   The bytes from offset `0x20` are the image name in ASCII, often naming
   the vendor SDK version.
 
+## Read the port wiring
+
+Once U-Boot has brought up the switch (`rtk network on`), its registers hold
+the manufacturer's own port configuration: which bus and address each 10G
+PHY is on, the mode of every SerDes lane, and the lane polarity of every
+RTL8264B. Reading them settles the biggest open questions before OpenWrt
+is ever booted.
+
+The `md` commands only display registers. The `mw` lines ask the switch to
+read one PHY register (the port mask is set to 0, so they cannot write to a
+PHY). Nothing is saved, and a power cycle clears it all.
+
+1. Start logging the terminal to a file.
+2. Connect a cable from **front port 1** to a running PC.
+3. Interrupt U-Boot and paste these commands, a few lines at a time:
+
+```
+rtk network on
+md.l bb00ca00 4
+md.l bb00cb80 5
+md.l bb000194 2
+md.l bb0002a0 2
+md.l bb00cb10 1
+```
+
+```
+mw.l bb00cb70 0; mw.l bb00cb78 00000000; mw.l bb00cb7c 00010002; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00000000; mw.l bb00cb7c 00010003; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00000000; mw.l bb00cb7c 001e00c1; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00080000; mw.l bb00cb7c 00010002; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00080000; mw.l bb00cb7c 00010003; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00080000; mw.l bb00cb7c 001e00c1; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00100000; mw.l bb00cb7c 00010002; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00100000; mw.l bb00cb7c 00010003; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00100000; mw.l bb00cb7c 001e00c1; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00140000; mw.l bb00cb7c 00010002; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00140000; mw.l bb00cb7c 00010003; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00140000; mw.l bb00cb7c 001e00c1; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00180000; mw.l bb00cb7c 00010002; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00180000; mw.l bb00cb7c 00010003; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00180000; mw.l bb00cb7c 001e00c1; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00190000; mw.l bb00cb7c 00010002; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00190000; mw.l bb00cb7c 00010003; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 00190000; mw.l bb00cb7c 001e00c1; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 001a0000; mw.l bb00cb7c 00010002; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 001a0000; mw.l bb00cb7c 00010003; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 001a0000; mw.l bb00cb7c 001e00c1; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 001b0000; mw.l bb00cb7c 00010002; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 001b0000; mw.l bb00cb7c 00010003; mw.l bb00cb74 3; md.l bb00cb74 3
+mw.l bb00cb70 0; mw.l bb00cb78 001b0000; mw.l bb00cb7c 001e00c1; mw.l bb00cb74 3; md.l bb00cb74 3
+```
+
+4. Move the cable to front port 2 and run `md.l bb00cb10 1` again. Repeat for every
+   port, including the SFP+ port with a module and peer. Note in the log
+   which front port each run was for.
+5. Send the log, or decode it yourself:
+
+   ```sh
+   python3 scripts/uboot-wiring.py decode uboot.log
+   ```
+
+   It prints a table of every port (bus, address, PHY ID, lane mode,
+   polarity) and the device tree lines to use.
+
+The command list comes from `python3 scripts/uboot-wiring.py commands`.
+
 ## Network in U-Boot
 
 U-Boot's network is off until `rtk network on` is run. It uses `ipaddr` as

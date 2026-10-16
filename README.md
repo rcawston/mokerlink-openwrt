@@ -9,12 +9,13 @@ pinned to an exact source revision, with defaults for a plain layer-2
 switch and tools to bring up the hardware safely.
 
 > **Status: stage 1. Not yet run on real hardware.**
-> The board description is derived from the closest supported switch
-> (Hasivo S1100WP-8XGT-SE: same RTL9303 chip and RTL8264 10G PHYs, same
-> flash layout). Several details (PHY addresses, lane polarity, SFP+ wiring,
-> RAM size) must be confirmed on your unit before anything is written to
-> flash. The procedure below is designed so that every test runs from RAM
-> and the stock firmware stays untouched until the very end.
+> Confirmed chips: RTL9303 SoC, RTL8264B 10G PHYs, RTL8239 PoE. The port
+> wiring is derived from the closest supported switch (Hasivo
+> S1100WP-8XGT-SE: same SoC and PHY family, same flash layout). Several
+> details (PHY addresses, lane polarity, SFP+ wiring, RAM size, PoE bus)
+> must be confirmed on your unit before anything is written to flash. Most
+> of them can be read from U-Boot with `scripts/uboot-wiring.py`. Every test
+> runs from RAM, and the stock firmware stays untouched until the very end.
 
 ## Why OpenWrt and not firmware from scratch
 
@@ -41,7 +42,8 @@ reviewable board description on top of it is the most reliable option.
   `mokerlink-polarity-scan`, `mokerlink-gpio-watch`
 
 Not yet supported in stage 1: control of PoE from the firmware (whether
-PoE still works depends on the PoE controller, see
+PoE works without it depends on the RTL8239's MCU firmware; OpenWrt's
+`realtek-pse-mcu` driver supports it once its bus is known, see
 [docs/05-porting.md](docs/05-porting.md#poe)), SFP+ module EEPROM/DOM
 readout and 1G SFP modules, the reset button, and the system LED.
 
@@ -49,7 +51,8 @@ readout and 1G SFP modules, the reset button, and the system LED.
 
 The full procedure is in [docs/03-install.md](docs/03-install.md).
 
-1. **Console:** connect a serial console and capture the stock boot log
+1. **Console:** connect a serial console, capture the stock boot log, and
+   read the port wiring from U-Boot
    ([docs/02-serial-console.md](docs/02-serial-console.md)).
 2. **RAM boot:** boot the OpenWrt RAM image over TFTP from U-Boot. Flash
    is not touched, and a power cycle returns to stock.
@@ -88,7 +91,8 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 | `patches/` | OpenWrt changes: image recipe and MAC address source |
 | `files/` | Files added to the firmware: switch defaults and bring-up tools |
 | `config/` | Pinned OpenWrt and feed revisions, package selection |
-| `scripts/` | `build.sh`, `check-dts.sh`, `uimage-remagic.py` |
+| `scripts/` | `build.sh`, `check-dts.sh`, `uimage-remagic.py`, `uboot-wiring.py` (reads the port wiring from U-Boot) |
+| `tests/` | Simulation test for `uboot-wiring.py` |
 | `docs/` | Hardware notes, console, install, recovery, porting, everyday use |
 
 ## Documentation

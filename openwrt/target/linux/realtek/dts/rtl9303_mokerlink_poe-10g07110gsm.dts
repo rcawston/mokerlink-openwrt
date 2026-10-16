@@ -5,10 +5,15 @@
  *
  * STAGE 1 DEVICE TREE: a conservative starting point, not a verified port.
  *
+ * Confirmed from the board: RTL9303 SoC, RTL8264B quad 10GBASE-T PHYs,
+ * RTL8239 PoE controller(s) behind a PSE MCU.
+ *
  * Everything marked UNVERIFIED is copied from the closest supported board
- * (Hasivo S1100WP-8XGT-SE: RTL9303 + 2x RTL8264, same flash layout) and
- * must be confirmed on real hardware with the tools in this repository
- * (see docs/05-porting.md) before the image is written to flash.
+ * (Hasivo S1100WP-8XGT-SE: RTL9303 + 2x RTL8264, same flash layout). The
+ * PoE design differs from the Hasivo one (HS104), so this is probably a
+ * different ODM. scripts/uboot-wiring.py reads the real PHY wiring and lane
+ * polarity from the vendor U-Boot; see docs/05-porting.md. Confirm
+ * everything before the image is written to flash.
  *
  * Deliberately left out until confirmed, because a wrong guess there can
  * hurt stability rather than just disable a feature:
@@ -18,7 +23,10 @@
  *     PoE controller in reset
  *   - port LED sets: without a "realtek,rtl9300-leds" node the switch keeps
  *     the LED setup the boot loader programmed
- *   - SFP cage I2C/GPIOs and the PoE controller (PSE) bus
+ *   - SFP cage I2C/GPIOs
+ *   - the PoE MCU (RTL8239 PSE): it needs the "realtek,pse-mcu-gen2-*"
+ *     driver on an I2C bus or UART that is not known yet
+ *     (docs/05-porting.md#poe)
  *   - RAM above 128 MiB (declaring more RAM than fitted crashes the kernel;
  *     declaring less only leaves it unused)
  */
@@ -122,10 +130,11 @@
 };
 
 /*
- * UNVERIFIED PHY wiring: one RTL8264 (quad 10GBASE-T) for lan1-4 on SMI
- * bus 0 and three PHYs of a second RTL8264 for lan5-7 on SMI bus 3, as on
+ * UNVERIFIED PHY wiring: one RTL8264B (quad 10GBASE-T) for lan1-4 on SMI
+ * bus 0 and three PHYs of a second RTL8264B for lan5-7 on SMI bus 3, as on
  * the Hasivo S1100W-8XGT-SE with its eighth copper port swapped for SFP+.
- * mokerlink-probe prints the PHY ID found at every address declared here.
+ * Other RTL9303/RTL8264B boards put the second quad on bus 1 or on bus 0 at
+ * addresses 4-7. scripts/uboot-wiring.py decode prints the real lines.
  */
 &mdio_bus0 {
 	ethernet-phy-package@0 {
@@ -156,8 +165,9 @@
  * UNVERIFIED host-side SerDes lane polarity, copied from the Hasivo board.
  * The RTL826x driver programs these on every PHY init and defaults to
  * "normal", so a wrong value silently kills traffic on that port: the link
- * LED comes up but no frames pass. mokerlink-polarity-scan finds the right
- * values on real hardware.
+ * LED comes up but no frames pass. scripts/uboot-wiring.py reads the values
+ * the vendor U-Boot programs; mokerlink-polarity-scan confirms them from a
+ * running OpenWrt.
  */
 &phy0 { tx-polarity = <PHY_POL_INVERT>; };
 &phy8 { rx-polarity = <PHY_POL_INVERT>; };

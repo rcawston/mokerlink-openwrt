@@ -20,6 +20,9 @@ jobs:
       - name: Shellcheck
         run: shellcheck -x scripts/*.sh files/usr/sbin/mokerlink-* files/etc/init.d/mokerlink files/etc/uci-defaults/*
 
+      - name: U-Boot wiring decoder test
+        run: python3 tests/test_uboot_wiring.py
+
       - name: Device tree and patch checks
         run: scripts/check-dts.sh
 

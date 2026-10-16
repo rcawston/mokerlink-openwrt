@@ -9,6 +9,10 @@ firmware unchanged.
 - Serial console working and the stock boot log captured
   ([02-serial-console.md](02-serial-console.md)). Note the original
   `bootcmd` from `printenv`.
+- The port wiring read from U-Boot and put into the device tree
+  ([02-serial-console.md](02-serial-console.md#read-the-port-wiring)). This
+  is optional, but it usually makes the first RAM image work on every
+  copper port.
 - The images (see the README): `*-initramfs-kernel.bin`,
   `*-initramfs-kernel-stdmagic.bin` and `*-squashfs-sysupgrade.bin`.
 - A PC with a TFTP server serving the image directory: `tftpd-hpa` or

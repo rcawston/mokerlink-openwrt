@@ -83,6 +83,9 @@ errors for it.
 
 Where to find the real wiring:
 
+- **U-Boot (best).** [Read the port wiring](02-serial-console.md#read-the-port-wiring)
+  and decode the log with `scripts/uboot-wiring.py decode`. It prints the
+  `&mdio_busN` lines and the polarity lines ready to paste.
 - **The stock boot log.** Realtek SDK firmware usually prints its port, PHY
   and SerDes table while initializing the switch. Look for lines
   mentioning `RTL8264`, `RTL8261`, `SMI`, `SDS` or `serdes`, and for a
@@ -93,7 +96,9 @@ Where to find the real wiring:
 
   | Board | Ports 1-4 | Ports 5-8 |
   |---|---|---|
-  | Hasivo S1100W-8XGT-SE (assumed here) | bus 0, addr 0-3 | bus 3, addr 16-19 |
+  | Hasivo S1100W-8XGT-SE, 2× RTL8264 (assumed here) | bus 0, addr 0-3 | bus 3, addr 16-19 |
+  | XikeStor SKS8300-8T, 8× RTL8261N | bus 0, addr 0-3 | bus 1, addr 0-3 |
+  | Ubiquiti USW Pro XG 8 PoE, 2× RTL8264B (RTL9313) | bus 0, addr 0-3 | bus 0, addr 4-7 |
   | Hasivo F1100W-4SX-4XGT (singles) | SFP | bus 2 addr 0, bus 3 addr 16, bus 0 addr 16, bus 1 addr 0 |
   | MokerLink 2G080GM (2.5G) | bus 0, addr 1-4 | bus 1, addr 1-4 |
 
@@ -104,8 +109,13 @@ copper port that is really on SerDes 9.
 
 The RTL826x PHY driver programs the lane polarity between switch chip and
 PHY from the device tree on every boot. A wrong value makes a port show
-link but pass no frames in one or both directions. With a host at
-`192.168.2.100` on the port under test:
+link but pass no frames in one or both directions.
+
+The vendor U-Boot programs the correct values, so the
+[U-Boot wiring read](02-serial-console.md#read-the-port-wiring) gives them
+directly. To confirm them, or find them when U-Boot did not set them, run
+the scan from a RAM-booted OpenWrt with a host at `192.168.2.100` on the
+port under test:
 
 ```sh
 mokerlink-polarity-scan lan2 192.168.2.100
@@ -201,24 +211,84 @@ instead of `SWITCH_PORT_SDS`. A wrong LED set only lights the wrong LEDs.
 
 ## PoE
 
-Stage 1 does not talk to the PoE hardware. What happens depends on the
-design:
+The board uses Realtek **RTL8239** PSE chips. They are not driven by the
+SoC directly but by a small microcontroller (the "PSE MCU") running
+Realtek's PoE firmware. The SoC talks to that MCU over I²C or a UART.
+OpenWrt supports this with the `realtek-pse-mcu` driver (headed for Linux
+7.3), which handles the RTL8239 with the "gen2" protocol.
 
-- **Autonomous PoE controller** (powers ports on its own after detection):
-  PoE works under OpenWrt as it does on stock, just without per-port
-  control. Check with one PoE device.
-- **Hasivo design** (HS104 PSE chips and an STC8 MCU on a bit-banged I²C bus
-  on GPIO 22/23): OpenWrt has drivers. If the photos show HS104 chips,
-  copy the `i2c_scl23_sda22` node from OpenWrt's
-  `rtl9303_hasivo_s1100wp-8xgt-se.dts`, adjust the PSE channels to 7
-  ports, and add `kmod-pse-hasivo-hs104 kmod-mfd-hasivo-stc8` to
-  `DEVICE_PACKAGES` in the patch.
-- **Realtek PSE MCU** (RTL8238/RTL8239 behind a microcontroller on a UART):
-  supported in OpenWrt by `realtek-poe`. This needs the UART and the MCU
-  protocol version.
+**Without the driver (stage 1)** it depends on the MCU firmware: some boards
+power PoE devices on their own after detection, others wait for the host to
+enable the PSE system first. Test with one PoE device.
 
-Identify the chips first (photos). Only scan an I²C bus (`i2cdetect -r`)
-once its pins are known, because a scan toggles them.
+**With the driver**, PoE is enabled at boot and every port can be switched
+and monitored (`ethtool --show-pse lanN`, `ethtool --set-pse lanN
+c33-pse-admin-control disable`). Adding it needs one fact: where the MCU is
+connected. On all supported RTL8239 boards it is an I²C channel at address
+`0x20`:
+
+| Board | Bus | Address | Compatible |
+|---|---|---|---|
+| Ubiquiti USW Pro XG 8 PoE | `i2c_mst2` channel 6 | `0x20` | `realtek,pse-mcu-gen2-smbus` |
+| Ubiquiti USW Pro Max 24 PoE | `i2c_mst2` channel 0 | `0x20` | `realtek,pse-mcu-gen2-smbus` |
+| Zyxel XS1930-12HP | `i2c_mst1` channel 3 | `0x20` | `realtek,pse-mcu-gen2-smbus` |
+| Linksys LGS328MPC v2 | bit-banged I²C, SDA GPIO 9, SCL GPIO 17 | `0x2a` | `realtek,pse-mcu-gen2-i2c` |
+
+To find the channel:
+
+1. **Photos:** identify the MCU next to the RTL8239s and look up its pinout.
+   Its I²C (or UART) pins lead towards the SoC.
+2. **Stock boot log:** look for lines mentioning PoE, PSE, I2C or the MCU.
+3. **Trial in a RAM boot**, once the photos rule out a conflict with other
+   pins: declare the MCU on a candidate channel. The driver reports the
+   MCU and its RTL8239 chips in `dmesg` if the guess is right, and fails
+   harmlessly if not. Don't scan with `i2cdetect` first: a scan toggles
+   every address on the bus.
+
+The device tree addition, with `i2c_mst2` channel 6 as an example:
+
+```dts
+&i2c_mst2 {
+	status = "okay";
+
+	i2c_poe: i2c@6 {
+		reg = <6>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		pse: ethernet-pse@20 {
+			compatible = "mokerlink,poe-10g07110gsm-pse", "realtek,pse-mcu-gen2-smbus";
+			reg = <0x20>;
+
+			pse-pis {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				PSE_PI(0)
+				PSE_PI(1)
+				PSE_PI(2)
+				PSE_PI(3)
+				PSE_PI(4)
+				PSE_PI(5)
+				PSE_PI(6)
+			};
+		};
+	};
+};
+
+&phy0 { pses = <&pse_pi0>; };
+&phy8 { pses = <&pse_pi1>; };
+&phy16 { pses = <&pse_pi2>; };
+&phy20 { pses = <&pse_pi3>; };
+&phy24 { pses = <&pse_pi4>; };
+&phy25 { pses = <&pse_pi5>; };
+&phy26 { pses = <&pse_pi6>; };
+```
+
+Then add `kmod-pse-realtek-mcu-i2c` to `DEVICE_PACKAGES` in the patch. The
+order of the MCU's port numbers (PI 0-6) relative to the front ports is
+another assumption: plug a PoE device into port 1 and check with
+`ethtool --show-pse lan1` that lan1 is the port that reports power.
 
 ## Fans and temperature
 
