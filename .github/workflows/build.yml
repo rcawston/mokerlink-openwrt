@@ -23,6 +23,9 @@ jobs:
       - name: U-Boot wiring decoder test
         run: python3 tests/test_uboot_wiring.py
 
+      - name: Serial collector test
+        run: pip install pyserial && python3 tests/test_uboot_collect.py
+
       - name: Device tree and patch checks
         run: scripts/check-dts.sh
 

@@ -79,6 +79,39 @@ harmless.
   The bytes from offset `0x20` are the image name in ASCII, often naming
   the vendor SDK version.
 
+## Collect everything automatically
+
+`scripts/uboot-collect.py` does the reading in the next sections and the
+flash backup in one run. It types each command in short bursts and checks
+U-Boot's echo before pressing Enter, because this U-Boot has no flow control
+and loses characters from fast pastes. It verifies every flash chunk against
+U-Boot's `crc32` and reads it again when bytes were lost on the line.
+
+On Windows:
+
+1. Install Python 3 from python.org, then `py -m pip install pyserial`.
+2. Download this repository (Code → Download ZIP on GitHub) and unpack it.
+3. Get to the `RTL9300#` prompt in PuTTY, then **close PuTTY** so the COM
+   port is free. The switch stays at the prompt.
+4. In the repository's `scripts` folder:
+
+   ```
+   py uboot-collect.py --port COM3
+   ```
+
+It first saves the board information and port wiring (`uboot-info.log`,
+`uboot-wiring.txt`), asking you to move a cable from port to port for the
+link test. Then it dumps the flash to `full-flash.bin` in a new dated folder.
+The dump takes about two hours at 115200 baud. If it is interrupted, run
+the command it prints (`--resume <folder>`) to continue.
+
+Options: `--auto-esc` stops autoboot by itself while you power-cycle the
+switch (no PuTTY needed); `--skip-dump` or `--skip-info` runs only one
+half; `--skip-link-test` leaves out the cable moving.
+
+Send `uboot-info.log` and `uboot-wiring.txt`. Keep `full-flash.bin` private
+(it holds your MAC address and stock configuration) and in two places.
+
 ## Read the port wiring
 
 Once U-Boot has brought up the switch (`rtk network on`), its registers hold

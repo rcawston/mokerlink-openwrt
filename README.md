@@ -92,7 +92,7 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 | `patches/` | OpenWrt changes: image recipe and MAC address source |
 | `files/` | Files added to the firmware: switch defaults and bring-up tools |
 | `config/` | Pinned OpenWrt and feed revisions, package selection |
-| `scripts/` | `build.sh`, `check-dts.sh`, `uimage-remagic.py`, `uboot-wiring.py` (reads the port wiring from U-Boot), `uboot-md2bin.py` (turns a U-Boot flash dump into a binary) |
+| `scripts/` | `build.sh`, `check-dts.sh`, `uimage-remagic.py`, `uboot-wiring.py` (reads the port wiring from U-Boot), `uboot-md2bin.py` (turns a U-Boot flash dump into a binary), `uboot-collect.py` (collects all U-Boot information and dumps the flash over the serial port, CRC-verified) |
 | `tests/` | Simulation test for `uboot-wiring.py` |
 | `docs/` | Hardware notes, console, install, recovery, porting, everyday use |
 
