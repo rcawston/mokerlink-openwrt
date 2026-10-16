@@ -30,7 +30,7 @@ Still assumed, from similar supported switches:
 | SFP+ | MAC port 27 on SerDes 9 | eighth RTL9303 10G lane |
 | Flash | 16 MiB SPI NOR, standard Realtek SDK layout | Hasivo S1100W, MokerLink 2G080GM |
 | RAM | at least 128 MiB (Hasivo: 512 MiB) | U-Boot prints the real size |
-| Console | 38400 8N1 | RTL930x U-Boot default |
+| Console | header J4 (GND, TXD, RXD, 3V3, 3.3 V logic), 38400 8N1 | J4 seen on the board; speed is the RTL930x U-Boot default |
 | uImage magic | `0x83800000` | MokerLink 2G080GM and 10GT080M |
 | PoE MCU | I²C, address `0x20`, gen2 protocol | Ubiquiti USW Pro XG 8 PoE and Zyxel XS1930-12HP (both RTL8239) |
 
@@ -74,7 +74,7 @@ Note the markings of:
 - the SPI flash (8-pin chip, e.g. FM25Q128, W25Q128, GD25Q256)
 - the RAM chips, which give the RAM size
 - any small chip near the fans (fan controller or MCU)
-- the serial console header, usually 4 pins: GND, TX, RX, 3.3 V
+- the serial console header: J4 (GND, TXD, RXD, 3V3)
 
 Take a sharp photo of both sides of the board. These answer most questions
 in [05-porting.md](05-porting.md).

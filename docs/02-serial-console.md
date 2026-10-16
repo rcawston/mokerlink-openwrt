@@ -5,13 +5,24 @@ is also the way back if anything goes wrong, so set it up first.
 
 ## Connecting
 
-- **RJ45 "Console" port on the front**, if your unit has one: use a standard
-  RJ45-to-USB console cable (the Cisco-style blue cable).
-- **Internal 4-pin header**: use a **3.3 V** USB-TTL adapter (CP2102,
-  FT232RL, CH340). Connect GND to GND, the switch TX to adapter RX and the
-  switch RX to adapter TX. Leave the 3.3 V pin unconnected. Never use an
-  RS-232 adapter on the internal header: its ±12 V levels destroy the
-  SoC's pins.
+The POE-10G07110GSM has no external console port. The console is the
+internal header **J4**, labelled `GND`, `TXD`, `RXD`, `3V3`.
+
+Use a **3.3 V** USB-TTL adapter (CP2102, FT232RL, CH340; if it has a
+voltage jumper, set it to 3.3 V) and connect:
+
+| J4 | Adapter |
+|---|---|
+| `GND` | GND |
+| `TXD` | RX |
+| `RXD` | TX |
+| `3V3` | **not connected** |
+
+The labels are from the switch's side, so TXD goes to the adapter's RX. If
+nothing appears, swap TX and RX; that is harmless at 3.3 V. If J4 has only
+pads, solder in a 4-pin 2.54 mm header. Never use an RS-232 adapter: its
+±12 V levels destroy the SoC's pins. When powering the switch with the case
+open, route the cable away from the power supply board.
 
 Terminal settings: **38400 baud, 8N1, no flow control**. If you see
 garbage, try 115200. For example:
