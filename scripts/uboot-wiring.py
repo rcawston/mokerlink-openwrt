@@ -147,8 +147,19 @@ def parse(log):
             continue
         if addr == BASE + SMI_ACCESS_CTRL_1 and len(words) >= 2:
             status, data = words[0], words[1]
+            # The switch keeps the requested register in CTRL_3, so trust the
+            # readback over the echoed command, which may not have run (a
+            # garbled first word gives "Unknown command"). Same for the port
+            # in the upper half of CTRL_2 when it is non-zero.
             port = pending[0] if pending else data >> 16
-            mmd, reg = pending[1:] if pending else ((words[2] >> 16) & 0x1F, words[2] & 0xFFFF)
+            if data >> 16 and data >> 16 != port:
+                port = data >> 16
+            if len(words) >= 3:
+                mmd, reg = (words[2] >> 16) & 0x1F, words[2] & 0xFFFF
+            elif pending:
+                mmd, reg = pending[1:]
+            else:
+                continue
             ok = not status & (CMD_RUN | CMD_FAIL)
             phy[(port, mmd, reg)] = (data & 0xFFFF) if ok else None
             pending = None
