@@ -15,8 +15,10 @@ switch and tools to bring up the hardware safely.
 > U-Boot (`scripts/uboot-wiring.py`). Not yet supported: **PoE**. The stock
 > firmware drives the two RTL8239 PoE chips directly and loads their
 > firmware itself, and OpenWrt has no driver for that
-> ([docs/05-porting.md](docs/05-porting.md#poe)). Still untested: SFP+, and
-> copper at 2.5/5/10 Gbit/s.
+> ([docs/05-porting.md](docs/05-porting.md#poe)). The fans run at full
+> speed: the stock firmware turns them down, OpenWrt doesn't yet
+> ([docs/05-porting.md](docs/05-porting.md#fans-and-temperature)). Still
+> untested: SFP+, and copper at 2.5/5/10 Gbit/s.
 
 ## Why OpenWrt and not firmware from scratch
 
@@ -41,9 +43,10 @@ reviewable board description on top of it is the most reliable option.
 - Hardware watchdog: a hung system reboots itself
 - Bring-up tools on the switch: `mokerlink-probe`, `mokerlink-backup`,
   `mokerlink-polarity-scan`, `mokerlink-gpio-watch`
-Not yet supported in stage 1: PoE, SFP+ module EEPROM/DOM readout and 1G SFP
-modules, the reset button, the system LED, and anything behind the RTL8231
-GPIO expander. If you need PoE today, stay on the stock firmware.
+Not yet supported in stage 1: PoE, fan speed control (the fans run at full
+speed), SFP+ module EEPROM/DOM readout and 1G SFP modules, the reset button,
+the system LED, and anything behind the RTL8231 GPIO expander. If you need
+PoE today, stay on the stock firmware.
 
 ## How to install, in short
 

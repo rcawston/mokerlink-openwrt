@@ -252,10 +252,31 @@ done, use the stock firmware if you need PoE.
 
 ## Fans and temperature
 
-If the fans are run by a separate MCU, nothing is needed. If they turn out to
-be SoC-controlled (they stop or behave differently under OpenWrt), stop
-running the switch under load and report it. `mokerlink-probe` prints the
-PHY temperatures (RTL826x sensors) and the SoC temperature.
+**Not supported yet: the fans run at full speed under OpenWrt.** They also
+run at full speed in U-Boot, and the stock firmware slows them down once it
+has booted. Full speed is therefore the board's power-on default, and the
+stock firmware changes something to turn them down: a SoC GPIO, a pin of the
+RTL8231 expander, or a fan controller, temperature sensor or MCU on the
+RTL9303's I²C. OpenWrt drives none of these yet. That is safe, only loud:
+`mokerlink-probe` prints the PHY temperatures (RTL826x sensors) and the SoC
+temperature, and at the first RAM boot they read 31-46 °C and 43 °C.
+
+Finding the control, safest first:
+
+1. **The stock firmware.** Its fan code names the pin or the I²C device, the
+   level for each speed and the temperature thresholds. Reading it changes
+   nothing on the switch.
+2. **The board.** Follow the fan header's control line (the PWM pin of a
+   4-pin header, or the transistor that switches the fan supply) to the
+   chip that drives it.
+3. **An experiment in a RAM boot:** drive the candidate outputs one at a
+   time and listen. Last resort, because a wrong output can reset a PHY or
+   the PoE chips (a power cycle undoes it).
+
+Once the control is known it becomes a `gpio-fan` node (two speeds) or a
+hwmon fan controller, with thermal zones on the PHY sensors that pick the
+speed, as on the Zyxel XGS1250-12 (`gpio-fan` switched by PHY temperature
+trip points) or the D-Link DGS-1250-28X (`gpio-fan` plus an LM75).
 
 ## A factory image for the stock web UI
 

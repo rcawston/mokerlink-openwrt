@@ -128,8 +128,9 @@ rebuild and repeat from step 1 with the new RAM image.
       between two hosts through the switch works.
 - [ ] **Soak test:** an hour of `iperf3` across several ports leaves no
       link flaps or errors in `dmesg`.
-- [ ] **Heat:** fans running, and the temperatures in `mokerlink-probe`
-      stay below about 100 °C under load.
+- [ ] **Heat:** fans running (at full speed: OpenWrt has no fan control
+      for this board yet), and the temperatures in `mokerlink-probe` stay
+      below about 100 °C under load.
 - [ ] **PoE:** not supported by OpenWrt yet. If you have a PoE device,
       plug it in and note whether it powers up anyway; that decides how PoE
       support gets done ([05-porting.md](05-porting.md#poe)). If you need

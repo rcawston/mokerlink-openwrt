@@ -32,6 +32,7 @@ Confirmed from the chip markings and the stock boot log:
 | PHY map | RTL8261BE on MAC 0/8/16 (SMI bus 1/2/3, address 0); RTL8264B on MAC 20/24/25/26 (bus 0, addresses 0-3) | U-Boot SMI registers |
 | Lane polarity | RTL8261BE links normal; each RTL8264B link inverted once on the PHY and once on the SerDes (alternating tx/rx) | U-Boot PHY and SerDes registers, RAM boot |
 | Front port order | front ports 1-7 are `lan1`-`lan7` (MAC ports 0, 8, 16, 20, 24, 25, 26), all pass traffic | port test in a RAM boot |
+| Fans | full speed from power-on, in U-Boot and under OpenWrt; only the stock firmware slows them, once it has booted | RAM boot |
 | Stock firmware | "KT-NOS" 1.1.1.34 | boot log |
 
 Still assumed:
@@ -83,8 +84,12 @@ in [05-porting.md](05-porting.md).
 
 ## Heat
 
-10GBASE-T PHYs run hot, typically 60-90 °C on the die at 10G. Watch the fans
-the first time OpenWrt runs. If the fans are controlled by a separate MCU
-(as on the Hasivo boards), they behave the same under any firmware. If they
-stop or behave differently under OpenWrt, power off and report it.
+10GBASE-T PHYs run hot, typically 60-90 °C on the die at 10G. The fans run
+at full speed from power-on, in U-Boot and under OpenWrt, and only the stock
+firmware turns them down once it has booted. So nothing on the board picks
+the speed by itself; the SoC sets it, directly or through a chip it
+programs, and OpenWrt does not do that yet
+([05-porting.md](05-porting.md#fans-and-temperature)). Full speed is the
+safe side, only louder: at the first RAM boot the PHYs read 31-46 °C and
+the SoC 43 °C. If the fans ever stop under OpenWrt, power off and report it.
 `mokerlink-probe` prints the PHY and SoC temperatures.
