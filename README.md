@@ -106,6 +106,8 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
    device tree
 6. [Using the switch](docs/06-using.md): defaults, VLANs, updates, and
    why traffic may not forward
+7. [Build and install from Windows](docs/07-windows.md): WSL2 build, TFTP,
+   RAM test and flashing, step by step
 
 ## Risks
 
