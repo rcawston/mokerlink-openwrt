@@ -11,7 +11,8 @@
 #   3. PoE in semi-auto mode on port 1: does the chip detect and classify a
 #      device but wait for the host before powering it? (needed for a PoE
 #      power budget)
-#   4. link drops right after plug-in, with a device that is already up
+#   4. link drops right after plug-in, with a device that is already up,
+#      with the PHY's status registers about 10 times a second
 #
 # Prepare: boot the image from RAM, copy the PoE firmware as for
 # mokerlink-poe-test (scp -O rtl8239-bt.bin root@<switch>:/tmp/), have a
@@ -78,6 +79,31 @@ poe_regs() {
 	printf '  0x12 %s  0x10 %s  dc0 %s dc1 %s  I0 %s%s V0 %s%s\n' \
 		"$(rd 0x22 0x12)" "$(rd 0x22 0x10)" "$(rd 0x22 0x0c)" "$(rd 0x22 0x0d)" \
 		"$(rd 0x22 0x31)" "$(rd 0x22 0x30)" "$(rd 0x22 0x33)" "$(rd 0x22 0x32)" >>"$OUT"
+}
+
+# phy_sample PORT SECONDS: about 10 times a second, the link the kernel
+# reports and the PHY's status registers (reads only): AN status 7.1
+# (bit 5 complete, bit 2 link), PMA 1.1 and PCS 3.1 (bit 2 link), and
+# Realtek's PHY status VEND2 0xa434 (bit 2 link, speed in bits 9, 5:4)
+phy_sample() {
+	local port="$1" end now
+	# shellcheck source=../../lib/functions/mokerlink.sh
+	. /lib/functions/mokerlink.sh
+	mokerlink_phy_of_port "$port" || { say "$port: no PHY found"; return; }
+	command -v mdio >/dev/null || { say "no mdio tool"; return; }
+	printf '\n%s (%s %s:%s), uptime carrier an pma pcs physr:\n' \
+		"$port" "$PHY_DRIVER" "$PHY_BUS" "$PHY_ADDR" >>"$OUT"
+	now=$(cut -d. -f1 /proc/uptime)
+	end=$((now + $2))
+	while [ "$now" -lt "$end" ]; do
+		printf '%s %s %s %s %s %s\n' "$(cut -d' ' -f1 /proc/uptime)" \
+			"$(cat "/sys/class/net/$port/carrier" 2>/dev/null)" \
+			"$(mdio "$PHY_BUS" mmd "$PHY_ADDR:7" raw 1 2>/dev/null)" \
+			"$(mdio "$PHY_BUS" mmd "$PHY_ADDR:1" raw 1 2>/dev/null)" \
+			"$(mdio "$PHY_BUS" mmd "$PHY_ADDR:3" raw 1 2>/dev/null)" \
+			"$(mdio "$PHY_BUS" mmd "$PHY_ADDR:31" raw 0xa434 2>/dev/null)" >>"$OUT"
+		now=$(cut -d. -f1 /proc/uptime)
+	done
 }
 
 restore_reset() {
@@ -201,12 +227,12 @@ if [ -n "$BUS" ] && ask "Nothing plugged into port 1 now; the next step puts it 
 fi
 
 section "4: link drops right after plug-in"
-if ask "Plug a cable from another switch or router (already running) into port 2"; then
-	link_log lan2 20
-	run sh -c "logread | grep lan2 | tail -20"
-	if ask "Unplug it, wait 5 s, plug it in again"; then
-		link_log lan2 20
-		run sh -c "logread | grep lan2 | tail -20"
+if ask "Have a cable from another switch or router (already running) ready; press Enter, then plug it into port 2 within 5 s"; then
+	phy_sample lan2 25
+	run sh -c "dmesg | grep lan2 | tail -20"
+	if ask "Unplug it; press Enter, then plug it in again within 5 s"; then
+		phy_sample lan2 25
+		run sh -c "dmesg | grep lan2 | tail -20"
 	fi
 	run ethtool lan2
 	run sh -c "ethtool --show-eee lan2 2>&1"
