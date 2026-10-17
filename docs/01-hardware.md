@@ -32,7 +32,7 @@ Confirmed from the chip markings and the stock boot log:
 | PHY map | RTL8261BE on MAC 0/8/16 (SMI bus 1/2/3, address 0); RTL8264B on MAC 20/24/25/26 (bus 0, addresses 0-3) | U-Boot SMI registers |
 | Lane polarity | RTL8261BE links normal; each RTL8264B link inverted once on the PHY and once on the SerDes (alternating tx/rx) | U-Boot PHY and SerDes registers, RAM boot |
 | Front port order | front ports 1-7 are `lan1`-`lan7` (MAC ports 0, 8, 16, 20, 24, 25, 26), all pass traffic | port test in a RAM boot |
-| Fans | full speed from power-on, in U-Boot and under OpenWrt; only the stock firmware slows them, once it has booted | RAM boot |
+| Fan controller | **ADT7476** at I²C address `0x2e`, on a bit-banged bus: SCL GPIO 8, SDA GPIO 9. Runs the fans at full speed from power-on until programmed; the stock firmware sets 50 %, and full speed above 65 °C | stock firmware (`board_conf.ko` board table `9303M7XC1XF`, `ski.ko`), RAM boot |
 | Stock firmware | "KT-NOS" 1.1.1.34 | boot log |
 
 Still assumed:
@@ -76,7 +76,7 @@ Note the markings of:
   over `uart1`; the stock firmware shows no separate PoE microcontroller)
 - the SPI flash (8-pin chip, e.g. FM25Q128, W25Q128, GD25Q256)
 - the RAM chips, which give the RAM size
-- any small chip near the fans (fan controller or MCU)
+- the fan controller (confirmed from the stock firmware: ADT7476)
 - the serial console header: J4 (GND, TXD, RXD, 3V3)
 
 Take a sharp photo of both sides of the board. These answer most questions
@@ -84,12 +84,12 @@ in [05-porting.md](05-porting.md).
 
 ## Heat
 
-10GBASE-T PHYs run hot, typically 60-90 °C on the die at 10G. The fans run
-at full speed from power-on, in U-Boot and under OpenWrt, and only the stock
-firmware turns them down once it has booted. So nothing on the board picks
-the speed by itself; the SoC sets it, directly or through a chip it
-programs, and OpenWrt does not do that yet
-([05-porting.md](05-porting.md#fans-and-temperature)). Full speed is the
-safe side, only louder: at the first RAM boot the PHYs read 31-46 °C and
-the SoC 43 °C. If the fans ever stop under OpenWrt, power off and report it.
-`mokerlink-probe` prints the PHY and SoC temperatures.
+10GBASE-T PHYs run hot, typically 60-90 °C on the die at 10G. The fans are
+driven by an ADT7476 fan controller, which runs them at full speed from
+power-on until software programs it: in U-Boot, and in OpenWrt builds
+without fan control, they stay at full speed. The stock firmware, and
+OpenWrt's `mokerlink-fan` service, run them at 50 % and switch to full
+speed when it gets hot ([05-porting.md](05-porting.md#fans-and-temperature)).
+If the fans ever stop under OpenWrt, power off and report it.
+`mokerlink-probe` prints the PHY and SoC temperatures, and
+`mokerlink-fan status` the fan controller's.

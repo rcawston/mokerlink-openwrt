@@ -1,0 +1,161 @@
+#!/bin/sh
+# mokerlink-fan run|full|status
+#
+# Fan speed control. The fans hang off an ADT7476 fan controller, which runs
+# them at full speed from power-on until it is programmed. This does what the
+# stock firmware does (ski.ko, board table 9303M7XC1XF in board_conf.ko): all
+# three PWM outputs in manual mode at 50 %, and full speed while the hottest
+# of the ADT7476's three temperature sensors is above 65 C. Two additions: a
+# hysteresis, so the fans don't toggle at the threshold, and full speed while
+# any 10G PHY is above phy_high_temp.
+#
+#   run     control loop, started by /etc/init.d/mokerlink-fan with the
+#           settings in /etc/config/mokerlink (section "fan")
+#   full    back to full speed, as at power-on
+#   status  temperatures, fan speeds and PWM duty cycles
+
+# shellcheck source=/dev/null
+. /lib/functions.sh
+
+log() { logger -t mokerlink-fan "$*"; }
+
+# hwmon directory of the ADT7476 (adt7475 driver)
+adt7476_hwmon() {
+	local h
+	for h in /sys/class/hwmon/hwmon*; do
+		[ "$(cat "$h/name" 2>/dev/null)" = adt7476 ] && { echo "$h"; return 0; }
+	done
+	return 1
+}
+
+# The temperature inputs of the 10G PHYs (RTL826x sensors)
+phy_temps() {
+	local h
+	for h in /sys/class/hwmon/hwmon*; do
+		case "$(cat "$h/name" 2>/dev/null)" in
+		realtek_mdio*) echo "$h/temp1_input" ;;
+		esac
+	done
+}
+
+# Highest of the given tempN_input readings, in millidegrees. Skips remote
+# diodes flagged as faulty. Prints nothing if none could be read.
+hottest() {
+	local t v max=""
+	for t in "$@"; do
+		[ "$(cat "${t%_input}_fault" 2>/dev/null)" = 1 ] && continue
+		v=$(cat "$t" 2>/dev/null) || continue
+		case "$v" in
+		'' | *[!0-9-]*) continue ;;
+		esac
+		if [ -z "$max" ] || [ "$v" -gt "$max" ]; then
+			max=$v
+		fi
+	done
+	echo "$max"
+}
+
+celsius() { # millidegrees
+	if [ -n "$1" ]; then
+		echo "$(($1 / 1000)) C"
+	else
+		echo "-"
+	fi
+}
+
+# Manual mode and the given duty cycle (0-255) on all three PWM outputs
+set_pwm() {
+	local p
+	for p in 1 2 3; do
+		echo 1 >"$HWMON/pwm${p}_enable" || return 1
+		echo "$1" >"$HWMON/pwm$p" || return 1
+	done
+}
+
+full_speed() {
+	local p
+	HWMON=$(adt7476_hwmon) || return 1
+	for p in 1 2 3; do
+		echo 0 >"$HWMON/pwm${p}_enable" || return 1
+	done
+}
+
+status() {
+	local f
+	HWMON=$(adt7476_hwmon) || { echo "no ADT7476 found"; return 1; }
+	for f in "$HWMON"/temp[123]_input "$HWMON"/fan[1234]_input \
+		 "$HWMON"/pwm[123] "$HWMON"/pwm[123]_enable; do
+		[ -f "$f" ] && echo "${f##*/}: $(cat "$f" 2>/dev/null)"
+	done
+	# shellcheck disable=SC2046  # one argument per sensor
+	echo "hottest PHY: $(celsius "$(hottest $(phy_temps))")"
+}
+
+run() {
+	local enabled low_pwm high phy_high hyst interval i
+	local board phy want state="" pwm
+
+	config_load mokerlink
+	config_get_bool enabled fan enabled 1
+	config_get low_pwm fan low_pwm 128
+	config_get high fan high_temp 65
+	config_get phy_high fan phy_high_temp 95
+	config_get hyst fan hysteresis 5
+	config_get interval fan interval 10
+	[ "$enabled" = 1 ] || return 0
+	[ "$low_pwm" -lt 77 ] && low_pwm=77   # 30 %, the stock firmware's start value
+	[ "$low_pwm" -gt 255 ] && low_pwm=255
+	high=$((high * 1000)) phy_high=$((phy_high * 1000)) hyst=$((hyst * 1000))
+
+	# The driver probes when kmodloader loads it, so this is normally there
+	i=0
+	until HWMON=$(adt7476_hwmon); do
+		i=$((i + 1))
+		[ $i -ge 30 ] && { log "no ADT7476 found, the fans stay at full speed"; return 1; }
+		sleep 1
+	done
+
+	trap 'full_speed; exit 0' INT TERM
+
+	while :; do
+		board=$(hottest "$HWMON"/temp[123]_input)
+		# shellcheck disable=SC2046  # one argument per sensor
+		phy=$(hottest $(phy_temps))
+		if [ -z "$board" ]; then
+			want=full
+		elif [ "$board" -gt "$high" ] || [ "${phy:-0}" -gt "$phy_high" ]; then
+			want=full
+		elif [ "$state" = full ] &&
+		     { [ "$board" -gt $((high - hyst)) ] || [ "${phy:-0}" -gt $((phy_high - hyst)) ]; }; then
+			want=full
+		else
+			want=low
+		fi
+
+		if [ "$want" != "$state" ]; then
+			pwm=$low_pwm
+			[ "$want" = full ] && pwm=255
+			if ! set_pwm "$pwm"; then
+				log "cannot set the fan speed, back to full speed"
+				full_speed
+				return 1
+			fi
+			log "fans at $((pwm * 100 / 255)) % (ADT7476 $(celsius "$board"), hottest PHY $(celsius "$phy"))"
+			state=$want
+		fi
+
+		# In the background, so that a stop does not wait for the sleep
+		sleep "$interval" &
+		wait $!
+	done
+}
+
+case "$1" in
+run) run ;;
+full) full_speed ;;
+status) status ;;
+*)
+	echo "usage: ${0##*/} run|full|status" >&2
+	exit 1
+	;;
+esac

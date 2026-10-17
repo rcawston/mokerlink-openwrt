@@ -19,6 +19,11 @@
  *   - an RTL8231 GPIO/LED expander (not used here yet)
  *   - stock U-Boot 2011.12 (1.0.0.2), firmware "KT-NOS" 1.1.1.34
  *
+ * Confirmed from the stock firmware (board table "9303M7XC1XF" in
+ * board_conf.ko, fan code in ski.ko):
+ *   - an ADT7476 fan controller at 0x2e on a bit-banged I2C bus, SCL on
+ *     GPIO 8 and SDA on GPIO 9
+ *
  * Confirmed by booting this device tree from RAM: all seven PHYs probe,
  * front ports 1-7 are lan1-lan7 and every copper port passes traffic.
  *
@@ -40,6 +45,7 @@
 
 #include "rtl930x.dtsi"
 
+#include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/phy/phy.h>
 
 / {
@@ -50,6 +56,35 @@
 	 * 128 MiB RAM ("DRAM: 128 MB") and the 115200 baud console of the
 	 * vendor U-Boot are both the rtl930x.dtsi defaults.
 	 */
+
+	/*
+	 * The stock firmware drives this bus in software on these two GPIOs
+	 * (SDK interface 2, "software I2C"), not with an RTL9303 I2C master.
+	 * The SFP+ cage's EEPROM is on SCL GPIO 8 too, with SDA on GPIO 11,
+	 * so full SFP support has to share this SCL line.
+	 */
+	i2c_fan: i2c-gpio-fan {
+		compatible = "i2c-gpio";
+		scl-gpios = <&gpio0 8 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		sda-gpios = <&gpio0 9 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		i2c-gpio,delay-us = <10>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/*
+		 * Runs the fans at full speed from power-on until it is
+		 * programmed; /etc/init.d/mokerlink-fan sets the speed. Its
+		 * three temperature sensors are what the stock firmware
+		 * follows. Pin 14 as GPIO, as the stock firmware sets it
+		 * (register 0x7d = 0x03), so it acts neither as TACH4 nor as a
+		 * THERM input.
+		 */
+		fan-controller@2e {
+			compatible = "adi,adt7476";
+			reg = <0x2e>;
+			adi,pin14-function = "gpio";
+		};
+	};
 };
 
 &spi0 {

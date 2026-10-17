@@ -15,8 +15,8 @@ switch and tools to bring up the hardware safely.
 > U-Boot (`scripts/uboot-wiring.py`). Not yet supported: **PoE**. The stock
 > firmware drives the two RTL8239 PoE chips directly and loads their
 > firmware itself, and OpenWrt has no driver for that
-> ([docs/05-porting.md](docs/05-porting.md#poe)). The fans run at full
-> speed: the stock firmware turns them down, OpenWrt doesn't yet
+> ([docs/05-porting.md](docs/05-porting.md#poe)). Fan control, taken from
+> the stock firmware, is in but not yet tested on the switch
 > ([docs/05-porting.md](docs/05-porting.md#fans-and-temperature)). Still
 > untested: SFP+, and copper at 2.5/5/10 Gbit/s.
 
@@ -41,12 +41,12 @@ reviewable board description on top of it is the most reliable option.
   DHCP server answers within 60 seconds
 - Web UI (LuCI, layer-2 edition) and SSH
 - Hardware watchdog: a hung system reboots itself
+- Fan control like the stock firmware: 50 % normally, full speed when hot
 - Bring-up tools on the switch: `mokerlink-probe`, `mokerlink-backup`,
-  `mokerlink-polarity-scan`, `mokerlink-gpio-watch`
-Not yet supported in stage 1: PoE, fan speed control (the fans run at full
-speed), SFP+ module EEPROM/DOM readout and 1G SFP modules, the reset button,
-the system LED, and anything behind the RTL8231 GPIO expander. If you need
-PoE today, stay on the stock firmware.
+  `mokerlink-polarity-scan`, `mokerlink-gpio-watch`, `mokerlink-fan`
+Not yet supported in stage 1: PoE, SFP+ module EEPROM/DOM readout and 1G SFP
+modules, the reset button, the system LED, and anything behind the RTL8231
+GPIO expander. If you need PoE today, stay on the stock firmware.
 
 ## How to install, in short
 

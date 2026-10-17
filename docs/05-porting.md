@@ -124,9 +124,13 @@ TX-DISABLE:
 - **MOD-DEF0:** run `mokerlink-gpio-watch`, then insert and remove a module.
   The input that toggles is MOD-DEF0 (low = module present).
 - **LOS:** with a module inserted, plug and unplug the fiber or the DAC peer.
-- **I²C:** the RTL9303 has two I²C masters. Most boards wire the SFP cages
-  to `i2c_mst1` channels, as on the Hasivo F1100W. Confirm from the stock
-  boot log or the board traces.
+- **I²C:** the stock firmware (board table `9303M7XC1XF`) reads the module
+  EEPROM at `0x50` over a bit-banged bus: SCL on GPIO 8, SDA on GPIO 11.
+  GPIO 8 is also the SCL line of the fan controller's bus, which the device
+  tree already claims, and Linux's `i2c-gpio` cannot share one SCL GPIO
+  between two buses. So the cage needs either the RTL9303's own I²C master
+  for both devices (if its SCL and SDA lines are on GPIO 8, 9 and 11) or a
+  driver that switches SDA lines on one bus.
 
 Then replace the `port@27` node with an SFP description, following
 `rtl9303_hasivo_f1100w-4sx-4xgt-common.dtsi` in OpenWrt:
@@ -149,8 +153,6 @@ Then replace the `port@27` node with an SFP description, following
 /* in ethernet-ports: */
 SWITCH_PORT_SFP(27, 8, 9, 0, 0)
 ```
-
-(add `#include <dt-bindings/gpio/gpio.h>` at the top).
 
 ## Reset button
 
@@ -252,31 +254,41 @@ done, use the stock firmware if you need PoE.
 
 ## Fans and temperature
 
-**Not supported yet: the fans run at full speed under OpenWrt.** They also
-run at full speed in U-Boot, and the stock firmware slows them down once it
-has booted. Full speed is therefore the board's power-on default, and the
-stock firmware changes something to turn them down: a SoC GPIO, a pin of the
-RTL8231 expander, or a fan controller, temperature sensor or MCU on the
-RTL9303's I²C. OpenWrt drives none of these yet. That is safe, only loud:
-`mokerlink-probe` prints the PHY temperatures (RTL826x sensors) and the SoC
-temperature, and at the first RAM boot they read 31-46 °C and 43 °C.
+The fans are driven by an **ADT7476** fan controller at I²C address `0x2e`.
+Its power-on default is full speed, which is why the fans run at full speed
+in U-Boot. The stock firmware (board table `9303M7XC1XF` in `board_conf.ko`,
+fan code in `ski.ko`) reaches it over a bit-banged I²C bus, SCL on GPIO 8
+and SDA on GPIO 9, and:
 
-Finding the control, safest first:
+1. starts monitoring (register `0x40` = `0x05`), puts all three PWM outputs
+   in manual mode (`0x5c`-`0x5e` = `0xe2`) and pin 14 in GPIO mode (`0x7d` =
+   `0x03`)
+2. sets the fans to 50 % (duty `0x80` on all three PWM outputs)
+3. from then on reads the chip's three temperature sensors (its own and two
+   remote diodes) and takes the hottest: above 65 °C full speed (`0xff`),
+   otherwise 50 %
 
-1. **The stock firmware.** Its fan code names the pin or the I²C device, the
-   level for each speed and the temperature thresholds. Reading it changes
-   nothing on the switch.
-2. **The board.** Follow the fan header's control line (the PWM pin of a
-   4-pin header, or the transistor that switches the fan supply) to the
-   chip that drives it.
-3. **An experiment in a RAM boot:** drive the candidate outputs one at a
-   time and listen. Last resort, because a wrong output can reset a PHY or
-   the PoE chips (a power cycle undoes it).
+OpenWrt does the same. The device tree declares the bus (`i2c-gpio`) and the
+chip (`adt7475` driver), and the `mokerlink-fan` service sets manual mode
+and switches between 50 % and full speed. It adds a 5 °C hysteresis, and
+full speed while any 10G PHY is above 95 °C. When the service stops or the
+switch reboots, the fans go back to full speed. The settings are in
+`/etc/config/mokerlink`, section `fan`.
 
-Once the control is known it becomes a `gpio-fan` node (two speeds) or a
-hwmon fan controller, with thermal zones on the PHY sensors that pick the
-speed, as on the Zyxel XGS1250-12 (`gpio-fan` switched by PHY temperature
-trip points) or the D-Link DGS-1250-28X (`gpio-fan` plus an LM75).
+Check it on the switch:
+
+```sh
+mokerlink-fan status     # temp1-3, fan RPM, pwm1-3 = 128 (50 %), pwmN_enable = 1
+logread -e mokerlink-fan # every speed change, with the temperatures
+```
+
+`no ADT7476 found` means the chip did not answer on the bus
+(`dmesg | grep -i adt`); the fans then keep running at full speed.
+
+Still to confirm on the switch: which PWM outputs and tach inputs have fans
+(the stock firmware sets all three PWM outputs alike), and which remote
+diodes are connected (`temp1_fault` or `temp3_fault` reads 1 for an open
+one, and `mokerlink-fan` ignores it).
 
 ## A factory image for the stock web UI
 

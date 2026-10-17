@@ -3,8 +3,9 @@
 #
 # Collect the hardware facts needed to finish the POE-10G07110GSM board
 # support: PHY IDs and their SerDes polarity, link states, flash layout,
-# boot loader environment, temperatures, GPIO register state and the kernel
-# log. Prints a port summary and writes everything to one text file.
+# boot loader environment, temperatures, fan controller state, GPIO register
+# state and the kernel log. Prints a port summary and writes everything to
+# one text file.
 #
 # Read-only: it changes nothing on the switch or in flash.
 
@@ -150,6 +151,10 @@ gpio_bits() { # value -> list of set bit numbers
 		v=$(cat "$z/temp" 2>/dev/null) || continue
 		echo "thermal ${z##*/} ($(cat "$z/type")): $((v / 1000)).$(((v % 1000) / 100)) C"
 	done
+
+	section "fans"
+	run mokerlink-fan status
+	run logread -e mokerlink-fan
 
 	section "GPIO"
 	if have devmem && [ -e /dev/mem ]; then
