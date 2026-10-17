@@ -1,0 +1,30 @@
+realtek: add shared-SCL I2C kernel package
+
+kmod-i2c-gpio-shared-scl: bit-banged I2C buses with one common SCL GPIO
+(drivers/i2c/busses/i2c-gpio-shared-scl.c in files-6.18).
+
+diff --git a/target/linux/realtek/modules.mk b/target/linux/realtek/modules.mk
+index 5702500..492ed1e 100644
+--- a/target/linux/realtek/modules.mk
++++ b/target/linux/realtek/modules.mk
+@@ -56,3 +56,20 @@ define KernelPackage/hasivo-mcu-sensor/description
+ endef
+ 
+ $(eval $(call KernelPackage,hasivo-mcu-sensor))
++
++define KernelPackage/i2c-gpio-shared-scl
++  SUBMENU:=$(I2C_MENU)
++  TITLE:=GPIO-based bitbanging I2C buses sharing one SCL line
++  KCONFIG:=CONFIG_I2C_GPIO_SHARED_SCL
++  FILES:=$(LINUX_DIR)/drivers/i2c/busses/i2c-gpio-shared-scl.ko
++  DEPENDS:=@TARGET_realtek +kmod-i2c-algo-bit
++  AUTOLOAD:=$(call AutoProbe,i2c-gpio-shared-scl,1)
++endef
++
++define KernelPackage/i2c-gpio-shared-scl/description
++ Several bitbanged I2C buses with one common SCL GPIO and one SDA GPIO
++ per bus, as on the MokerLink POE-10G07110GSM (fan controller, PoE
++ controllers and SFP cage).
++endef
++
++$(eval $(call KernelPackage,i2c-gpio-shared-scl))

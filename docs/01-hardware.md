@@ -23,7 +23,8 @@ Confirmed from the chip markings and the stock boot log:
 | Flash | **16 MiB** Winbond W25Q128 SPI NOR (ID `EF4018`) | U-Boot `SPI-F:` line |
 | 10G PHYs | three single **RTL8261BE** (front ports 1-3) plus one **RTL8264B** quad (front ports 4-7) | vendor hardware profile `RTL9303_8264B_3X8261BE_XGE_POE`, RAM boot |
 | PoE | two **RTL8239-VB** PSE chips, driven **directly** by the CPU (no PSE MCU) | chip marking, stock log `find RTL8239-VB` (once per chip) |
-| PoE link | `uart1` (`/dev/ttyS1`); the stock firmware loads RTL8239 firmware images over it at boot | stock firmware (`ski.ko`) |
+| PoE link | bit-banged **I²C**, SDA GPIO 10: first RTL8239 at `0x20`/`0x21`, second at `0x22`/`0x23` (one address per 4-channel half), broadcast `0x60`. The stock firmware sends a 25460-byte Realtek firmware image to both chips at every boot | stock firmware (`board_conf.ko` table `poeDevConf_9303M7XC1XF_BT`, `ski.ko`) |
+| I²C | three buses bit-banged on SoC GPIOs with one common SCL (GPIO 8): fan controller (SDA 9), PoE (SDA 10), SFP+ EEPROM (SDA 11) | stock firmware (`board_conf.ko`, SDK `r9300_i2c_dev_init`) |
 | GPIO expander | Realtek **RTL8231** (LEDs/GPIOs) | stock SDK: `RTL8231 probe: (found)` |
 | Console | header **J4** (GND, TXD, RXD, 3V3, 3.3 V logic), **115200 8N1** | board, boot log |
 | Boot loader | Realtek U-Boot 2011.12 (1.0.0.2, Dec 2024), **Esc** stops autoboot, `bootcmd=boota` | boot log, `printenv` |
@@ -73,7 +74,7 @@ Note the markings of:
 - the main chip under the large heatsink (confirmed: RTL9303)
 - the PHY chips near the RJ45 ports (confirmed: one RTL8264B, three RTL8261BE)
 - the PoE chips (confirmed: two RTL8239-VB, talked to directly by the SoC
-  over `uart1`; the stock firmware shows no separate PoE microcontroller)
+  over I²C; there is no separate PoE microcontroller)
 - the SPI flash (8-pin chip, e.g. FM25Q128, W25Q128, GD25Q256)
 - the RAM chips, which give the RAM size
 - the fan controller (confirmed from the stock firmware: ADT7476)

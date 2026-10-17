@@ -14,15 +14,18 @@
  *   - PHY bus/address map and lane polarity, read from the vendor U-Boot
  *   - vendor hardware profile RTL9303_8264B_3X8261BE_XGE_POE: one RTL8264B
  *     quad PHY plus three discrete RTL8261BE PHYs
- *   - PoE: two RTL8239-VB, driven directly by the stock firmware over uart1
- *     (no PSE MCU in between, see the end of this file)
+ *   - PoE: two RTL8239-VB
  *   - an RTL8231 GPIO/LED expander (not used here yet)
  *   - stock U-Boot 2011.12 (1.0.0.2), firmware "KT-NOS" 1.1.1.34
  *
  * Confirmed from the stock firmware (board table "9303M7XC1XF" in
  * board_conf.ko, fan code in ski.ko):
- *   - an ADT7476 fan controller at 0x2e on a bit-banged I2C bus, SCL on
- *     GPIO 8 and SDA on GPIO 9
+ *   - bit-banged I2C on GPIOs with one SCL line (GPIO 8): ADT7476 fan
+ *     controller at 0x2e on SDA GPIO 9, two RTL8239 PoE controllers on SDA
+ *     GPIO 10 (0x20/0x21 and 0x22/0x23, broadcast 0x60), SFP+ EEPROM on SDA
+ *     GPIO 11
+ *   - PoE: no PSE microcontroller; the RTL8239s are driven directly over
+ *     that I2C bus
  *
  * Confirmed by booting this device tree from RAM: all seven PHYs probe,
  * front ports 1-7 are lan1-lan7 and every copper port passes traffic.
@@ -58,31 +61,54 @@
 	 */
 
 	/*
-	 * The stock firmware drives this bus in software on these two GPIOs
-	 * (SDK interface 2, "software I2C"), not with an RTL9303 I2C master.
-	 * The SFP+ cage's EEPROM is on SCL GPIO 8 too, with SDA on GPIO 11,
-	 * so full SFP support has to share this SCL line.
+	 * Three I2C buses that the stock firmware bit-bangs on SoC GPIOs, with
+	 * one common SCL line (SDK interface 2, "software I2C"): the fan
+	 * controller (SDA GPIO 9), the two RTL8239 PoE controllers (SDA GPIO
+	 * 10) and the SFP+ cage (SDA GPIO 11). Bit-banged rather than on an
+	 * RTL9303 I2C master because the PoE firmware download is one
+	 * 25460-byte write, far beyond the 16 bytes per transfer of the master.
 	 */
-	i2c_fan: i2c-gpio-fan {
-		compatible = "i2c-gpio";
+	i2c-gpio-shared {
+		compatible = "i2c-gpio-shared-scl";
 		scl-gpios = <&gpio0 8 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
-		sda-gpios = <&gpio0 9 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
-		i2c-gpio,delay-us = <10>;
+		i2c-gpio,delay-us = <5>;
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		/*
-		 * Runs the fans at full speed from power-on until it is
-		 * programmed; /etc/init.d/mokerlink-fan sets the speed. Its
-		 * three temperature sensors are what the stock firmware
-		 * follows. Pin 14 as GPIO, as the stock firmware sets it
-		 * (register 0x7d = 0x03), so it acts neither as TACH4 nor as a
-		 * THERM input.
-		 */
-		fan-controller@2e {
-			compatible = "adi,adt7476";
-			reg = <0x2e>;
-			adi,pin14-function = "gpio";
+		i2c_fan: i2c@0 {
+			reg = <0>;
+			sda-gpios = <&gpio0 9 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/*
+			 * Runs the fans at full speed from power-on until it
+			 * is programmed; /etc/init.d/mokerlink-fan sets the
+			 * speed. Its three temperature sensors are what the
+			 * stock firmware follows. Pin 14 as GPIO, as the stock
+			 * firmware sets it (register 0x7d = 0x03), so it acts
+			 * neither as TACH4 nor as a THERM input.
+			 */
+			fan-controller@2e {
+				compatible = "adi,adt7476";
+				reg = <0x2e>;
+				adi,pin14-function = "gpio";
+			};
+		};
+
+		i2c_poe: i2c@1 {
+			reg = <1>;
+			sda-gpios = <&gpio0 10 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+
+		/* SFP+ module EEPROM (0x50); no "sff,sfp" node yet */
+		i2c_sfp: i2c@2 {
+			reg = <2>;
+			sda-gpios = <&gpio0 11 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+			#address-cells = <1>;
+			#size-cells = <0>;
 		};
 	};
 };

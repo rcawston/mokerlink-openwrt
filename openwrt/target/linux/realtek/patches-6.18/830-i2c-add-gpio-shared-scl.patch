@@ -1,0 +1,44 @@
+From: OpenWrt contributors
+Subject: [PATCH] i2c: add bitbanged buses sharing one SCL line
+
+Some RTL930x switches, such as the MokerLink POE-10G07110GSM, bit-bang
+several I2C buses on SoC GPIOs with one common SCL line and one SDA line
+per bus (fan controller, PoE controllers and SFP cage). i2c-gpio cannot
+describe this, because each bus would request the same SCL GPIO.
+
+Add the Kconfig and Makefile entries for i2c-gpio-shared-scl; the driver
+itself lives in files-6.18.
+
+---
+diff --git a/drivers/i2c/busses/Kconfig b/drivers/i2c/busses/Kconfig
+index fd81e4963..b25487125 100644
+--- a/drivers/i2c/busses/Kconfig
++++ b/drivers/i2c/busses/Kconfig
+@@ -696,6 +696,15 @@ config I2C_GPIO
+ 	  This is a very simple bitbanging I2C driver utilizing the
+ 	  arch-neutral GPIO API to control the SCL and SDA lines.
+ 
++config I2C_GPIO_SHARED_SCL
++	tristate "GPIO-based bitbanging I2C buses sharing one SCL line"
++	depends on GPIOLIB || COMPILE_TEST
++	select I2C_ALGOBIT
++	help
++	  Several bitbanged I2C buses with one common SCL GPIO and one SDA
++	  GPIO per bus, as found on some Realtek RTL930x switches. Each
++	  SDA line becomes its own I2C adapter; transfers are serialized.
++
+ config I2C_GPIO_FAULT_INJECTOR
+ 	bool "GPIO-based fault injector"
+ 	depends on I2C_GPIO
+diff --git a/drivers/i2c/busses/Makefile b/drivers/i2c/busses/Makefile
+index fb985769f..434b24a1e 100644
+--- a/drivers/i2c/busses/Makefile
++++ b/drivers/i2c/busses/Makefile
+@@ -66,6 +66,7 @@ obj-$(CONFIG_I2C_EG20T)		+= i2c-eg20t.o
+ obj-$(CONFIG_I2C_EMEV2)		+= i2c-emev2.o
+ obj-$(CONFIG_I2C_EXYNOS5)	+= i2c-exynos5.o
+ obj-$(CONFIG_I2C_GPIO)		+= i2c-gpio.o
++obj-$(CONFIG_I2C_GPIO_SHARED_SCL)	+= i2c-gpio-shared-scl.o
+ obj-$(CONFIG_I2C_HIGHLANDER)	+= i2c-highlander.o
+ obj-$(CONFIG_I2C_HISI)		+= i2c-hisi.o
+ obj-$(CONFIG_I2C_HIX5HD2)	+= i2c-hix5hd2.o

@@ -1,0 +1,165 @@
+#!/bin/sh
+# mokerlink-poe-test [OUTPUT_FILE]
+#
+# Guided PoE test. Asks you to plug a PoE device into ports in turn and
+# records everything in one report: driver and bus state, the RTL8239
+# registers, ethtool PSE status per port, power-on time, class and power,
+# disable/enable from software, and the same again with the RTL8239
+# firmware loaded if /tmp/rtl8239-bt.bin is there. Ends with
+# mokerlink-i2c-master-test, which needs a power cycle afterwards.
+#
+# Prepare: scp -O rtl8239-bt.bin root@<switch>:/tmp/   (optional, from
+# scripts/extract-poe-firmware.py), nothing plugged into the PoE ports.
+
+OUT=${1:-/tmp/mokerlink-poe-test-$(date +%Y%m%d-%H%M%S).txt}
+FW_SRC=/tmp/rtl8239-bt.bin
+FW_DST=/lib/firmware/realtek/rtl8239-bt.bin
+MODULE=realtek-rtl8239
+CHIP_ADDRS="0x20 0x21 0x22 0x23"
+
+say() { echo "$*" | tee -a "$OUT"; }
+section() { printf '\n========== %s ==========\n' "$*" | tee -a "$OUT"; }
+run() { printf '\n$ %s\n' "$*" >>"$OUT"; "$@" >>"$OUT" 2>&1; }
+ask() { # prompt; waits for Enter, returns 1 on "s" (skip)
+	local a
+	printf '\n>>> %s\n    Enter when done, s + Enter to skip: ' "$*"
+	read -r a </dev/tty
+	echo ">>> $* [${a:-done}]" >>"$OUT"
+	[ "$a" != s ]
+}
+
+poe_bus() { # i2c bus number of the PoE controllers (SDA GPIO 10)
+	local a
+	for a in /sys/bus/i2c/devices/i2c-*; do
+		case "$(cat "$a/name" 2>/dev/null)" in
+		*i2c-gpio-shared*SDA1) echo "${a##*-}"; return 0 ;;
+		esac
+	done
+	return 1
+}
+
+pse_status() { # port
+	ethtool --show-pse "$1" 2>&1
+}
+
+delivering() { # port
+	pse_status "$1" | grep -q 'Power status: Delivering'
+}
+
+dump_chips() {
+	local bus addr reg
+	bus=$(poe_bus) || { say "PoE I2C bus not found"; return; }
+	for addr in $CHIP_ADDRS; do
+		printf '\n%s:' "$addr" >>"$OUT"
+		for reg in $(seq 0 79) 232 236; do
+			[ $((reg % 16)) -eq 0 ] && printf '\n  %02x:' "$reg" >>"$OUT"
+			printf ' %s' "$(i2cget -f -y "$bus" "$addr" "$reg" 2>/dev/null | sed 's/0x//')" >>"$OUT"
+		done
+		echo >>"$OUT"
+	done
+}
+
+all_ports() {
+	local p
+	for p in lan1 lan2 lan3 lan4 lan5 lan6 lan7; do
+		run ethtool --show-pse "$p"
+	done
+}
+
+# port_test PORT LABEL: power-on time, status, disable/enable from software
+port_test() {
+	local port="$1" t=0
+	ask "Plug the PoE device into $port (front port ${port#lan})" || return
+	say "waiting for $port to deliver power"
+	while ! delivering "$port"; do
+		t=$((t + 1))
+		[ $t -ge 30 ] && break
+		sleep 1
+	done
+	if delivering "$port"; then
+		say "$port: delivering after ~${t}s"
+	else
+		say "$port: NOT delivering after 30s"
+	fi
+	run ethtool --show-pse "$port"
+	sleep 10
+	say "$port after 10 more seconds:"
+	run ethtool --show-pse "$port"
+	run logread -l 20
+
+	say "$port: disable from software"
+	run ethtool --set-pse "$port" c33-pse-admin-control disable
+	sleep 3
+	run ethtool --show-pse "$port"
+	if delivering "$port"; then
+		say "$port: STILL delivering after disable"
+	else
+		say "$port: off after disable"
+	fi
+
+	say "$port: enable again"
+	run ethtool --set-pse "$port" c33-pse-admin-control enable
+	t=0
+	while ! delivering "$port" && [ $t -lt 30 ]; do
+		t=$((t + 1))
+		sleep 1
+	done
+	if delivering "$port"; then
+		say "$port: delivering again after ~${t}s"
+	else
+		say "$port: NOT delivering after enable"
+	fi
+	run ethtool --show-pse "$port"
+	ask "Did the device power up both times? Note it, then unplug it from $port" || true
+}
+
+phase() { # LABEL
+	section "$1: state"
+	run sh -c "dmesg | grep -iE 'rtl8239|pse|i2c-gpio-shared|adt7'"
+	all_ports
+	section "$1: RTL8239 registers 0x00-0x4f, 0xe8, 0xec"
+	dump_chips
+	section "$1: port 1 (RTL8261BE side, first RTL8239)"
+	port_test lan1
+	section "$1: port 5 (RTL8264B side, second RTL8239)"
+	port_test lan5
+	section "$1: after unplugging"
+	all_ports
+	dump_chips
+}
+
+: >"$OUT"
+section "system"
+run cat /etc/openwrt_release
+run uname -a
+run i2cdetect -l
+run lsmod
+run sh -c "ls -l /lib/firmware/realtek/ 2>&1"
+
+phase "A (as booted)"
+
+if [ -f "$FW_SRC" ]; then
+	section "B: with the RTL8239 firmware"
+	run sha256sum "$FW_SRC"
+	mkdir -p "${FW_DST%/*}"
+	cp "$FW_SRC" "$FW_DST"
+	run rmmod "$MODULE"
+	run modprobe "$MODULE"
+	sleep 5
+	phase "B (firmware loaded)"
+else
+	section "B: skipped, no $FW_SRC"
+fi
+
+section "RTL9303 I2C master test"
+if ask "Last step: the I2C master test. It stops fan and PoE control until the next power cycle"; then
+	mokerlink-i2c-master-test 2>&1 | tee -a "$OUT"
+fi
+
+section "kernel log"
+run dmesg
+
+echo
+echo "Report: $OUT"
+echo "Copy it off the switch with: scp -O root@<switch-ip>:$OUT ."
+echo "Then power-cycle the switch."

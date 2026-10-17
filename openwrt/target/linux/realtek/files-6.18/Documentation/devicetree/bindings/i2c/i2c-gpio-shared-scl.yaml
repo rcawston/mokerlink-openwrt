@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/i2c/i2c-gpio-shared-scl.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Bit-banged I2C buses sharing one SCL line
+
+maintainers:
+  - OpenWrt contributors
+
+description: |
+  Several I2C buses bit-banged on GPIOs, with one SCL line common to all of
+  them and one SDA line per bus. Each child node is a separate I2C bus.
+  Transfers are serialized, so only one bus clocks SCL at a time.
+
+properties:
+  compatible:
+    const: i2c-gpio-shared-scl
+
+  scl-gpios:
+    description: The shared SCL line, usually open drain.
+    maxItems: 1
+
+  i2c-gpio,delay-us:
+    description: Half the clock period in microseconds, as for i2c-gpio.
+    default: 5
+
+  i2c-gpio,timeout-ms:
+    description: Clock stretching timeout in milliseconds, as for i2c-gpio.
+    default: 100
+
+  "#address-cells":
+    const: 1
+
+  "#size-cells":
+    const: 0
+
+patternProperties:
+  "^i2c@[0-9a-f]+$":
+    $ref: /schemas/i2c/i2c-controller.yaml#
+    unevaluatedProperties: false
+
+    properties:
+      reg:
+        description: Index of the bus, for naming only.
+        maxItems: 1
+
+      sda-gpios:
+        description: The SDA line of this bus, usually open drain.
+        maxItems: 1
+
+    required:
+      - reg
+      - sda-gpios
+
+required:
+  - compatible
+  - scl-gpios
+  - "#address-cells"
+  - "#size-cells"
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/gpio/gpio.h>
+
+    i2c-gpio-shared {
+        compatible = "i2c-gpio-shared-scl";
+        scl-gpios = <&gpio0 8 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+        i2c-gpio,delay-us = <5>;
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        i2c@0 {
+            reg = <0>;
+            sda-gpios = <&gpio0 9 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            fan-controller@2e {
+                compatible = "adi,adt7476";
+                reg = <0x2e>;
+            };
+        };
+
+        i2c@1 {
+            reg = <1>;
+            sda-gpios = <&gpio0 10 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+            #address-cells = <1>;
+            #size-cells = <0>;
+        };
+    };
