@@ -1,0 +1,43 @@
+realtek: rtl930x: add support for MokerLink POE-10G07110GSM
+
+The MokerLink POE-10G07110GSM is a managed switch with seven 10GBASE-T
+ports with 802.3af/at/bt PoE and one 10G SFP+ port.
+
+Specifications:
+- SoC: Realtek RTL9303, 800 MHz MIPS 34Kc
+- RAM: 128 MiB DDR3
+- Flash: 16 MiB SPI NOR (Winbond W25Q128)
+- Ethernet: 7x 10GBASE-T (three RTL8261BE, one RTL8264B), 1x 10G SFP+
+- PoE: two Realtek RTL8239-VB PSE chips driven over I2C, up to 90 W per
+  port, 260 W in total
+- Fans: ADT7476 fan controller
+- Buttons: reset
+- UART: header J4 (GND, TXD, RXD, 3V3), 115200 8N1
+
+The fan controller, the PoE chips and the SFP+ cage share one
+bit-banged I2C clock line (GPIO 8), with SDA on GPIOs 9, 10 and 11. The
+PoE chips need Realtek firmware loaded at power-up, which cannot be
+shipped: copy it out of the vendor firmware and install it as
+/lib/firmware/realtek/rtl8239-bt.bin. The PoE LEDs (LED 2 of each port)
+follow the PSE LED triggers. The fans run at full speed until userspace
+programs the ADT7476; the vendor firmware sets 50 %.
+
+Installation from the vendor web UI:
+1. Upload the initramfs image on the firmware upgrade page. The vendor
+   firmware only checks the uImage magic (0x83800000) and the header and
+   data CRCs, and writes the image to its RUNTIME partition, which is
+   OpenWrt's "firmware" partition.
+2. In the initramfs image, install the sysupgrade image with
+   sysupgrade -n.
+
+Installation over the serial console:
+1. Stop U-Boot with Esc and boot the initramfs image over TFTP from
+   192.168.2.254 (the image renamed to initramfs.bin):
+     rtk network on
+     tftpboot 0x84f00000 initramfs.bin
+     bootm 0x84f00000
+2. Install the sysupgrade image with sysupgrade -n.
+
+Back to the vendor firmware: write its image (a plain uImage) to the
+"firmware" partition with mtd write. The vendor configuration
+partitions are left untouched by OpenWrt.

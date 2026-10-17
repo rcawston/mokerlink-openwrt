@@ -1,0 +1,6 @@
+dt-bindings: net: pse-pd: add Realtek RTL8239
+
+Add a binding for the Realtek RTL8239 PSE controller: an 8-channel
+802.3af/at/bt controller driven directly over I2C, one address per
+4-channel half, with the delivery channels and the PSE PIs that use
+them described in the device tree, and an optional firmware name.

@@ -1,0 +1,11 @@
+realtek: add Realtek RTL8239 PSE driver
+
+The RTL8239 is an 8-channel 802.3af/at/bt PSE controller that some
+RTL930x PoE switches, such as the MokerLink POE-10G07110GSM, drive
+directly over I2C without a PSE microcontroller. The chip needs Realtek
+firmware loaded at power-up; it is not redistributable and has to be
+copied from the vendor firmware of the device. The driver loads it as
+realtek/rtl8239-bt.bin when it is installed.
+
+Add the driver and its binding as a pending patch, and package it as
+kmod-pse-realtek-rtl8239.

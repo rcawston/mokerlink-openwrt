@@ -1,0 +1,346 @@
+#!/usr/bin/env python3
+"""Build the upstream submissions from this repository.
+
+    make-upstream.py openwrt TREE   [options]
+    make-upstream.py linux TREE SERIES [options]
+    make-upstream.py patches [-o DIR] [options]
+
+openwrt  adds the board as four commits to TREE, an openwrt.git checkout
+         (the drivers as pending kernel patches with their kmods, then the
+         device), and writes them with git format-patch to
+         build/upstream/openwrt.
+linux    adds one series (i2c, pse, leds or pse-led-triggers) as commits to
+         TREE, a Linux checkout of the subsystem tree it goes to, with
+         MAINTAINERS entries, and writes it with a cover letter to
+         build/upstream/linux/SERIES. The Kconfig and Makefile hunks are
+         made against v6.18 and applied with a three-way merge.
+patches  writes the kernel patches as OpenWrt carries them (OpenWrt's
+         kernel context) to DIR, for review; no tree needed.
+
+Options:
+  --author "Name <email>"   patch author and maintainer (default: git config)
+  --signoff                 add your Signed-off-by. Only you can certify the
+                            Developer's Certificate of Origin, so it is never
+                            added without this option
+  --assisted-by TAG         the Assisted-by tag the kernel asks for code
+                            written with an AI assistant
+                            (Documentation/process/coding-assistants.rst),
+                            e.g. "Claude:<model version>"; required
+
+Commit messages live in upstream/; the drivers, bindings and patches are the
+ones this repository builds. Standard library only.
+"""
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FILES = os.path.join(REPO, 'openwrt/target/linux/realtek/files-6.18')
+OWRT_PATCHES = os.path.join(REPO, 'openwrt/target/linux/realtek/patches-6.18')
+UPSTREAM = os.path.join(REPO, 'upstream')
+BOARD_PATCH = os.path.join(REPO, 'patches/0001-realtek-rtl930x-add-MokerLink-POE-10G07110GSM.patch')
+KMOD_PATCH = os.path.join(REPO, 'patches/0002-realtek-add-shared-SCL-I2C-RTL8239-PSE-and-port-LED-packages.patch')
+DTS = 'target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts'
+
+I2C_YAML = 'Documentation/devicetree/bindings/i2c/i2c-gpio-shared-scl.yaml'
+I2C_C = 'drivers/i2c/busses/i2c-gpio-shared-scl.c'
+PSE_YAML = 'Documentation/devicetree/bindings/net/pse-pd/realtek,rtl8239.yaml'
+PSE_C = 'drivers/net/pse-pd/realtek-rtl8239.c'
+LEDS_YAML = 'Documentation/devicetree/bindings/leds/realtek,rtl9301-port-leds.yaml'
+LEDS_C = 'drivers/leds/leds-rtl9300-port.c'
+
+# Each patch: commit message file, new files, hunk files (OpenWrt context,
+# Linux context with blob ids). An OpenWrt number and kmod per series.
+SERIES = {
+    'i2c': {
+        'openwrt': ('830', 'i2c-gpio-shared-scl', '1-i2c.txt'),
+        'list': 'linux-i2c@vger.kernel.org',
+        'maintainers': ('I2C GPIO BUSES SHARING SCL DRIVER', [I2C_YAML, I2C_C]),
+        'patches': [
+            ('1-binding.txt', [I2C_YAML], None, None),
+            ('2-driver.txt', [I2C_C], '830-i2c-add-gpio-shared-scl.patch', 'hooks.diff'),
+        ],
+    },
+    'pse': {
+        'openwrt': ('831', 'pse-realtek-rtl8239', '2-pse.txt'),
+        'list': 'netdev@vger.kernel.org',
+        'maintainers': ('REALTEK RTL8239 PSE DRIVER', [PSE_YAML, PSE_C]),
+        'patches': [
+            ('1-binding.txt', [PSE_YAML], None, None),
+            ('2-driver.txt', [PSE_C], '831-net-pse-pd-add-Realtek-RTL8239.patch', 'hooks.diff'),
+        ],
+    },
+    'leds': {
+        'openwrt': ('832', 'leds-rtl9300-port', '3-leds.txt'),
+        'list': 'linux-leds@vger.kernel.org',
+        'maintainers': ('REALTEK RTL9300 PORT LED DRIVER', [LEDS_YAML, LEDS_C]),
+        'patches': [
+            ('1-binding.txt', [LEDS_YAML], None, None),
+            ('2-switch-binding.txt', [],
+             '833-dt-bindings-net-realtek-rtl9301-switch-add-port-LED-controller.patch',
+             'switch-binding.diff'),
+            ('3-driver.txt', [LEDS_C], '832-leds-add-Realtek-RTL9300-port-LED-driver.patch', 'hooks.diff'),
+        ],
+    },
+    'pse-led-triggers': {
+        'openwrt': None,
+        'list': 'linux-leds@vger.kernel.org',
+        'maintainers': None,
+        'patches': [
+            ('1-binding.txt', [],
+             '834-dt-bindings-leds-common-add-PSE-power-interface-triggers.patch', 'common.diff'),
+        ],
+    },
+}
+
+
+def die(msg):
+    sys.exit(f'make-upstream: {msg}')
+
+
+def git(tree, *args, input=None):
+    r = subprocess.run(['git', '-C', tree, *args], input=input, text=True,
+                       capture_output=True)
+    if r.returncode:
+        die(f'git {" ".join(args)} in {tree} failed:\n{r.stderr.strip()}')
+    return r.stdout
+
+
+def read(path):
+    with open(path) as f:
+        return f.read()
+
+
+def write(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w') as f:
+        f.write(text)
+
+
+def message(path):
+    """(subject, body) of a commit message file"""
+    text = read(path).strip('\n')
+    subject, _, body = text.partition('\n')
+    return subject.strip(), body.strip('\n')
+
+
+def new_file_diff(path):
+    lines = read(os.path.join(FILES, path)).splitlines()
+    out = [f'diff --git a/{path} b/{path}', 'new file mode 100644',
+           '--- /dev/null', f'+++ b/{path}', f'@@ -0,0 +1,{len(lines)} @@']
+    out += ['+' + line for line in lines]
+    return '\n'.join(out) + '\n'
+
+
+def openwrt_hunks(name):
+    """the diff part of one of this repository's hook patches"""
+    text = read(os.path.join(OWRT_PATCHES, name))
+    m = re.search(r'^(diff --git |--- a/)', text, re.M)
+    return text[m.start():]
+
+
+def trailers(args):
+    t = [f'Assisted-by: {args.assisted_by}']
+    if args.signoff:
+        t.append(f'Signed-off-by: {args.author}')
+    return '\n'.join(t)
+
+
+def kmod_block(name):
+    """the KernelPackage definition of NAME from the kmod patch"""
+    text = read(KMOD_PATCH)
+    m = re.search(r'^\+define KernelPackage/%s\n.*?^\+\$\(eval \$\(call KernelPackage,%s\)\)\n'
+                  % (re.escape(name), re.escape(name)), text, re.M | re.S)
+    if not m:
+        die(f'no KernelPackage/{name} in {KMOD_PATCH}')
+    return ''.join(line[1:] + '\n' for line in m.group(0).splitlines())
+
+
+def slug(subject):
+    return re.sub(r'[^A-Za-z0-9]+', '-', subject).strip('-')
+
+
+def check_clean(tree):
+    if git(tree, 'status', '--porcelain', '--untracked-files=no').strip():
+        die(f'{tree} has uncommitted changes')
+
+
+def commit(tree, args, subject, body, paths):
+    git(tree, 'add', *paths)
+    msg = f'{subject}\n\n{body}\n\n{trailers(args)}\n'
+    git(tree, '-c', f'user.name={args.name}', '-c', f'user.email={args.email}',
+        'commit', '-q', f'--author={args.author}', '-F', '-', input=msg)
+
+
+def openwrt_patch_text(args, series, i, n):
+    """one kernel patch of SERIES, with OpenWrt's kernel context"""
+    msgfile, files, hookpatch, _ = SERIES[series]['patches'][i]
+    subject, body = message(os.path.join(UPSTREAM, 'linux', series, msgfile))
+    diff = ''.join(new_file_diff(p) for p in files)
+    if hookpatch:
+        diff += openwrt_hunks(hookpatch)
+    number = f' {i + 1}/{n}' if n > 1 else ''
+    return subject, (f'From: {args.author}\nSubject: [PATCH{number}] {subject}\n\n'
+                     f'{body}\n\n{trailers(args)}\n---\n{diff}')
+
+
+def cmd_patches(args):
+    out = args.output or os.path.join(REPO, 'build/upstream/patches')
+    for series, s in SERIES.items():
+        n = len(s['patches'])
+        for i in range(n):
+            subject, text = openwrt_patch_text(args, series, i, n)
+            name = f'{series}-{i + 1:02d}-{slug(subject)}.patch'
+            write(os.path.join(out, name), text)
+            print(os.path.join(out, name))
+
+
+def cmd_openwrt(args):
+    tree = os.path.abspath(args.tree)
+    check_clean(tree)
+    base = git(tree, 'rev-parse', 'HEAD').strip()
+    patchdir = 'target/linux/realtek/patches-6.18'
+    modules = os.path.join(tree, 'target/linux/realtek/modules.mk')
+    for series, s in SERIES.items():
+        if not s['openwrt']:
+            continue
+        number, kmod, msgfile = s['openwrt']
+        n = len(s['patches'])
+        paths = ['target/linux/realtek/modules.mk']
+        for i in range(n):
+            subject, text = openwrt_patch_text(args, series, i, n)
+            name = f'{number}-{i + 1:02d}-{slug(subject)}.patch'
+            write(os.path.join(tree, patchdir, name), text)
+            paths.append(f'{patchdir}/{name}')
+        with open(modules, 'a') as f:
+            f.write('\n' + kmod_block(kmod))
+        subject, body = message(os.path.join(UPSTREAM, 'openwrt', msgfile))
+        commit(tree, args, subject, body, paths)
+
+    # The device: image recipe and network setup, then the device tree
+    git(tree, 'apply', BOARD_PATCH)
+    dts = os.path.join(tree, DTS)
+    write(dts, read(os.path.join(REPO, 'openwrt', DTS)))
+    subject, body = message(os.path.join(UPSTREAM, 'openwrt', '4-board.txt'))
+    commit(tree, args, subject, body,
+           ['target/linux/realtek/base-files/etc/board.d/02_network',
+            'target/linux/realtek/image/rtl930x.mk', DTS])
+
+    out = args.output or os.path.join(REPO, 'build/upstream/openwrt')
+    os.makedirs(out, exist_ok=True)
+    print(git(tree, '-c', f'user.name={args.name}', '-c', f'user.email={args.email}',
+              'format-patch', '-o', out, f'{base}..HEAD'), end='')
+
+
+# A section title: after a blank line, not a field line, followed by a field
+MAINT_HEADER = re.compile(r'(?<=\n\n)(?![A-Z]:\t)[^\n]+\n(?=[A-Z]:\t)')
+
+
+def add_maintainers(tree, args, title, files, mlist):
+    path = os.path.join(tree, 'MAINTAINERS')
+    text = read(path)
+    entry = (f'{title}\nM:\t{args.author}\nL:\t{mlist}\nS:\tMaintained\n'
+             + ''.join(f'F:\t{f}\n' for f in files) + '\n')
+    # The file is sorted, but not strictly: insert after the section with
+    # the largest title that still sorts before the new one
+    heads = [m for m in MAINT_HEADER.finditer(text)
+             if m.group(0).rstrip('\n') != 'THE REST']
+    best = None
+    for i, m in enumerate(heads):
+        head = m.group(0).rstrip('\n').upper()
+        if head < title.upper() and (best is None or head > best[0]):
+            best = (head, i)
+    if best and best[1] + 1 < len(heads):
+        at = heads[best[1] + 1].start()
+        write(path, text[:at] + entry + text[at:])
+        return
+    die('could not place the MAINTAINERS entry')
+
+
+def cmd_linux(args):
+    tree = os.path.abspath(args.tree)
+    if args.series not in SERIES:
+        die(f'unknown series {args.series}; one of {", ".join(SERIES)}')
+    check_clean(tree)
+    s = SERIES[args.series]
+    base = git(tree, 'rev-parse', 'HEAD').strip()
+    for i, (msgfile, files, _, hooks) in enumerate(s['patches']):
+        paths = []
+        for p in files:
+            write(os.path.join(tree, p), read(os.path.join(FILES, p)))
+            paths.append(p)
+        if hooks:
+            diff = read(os.path.join(UPSTREAM, 'linux', args.series, hooks))
+            git(tree, 'apply', '--3way', '-', input=diff)
+            paths += re.findall(r'^\+\+\+ b/(\S+)', diff, re.M)
+        if s['maintainers'] and files and any(p.endswith('.c') for p in files):
+            title, mfiles = s['maintainers']
+            add_maintainers(tree, args, title, mfiles, s['list'])
+            paths.append('MAINTAINERS')
+        subject, body = message(os.path.join(UPSTREAM, 'linux', args.series, msgfile))
+        commit(tree, args, subject, body, paths)
+
+    out = args.output or os.path.join(REPO, 'build/upstream/linux', args.series)
+    os.makedirs(out, exist_ok=True)
+    n = len(s['patches'])
+    fmt = ['-c', f'user.name={args.name}', '-c', f'user.email={args.email}',
+           'format-patch', '-o', out, f'{base}..HEAD']
+    if n > 1:
+        fmt.insert(5, '--cover-letter')
+    files = git(tree, *fmt).split()
+    print('\n'.join(files))
+    cover = os.path.join(UPSTREAM, 'linux', args.series, 'cover.txt')
+    if n > 1 and os.path.exists(cover):
+        subject, body = message(cover)
+        letter = files[0]
+        text = read(letter)
+        text = text.replace('*** SUBJECT HERE ***', subject)
+        text = text.replace('*** BLURB HERE ***', body)
+        write(letter, text)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('command', choices=['openwrt', 'linux', 'patches'])
+    p.add_argument('tree', nargs='?')
+    p.add_argument('series', nargs='?')
+    p.add_argument('-o', '--output')
+    p.add_argument('--author')
+    p.add_argument('--signoff', action='store_true')
+    p.add_argument('--assisted-by', required=True)
+    args = p.parse_args()
+
+    if not args.author:
+        name = subprocess.run(['git', 'config', 'user.name'], capture_output=True,
+                              text=True).stdout.strip()
+        email = subprocess.run(['git', 'config', 'user.email'], capture_output=True,
+                               text=True).stdout.strip()
+        if not name or not email:
+            die('set --author "Name <email>" or git config user.name/user.email')
+        args.author = f'{name} <{email}>'
+    m = re.fullmatch(r'(.+?) <([^>]+)>', args.author)
+    if not m:
+        die('--author must be "Name <email>"')
+    args.name, args.email = m.groups()
+
+    if args.command == 'patches':
+        cmd_patches(args)
+    elif args.command == 'openwrt':
+        if not args.tree:
+            die('openwrt needs TREE')
+        cmd_openwrt(args)
+    else:
+        if not args.tree or not args.series:
+            die('linux needs TREE and SERIES')
+        cmd_linux(args)
+    if not args.signoff:
+        print('note: no Signed-off-by added; add it once you have reviewed the patches '
+              '(--signoff)', file=sys.stderr)
+
+
+if __name__ == '__main__':
+    main()

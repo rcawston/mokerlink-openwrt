@@ -1,0 +1,7 @@
+dt-bindings: net: realtek,rtl9301-switch: add port LED controller
+
+The switch drives the port LEDs, and some boards wire LEDs to it that
+have no hardware function and are switched in software, such as PoE
+status LEDs. Allow the software LED control block, described by
+realtek,rtl9301-port-leds, as a child of the switch like its I2C and
+MDIO controllers.

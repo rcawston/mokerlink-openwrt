@@ -1,0 +1,6 @@
+dt-bindings: leds: common: add PSE power interface triggers
+
+The PSE core registers LED triggers for each power interface of a PSE
+controller, named pse-<controller>:port<n>:delivering, :enabled and
+:fault, so that boards can show PoE state on port LEDs. Accept these
+names in linux,default-trigger.

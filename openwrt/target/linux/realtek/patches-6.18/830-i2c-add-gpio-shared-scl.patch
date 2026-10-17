@@ -11,10 +11,10 @@ itself lives in files-6.18.
 
 ---
 diff --git a/drivers/i2c/busses/Kconfig b/drivers/i2c/busses/Kconfig
-index fd81e4963..b25487125 100644
+index fd81e4963..25888a5 100644
 --- a/drivers/i2c/busses/Kconfig
 +++ b/drivers/i2c/busses/Kconfig
-@@ -696,6 +696,15 @@ config I2C_GPIO
+@@ -696,6 +696,18 @@ config I2C_GPIO
  	  This is a very simple bitbanging I2C driver utilizing the
  	  arch-neutral GPIO API to control the SCL and SDA lines.
  
@@ -26,6 +26,9 @@ index fd81e4963..b25487125 100644
 +	  Several bitbanged I2C buses with one common SCL GPIO and one SDA
 +	  GPIO per bus, as found on some Realtek RTL930x switches. Each
 +	  SDA line becomes its own I2C adapter; transfers are serialized.
++
++	  This driver can also be built as a module. If so, the module
++	  will be called i2c-gpio-shared-scl.
 +
  config I2C_GPIO_FAULT_INJECTOR
  	bool "GPIO-based fault injector"

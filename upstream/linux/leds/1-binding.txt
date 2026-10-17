@@ -1,0 +1,6 @@
+dt-bindings: leds: add Realtek RTL9301 port LEDs
+
+Add a binding for RTL9300 switch port LEDs under software control. The
+node is a child of the switch and gives the offset of the software LED
+control registers; each LED child names its switch port and its place
+among the port's LEDs.

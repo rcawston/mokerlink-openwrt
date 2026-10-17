@@ -1,0 +1,14 @@
+leds: add Realtek RTL9300 port LEDs under software control
+
+The RTL9300 switch drives up to four LEDs per port over its serial LED
+interface, each normally showing a hardware function chosen by the LED
+set of the port. Some boards wire LEDs to it that have no hardware
+function and that the vendor firmware switches in software, such as the
+PoE status LEDs of the MokerLink POE-10G07110GSM.
+
+This series adds a binding for such LEDs as a child of the switch, like
+its I2C and MDIO controllers, and a driver that takes them under
+software control and exposes them as LED class devices. With the PSE
+core's LED triggers, the PoE LEDs then follow the power delivery of
+their ports. The registers come from the vendor SDK's register table.
+Tested on the MokerLink POE-10G07110GSM.

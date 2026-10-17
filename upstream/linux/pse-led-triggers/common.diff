@@ -1,0 +1,14 @@
+diff --git a/Documentation/devicetree/bindings/leds/common.yaml b/Documentation/devicetree/bindings/leds/common.yaml
+index 274f832..6947f42 100644
+--- a/Documentation/devicetree/bindings/leds/common.yaml
++++ b/Documentation/devicetree/bindings/leds/common.yaml
+@@ -136,6 +136,9 @@ properties:
+       - pattern: "^mmc[0-9]+$"
+         # LED is triggered by WLAN activity
+       - pattern: "^phy[0-9]+tx$"
++        # LED is triggered by the state of a PSE power interface: delivering
++        # power, administratively enabled, or in a fault state
++      - pattern: "^pse-.+:port[0-9]+:(delivering|enabled|fault)$"
+ 
+   led-pattern:
+     description: |

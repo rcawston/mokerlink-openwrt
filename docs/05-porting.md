@@ -310,39 +310,16 @@ Still open:
 
 ### Upstreaming
 
-The kernel parts are written for upstream: the drivers
-(`drivers/net/pse-pd/realtek-rtl8239.c`,
-`drivers/i2c/busses/i2c-gpio-shared-scl.c`,
-`drivers/leds/leds-rtl9300-port.c`) and their bindings in
-`openwrt/target/linux/realtek/files-6.18`, with the Kconfig/Makefile hooks
-in `patches-6.18/830`-`832`. The shared-SCL bus driver is needed rather
-than the upstream `i2c-rtl9300` on the same pins: the RTL8239s refuse their
-firmware in the 16-byte writes that controller is limited to (round 2).
-Two binding patches carried here belong upstream too:
-
-- `833`: lets the upstream RTL9301 switch binding have the port LED
-  controller as a child, like its `i2c@36c` and `mdio-controller@ca00`.
-  This is why the LED node follows the upstream conventions for those
-  children: a `realtek,rtl9301-*` compatible and a `reg` with its
-  register offset (`led-controller@cc48`). It goes upstream with the LED
-  driver and its binding.
-- `834`: accepts the PSE core's LED trigger names
-  (`pse-<controller>:port<n>:delivering|enabled|fault`) in
-  `linux,default-trigger`. The triggers themselves are still an OpenWrt
-  pending series (`897-02`, `897-03`), so this belongs with that series.
-  Expect the device tree maintainers to object to names that contain a
-  Linux I²C bus number, and to ask for `trigger-sources = <&pse_port1>`
-  instead. That needs the trigger series to match LEDs by
-  `trigger-sources`, so the series author would have to agree.
-
-All bindings pass `make dt_binding_check`, and all three drivers pass
-`checkpatch.pl --strict`. With 833 and 834, the board's PSE, I²C and LED
-nodes validate against them. The switch node itself still fails, but only
-because OpenWrt's `rtl930x.dtsi` differs from the upstream switch binding
-(`ethernet`, `pcs`, `thermal` and other children). Before submitting, the
-submitter replaces the placeholder authorship (copyright lines,
-`maintainers` in the bindings, patch `From:`) with their own and adds a
-`Signed-off-by`. The firmware stays out of tree.
+See [08-upstreaming.md](08-upstreaming.md): the drivers go to OpenWrt as
+pending patches and to Linux, built by `scripts/make-upstream.py`. All
+bindings pass `make dt_binding_check` and all three drivers
+`checkpatch.pl --strict`. The shared-SCL bus driver is needed rather than
+the upstream `i2c-rtl9300` on the same pins, because the RTL8239s refuse
+their firmware in the 16-byte writes that controller is limited to
+(round 2). With patches 833 and 834, the board's PSE, I²C and LED nodes
+validate against the bindings. The switch node itself still fails, but
+only because OpenWrt's `rtl930x.dtsi` differs from the upstream switch
+binding (`ethernet`, `pcs`, `thermal` and other children).
 
 ## Fans and temperature
 

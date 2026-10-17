@@ -1,0 +1,24 @@
+net: pse-pd: add Realtek RTL8239
+
+The RTL8239 is an 8-channel IEEE 802.3af/at/bt PSE controller. Some
+Realtek-based PoE switches, such as the MokerLink POE-10G07110GSM, drive
+it directly over I2C, with no PSE microcontroller in front of it, so the
+realtek-pse-mcu driver does not apply.
+
+There is no datasheet. The register map follows TI's TPS2388x
+(operating mode, power status, class, current and voltage, event
+registers), but each 4-channel half answers on its own address with
+8-bit access, and the chip runs Realtek firmware that the host loads at
+power-up through a broadcast address. Without that firmware the chip
+detects and powers nothing. The firmware is not redistributable; the
+driver loads it with the firmware loader if it is installed, and looks
+for it again periodically otherwise. Everything here follows the vendor
+firmware of the MokerLink POE-10G07110GSM.
+
+Tested on that switch with an 802.3bt access point (class 7) and an
+802.3at camera (class 4) on both chips: detection, classification,
+power, measurements, admin state and the PSE LED triggers.
+
+The driver uses devm_pse_poll_helper(), as the board does not wire the
+chips' interrupt line, so this series depends on the PSE poll helper
+series.

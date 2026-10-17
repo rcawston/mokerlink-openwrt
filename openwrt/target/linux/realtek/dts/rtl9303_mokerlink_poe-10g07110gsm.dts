@@ -130,10 +130,10 @@
 			#size-cells = <0>;
 
 			/*
-			 * Runs the fans at full speed from power-on until it
-			 * is programmed; /etc/init.d/mokerlink-fan sets the
-			 * speed. Its three temperature sensors are what the
-			 * stock firmware follows. Pin 14 as GPIO, as the stock
+			 * Runs the fans at full speed from power-on until
+			 * userspace programs it; the stock firmware sets 50 %.
+			 * Its three temperature sensors are what the stock
+			 * firmware follows. Pin 14 as GPIO, as the stock
 			 * firmware sets it (register 0x7d = 0x03), so it acts
 			 * neither as TACH4 nor as a THERM input.
 			 */

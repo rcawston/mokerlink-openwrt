@@ -99,7 +99,8 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 | `openwrt/target/linux/realtek/files-6.18`, `patches-6.18/83x-*` | New kernel drivers with their bindings: RTL8239 PoE (`realtek-rtl8239`), the shared-SCL I²C buses (`i2c-gpio-shared-scl`) and the PoE LEDs (`leds-rtl9300-port`), plus two binding patches for upstream (`833`, `834`) |
 | `files/` | Files added to the firmware: switch defaults and bring-up tools |
 | `config/` | Pinned OpenWrt and feed revisions, package selection |
-| `scripts/` | `build.sh`, `check-dts.sh`, `uimage-remagic.py`, `uboot-wiring.py` (reads the port wiring from U-Boot), `uboot-md2bin.py` (turns a U-Boot flash dump into a binary), `uboot-collect.py` (collects all U-Boot information and dumps the flash over the serial port, CRC-verified), `extract-poe-firmware.py` (copies the RTL8239 PoE firmware out of a stock image) |
+| `upstream/` | Commit messages for the OpenWrt and Linux submissions ([docs/08-upstreaming.md](docs/08-upstreaming.md)) |
+| `scripts/` | `build.sh`, `check-dts.sh`, `make-upstream.py` (builds the OpenWrt and Linux submissions), `uimage-remagic.py`, `uboot-wiring.py` (reads the port wiring from U-Boot), `uboot-md2bin.py` (turns a U-Boot flash dump into a binary), `uboot-collect.py` (collects all U-Boot information and dumps the flash over the serial port, CRC-verified), `extract-poe-firmware.py` (copies the RTL8239 PoE firmware out of a stock image) |
 | `tests/` | Simulation test for `uboot-wiring.py` |
 | `docs/` | Hardware notes, console, install, recovery, porting, everyday use |
 
@@ -115,6 +116,8 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
    why traffic may not forward
 7. [Build and install from Windows](docs/07-windows.md): WSL2 build, TFTP,
    RAM test and flashing, step by step
+8. [Upstreaming](docs/08-upstreaming.md): submitting the board to OpenWrt
+   and the drivers to Linux
 
 ## Risks
 
