@@ -181,7 +181,17 @@ settings area. Then:
    `192.168.2.1` when it is connected directly to a PC.
 2. Open `http://<address>/` and **set a root password** (or run `passwd`
    on the console).
-3. Read [06-using.md](06-using.md).
+3. **Install the PoE firmware** once (the flash install starts without
+   it), then check that a PoE device gets power:
+   ```sh
+   # on the switch
+   mkdir -p /lib/firmware/realtek
+   # on the PC
+   scp -O rtl8239-bt.bin root@<address>:/lib/firmware/realtek/
+   ```
+   The driver picks it up within 30 s, no reboot needed. Later
+   `sysupgrade` runs keep it.
+4. Read [06-using.md](06-using.md).
 
 ## Flashing from the stock web UI
 

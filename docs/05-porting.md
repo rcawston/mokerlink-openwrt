@@ -290,8 +290,10 @@ python3 scripts/extract-poe-firmware.py full-flash.bin
 
 It writes `rtl8239-bt.bin` only if the image is byte-identical to the known
 one (SHA-256). Install it on the switch as
-`/lib/firmware/realtek/rtl8239-bt.bin` (it stays in the overlay across
-reboots once OpenWrt runs from flash). PoE needs it.
+`/lib/firmware/realtek/rtl8239-bt.bin`; the driver loads it within 30 s.
+Once OpenWrt runs from flash it stays in the overlay across reboots, and
+`sysupgrade` keeps it (`/lib/upgrade/keep.d/mokerlink-poe`), but a
+`sysupgrade -n` or a factory reset removes it. PoE needs it.
 
 ### Testing
 
