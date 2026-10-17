@@ -27,7 +27,8 @@ Confirmed from the chip markings and the stock boot log:
 | GPIO expander | Realtek **RTL8231** (LEDs/GPIOs) | stock SDK: `RTL8231 probe: (found)` |
 | Console | header **J4** (GND, TXD, RXD, 3V3, 3.3 V logic), **115200 8N1** | board, boot log |
 | Boot loader | Realtek U-Boot 2011.12 (1.0.0.2, Dec 2024), **Esc** stops autoboot, `bootcmd=boota` | boot log, `printenv` |
-| Stock image format | uImage with magic **`0x83800000`**, LZMA kernel | `md.b b4300000 40` |
+| Stock image format | uImage with magic **`0x83800000`**, LZMA kernel, rootfs embedded in the kernel initramfs | `md.b b4300000 40`, stock image |
+| Stock upgrade check | **no signature**: web UI accepts any uImage with magic `0x83800000` and valid header/data CRC32, writes the whole file to RUNTIME | stock firmware (`sal_sys_fwImageCrc32_check`) |
 | PHY map | RTL8261BE on MAC 0/8/16 (SMI bus 1/2/3, address 0); RTL8264B on MAC 20/24/25/26 (bus 0, addresses 0-3) | U-Boot SMI registers |
 | Lane polarity | RTL8261BE links normal; each RTL8264B link inverted once on the PHY and once on the SerDes (alternating tx/rx) | U-Boot PHY and SerDes registers |
 | Stock firmware | "KT-NOS" 1.1.1.34 | boot log |

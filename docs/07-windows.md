@@ -93,6 +93,15 @@ Later builds after `git pull` only rebuild what changed and take minutes.
 4. **Console:** PuTTY on COM3, 115200, with *Session → Logging → All session
    output* to a file. Send that log after the first boot.
 
+> **Shortcut without the serial console.** The stock web UI accepts our
+> image directly (no signature, just the uImage magic and CRC). You can skip
+> Parts 2-3 and upload `...-initramfs-kernel.bin` from the stock firmware's
+> own upgrade page instead — see
+> [03-install.md](03-install.md#flashing-from-the-stock-web-ui). You still
+> need the Part 1 build. For a first boot on a unit we have not tested, the
+> serial route below is safer because it can always recover; the web UI
+> cannot if the network does not come up.
+
 ## Part 3: Test from RAM (nothing is written to flash)
 
 1. Power-cycle the switch while pressing Esc in PuTTY until `RTL9300#`
