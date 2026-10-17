@@ -198,13 +198,21 @@ configuration, which is usually right. To define them yourself, copy the
 `led_set` node of a similar board (the Hasivo S1100W-8XGT-SE uses four LEDs
 per port) and add `led-set = <0>` to the ports, using `SWITCH_PORT_LED`
 instead of `SWITCH_PORT_SDS`. A wrong LED set only lights the wrong LEDs.
+The PoE LEDs are driven in software instead: see [PoE LEDs](#poe-leds).
 
 ## PoE
 
-**Written, not yet tested on the switch.** The board has two Realtek
-**RTL8239-VB** PSE chips and no PSE microcontroller. Everything below comes
-from the stock firmware (board tables in `board_conf.ko`, PoE code in
-`ski.ko`); there is no RTL8239 datasheet.
+**Works with the Realtek firmware installed** (round 1 of the tests, an
+802.3bt PD on ports 1 and 5): detection, classification (class 7), power
+(5-10 W drawn) and switching ports off and on with ethtool.
+Without the firmware the chips detect nothing and power nothing. Not yet
+confirmed: the PoE LEDs, and why the test PD's link went up and down every
+25 s (round 2, below).
+
+The board has two Realtek **RTL8239-VB** PSE chips and no PSE
+microcontroller. Everything below comes from the stock firmware (board
+tables in `board_conf.ko`, PoE code in `ski.ko`) and the tests; there is no
+RTL8239 datasheet.
 
 **Wiring.** Both chips are on the bit-banged I²C bus with SDA on GPIO 10
 (SCL GPIO 8, shared with the fan and SFP+ buses). Each answers on two
@@ -233,7 +241,8 @@ operation and the power budget are left to the chip firmware. Every 30 s
 it checks bit 5 of `0xec` (firmware running) and reloads the image if it
 dropped. Status comes from `0x10` (power enable and power good), `0x0c` +
 channel (class), `0x30`/`0x32` + 4 × channel (current, voltage) and `0x2c`
-(temperature).
+(temperature). The tests showed the event registers (`0x00`-`0x0b`) behave
+like the TPS2388x ones too, and `0x2e`/`0x2f` read the 54 V supply.
 
 **In OpenWrt** the `realtek-rtl8239` driver does the same through the
 Linux PSE framework:
@@ -246,6 +255,26 @@ Linux PSE framework:
 - the firmware image is loaded at probe if it is installed, and looked for
   again every 30 s otherwise; the driver also reloads it if the chip stops
   running it
+
+### PoE LEDs
+
+The stock firmware lights LED 2 of each RJ45 port (the third LED of the
+port in the switch's serial LED stream) while the port delivers power. It
+takes that LED under software control of the RTL9303 LED controller, which
+OpenWrt's switch driver doesn't do, so the LED stayed dark in round 1. The
+registers, from the vendor SDK's register table (`rtk.ko`):
+
+| Register | Offset | Use |
+|---|---|---|
+| `SW_LED_LOAD` | `0xcc48` | bit 0: apply the software LED modes |
+| `LED_PORT_SW_EN_CTRL` | `0xcc4c` + port / 8 × 4 | 4 bits per port: LED under software control |
+| `LED_PORT_SW_CTRL` | `0xcc5c` + port × 4 | 3-bit mode per LED, copper from bit 0, fibre from bit 12: 0 off, 7 on, 1-6 blink |
+
+The new `leds-rtl9300-port` driver exposes such LEDs as LED class devices
+(`/sys/class/leds/orange:poe-1` to `-7`), and the device tree binds each to
+the PSE core's `pse-1-0022:port0:delivering`-style trigger, as the Hasivo
+S600WP does with its PoE LEDs. I²C aliases keep the bus number in those
+names fixed. The colour is a guess until round 2.
 
 ### The RTL8239 firmware
 
@@ -261,12 +290,12 @@ python3 scripts/extract-poe-firmware.py full-flash.bin
 It writes `rtl8239-bt.bin` only if the image is byte-identical to the known
 one (SHA-256). Install it on the switch as
 `/lib/firmware/realtek/rtl8239-bt.bin` (it stays in the overlay across
-reboots once OpenWrt runs from flash). Whether the chips need it at all is
-the first thing round 1 of the tests answers.
+reboots once OpenWrt runs from flash). PoE needs it.
 
 ### Testing
 
-With one PoE device (802.3bt preferred) and the switch RAM-booted:
+With one PoE device (802.3bt preferred), optionally a device without PoE
+(a laptop), and the switch RAM-booted:
 
 ```sh
 # on the PC
@@ -275,35 +304,60 @@ scp -O rtl8239-bt.bin root@192.168.2.1:/tmp/
 mokerlink-poe-test
 ```
 
-It asks you to plug the device into port 1 (second chip) and port 5 (first
-chip), records power-on time, class and power, switches each port off and on
-from software, repeats everything after installing the firmware, and ends
-with `mokerlink-i2c-master-test`. Power-cycle the switch afterwards and send
-the report it writes.
+Round 2 of the script:
 
-Still open, for the test to settle:
+1. sends the firmware in 16-byte writes, the most an RTL9303 I²C master
+   moves per transfer, before the driver has it
+2. installs the firmware and waits for the driver to load it
+3. records port 1 and then port 5 with the PoE device once a second
+   (link, PSE state, LED, chip registers), asks what the LEDs show and
+   switches the port off and on
+4. if the PoE LED stayed dark, lights the LEDs of port 1 one by one
+5. optionally records port 1 with a device without PoE, at its normal
+   speed and then advertising 100 Mbps only
 
-- whether the chips power devices without the Realtek firmware
-- whether the second chip's firmware download disturbs the first chip,
-  which already runs it (each chip's driver instance downloads through the
-  shared broadcast address; the stock firmware's watchdog does the same)
-- which channel of a pair is alternative A and which B, and the exact units
-  of the current and voltage readings (taken from the stock code)
-- whether the RTL9303's I²C master 1 drives GPIO 8-11; if it does, the fan
-  and SFP+ buses can move to the upstream `i2c-rtl9300` driver (the PoE bus
-  stays bit-banged, because the master moves at most 16 bytes per transfer)
+Power-cycle the switch afterwards and send the report it writes.
+
+Results so far:
+
+- round 1: fans at 50 % (4500-4800 rpm, fan 3 not fitted); no PoE without
+  the firmware; with it, both chips load it in about 3 s each and power an
+  802.3bt PD within seconds; ethtool disable/enable works
+- round 1: the RTL9303 I²C master 1 is wired to these buses: with
+  `mokerlink-i2c-master-test`, SDA0 reaches the ADT7476 and SDA1 the
+  RTL8239s, so GPIO 8 is its SCL
+- round 1: the PD (Ruckus T750SE) linked at 100 Mbps, and the link dropped
+  twice within 2 s and came back about 25 s later, over and over, on both
+  port 1 (RTL8261BE) and port 5 (RTL8264B), while power stayed on
+
+Still open, for round 2 to settle:
+
+- the PoE LEDs: which LED, which colour, and whether the switch's LED
+  controller outputs it as the boot loader configured it
+- the link drops: the PD itself (step 3 shows whether its power dips;
+  powering the PD from the stock firmware is the other cross-check) or the
+  ports at 100 Mbps (step 5)
+- whether the chips accept the firmware in 16-byte writes. If they do,
+  all three buses can move to the upstream `i2c-rtl9300` driver on I²C
+  master 1 and the shared-SCL bus driver can go
+- which channel of a pair is alternative A and which B
 
 ### Upstreaming
 
-The kernel parts are written for upstream: the driver
-(`drivers/net/pse-pd/realtek-rtl8239.c`), the shared-SCL bus driver
-(`drivers/i2c/busses/i2c-gpio-shared-scl.c`) and their bindings in
+The kernel parts are written for upstream: the drivers
+(`drivers/net/pse-pd/realtek-rtl8239.c`,
+`drivers/i2c/busses/i2c-gpio-shared-scl.c`,
+`drivers/leds/leds-rtl9300-port.c`) and their bindings in
 `openwrt/target/linux/realtek/files-6.18`, with the Kconfig/Makefile hooks
-in `patches-6.18/83x-*.patch`. Both bindings pass `make dt_binding_check`,
-both drivers `checkpatch.pl --strict`. Before submitting, the submitter
-replaces the placeholder authorship (copyright lines, `maintainers` in the
-bindings, patch `From:`) with their own and adds a `Signed-off-by`. The
-firmware stays out of tree.
+in `patches-6.18/83x-*.patch`. All three bindings pass
+`make dt_binding_check`, all three drivers `checkpatch.pl --strict`.
+Validating the board DTB against them flags two things that also apply to
+OpenWrt's Hasivo S600WP and need solving upstream rather than here: the
+PSE LED trigger names are not in `leds/common.yaml`, and the RTL9301
+switch binding has no child node for port LEDs. Before submitting, the
+submitter replaces the placeholder authorship (copyright lines,
+`maintainers` in the bindings, patch `From:`) with their own and adds a
+`Signed-off-by`. The firmware stays out of tree.
 
 ## Fans and temperature
 

@@ -1,21 +1,28 @@
 #!/bin/sh
 # mokerlink-poe-test [OUTPUT_FILE]
 #
-# Guided PoE test. Asks you to plug a PoE device into ports in turn and
-# records everything in one report: driver and bus state, the RTL8239
-# registers, ethtool PSE status per port, power-on time, class and power,
-# disable/enable from software, and the same again with the RTL8239
-# firmware loaded if /tmp/rtl8239-bt.bin is there (the driver picks it up
-# within 30 s of it appearing in /lib/firmware). Ends with
-# mokerlink-i2c-master-test, which needs a power cycle afterwards.
+# Guided PoE test, round 2. Records everything in one report:
 #
-# Prepare: scp -O rtl8239-bt.bin root@<switch>:/tmp/   (optional, from
-# scripts/extract-poe-firmware.py), nothing plugged into the PoE ports.
+#   1. whether the RTL8239s take their firmware in 16-byte writes, the most
+#      an RTL9303 I2C master can send at once (decides whether the bit-banged
+#      bus can be replaced by the SoC's I2C master)
+#   2. the firmware loaded by the driver from /tmp/rtl8239-bt.bin
+#   3. a PoE device on port 1, then port 5: power, class, link and the chip
+#      registers once a second, the PoE LEDs, disable/enable from software
+#   4. if the PoE LED did not light: which LED of port 1 is which
+#   5. optionally, a device without PoE on port 1 at its normal speed and
+#      at 100 Mbps, to tell link drops of the port from those of the PD
+#
+# Prepare: boot the image from RAM, then
+#   scp -O rtl8239-bt.bin root@<switch>:/tmp/
+# (from scripts/extract-poe-firmware.py), nothing plugged into ports 1-7
+# except your uplink. Power-cycle the switch when it is done.
 
 OUT=${1:-/tmp/mokerlink-poe-test-$(date +%Y%m%d-%H%M%S).txt}
 FW_SRC=/tmp/rtl8239-bt.bin
 FW_DST=/lib/firmware/realtek/rtl8239-bt.bin
 CHIP_ADDRS="0x20 0x21 0x22 0x23"
+SW_BASE=0x1b000000
 
 say() { echo "$*" | tee -a "$OUT"; }
 section() { printf '\n========== %s ==========\n' "$*" | tee -a "$OUT"; }
@@ -26,6 +33,13 @@ ask() { # prompt; waits for Enter, returns 1 on "s" (skip)
 	read -r a </dev/tty
 	echo ">>> $* [${a:-done}]" >>"$OUT"
 	[ "$a" != s ]
+}
+note() { # question; records the typed answer, prints it on stdout
+	local a
+	printf '\n??? %s\n    answer + Enter: ' "$*" >/dev/tty
+	read -r a </dev/tty
+	echo "??? $* [$a]" >>"$OUT"
+	echo "$a"
 }
 
 poe_bus() { # i2c bus number of the PoE controllers (SDA GPIO 10)
@@ -38,22 +52,35 @@ poe_bus() { # i2c bus number of the PoE controllers (SDA GPIO 10)
 	return 1
 }
 
-pse_status() { # port
-	ethtool --show-pse "$1" 2>&1
+rd() { # addr reg: register as two hex digits, -- on error
+	local v
+	v=$(i2cget -f -y "$BUS" "$1" "$2" 2>/dev/null) || { echo --; return; }
+	echo "${v#0x}"
 }
 
 delivering() { # port
-	pse_status "$1" | grep -q 'Power status: Delivering'
+	ethtool --show-pse "$1" 2>/dev/null | grep -q 'Detection Status: delivering'
+}
+
+poe_led() { # front port number: the sysfs directory of its PoE LED
+	local d
+	for d in /sys/class/leds/*:poe-"$1"; do
+		[ -d "$d" ] && { echo "$d"; return 0; }
+	done
+	return 1
+}
+
+fw_running() { # number of "firmware running" kernel messages
+	dmesg | grep -c 'rtl8239.*firmware running'
 }
 
 dump_chips() {
-	local bus addr reg
-	bus=$(poe_bus) || { say "PoE I2C bus not found"; return; }
+	local addr reg
 	for addr in $CHIP_ADDRS; do
 		printf '\n%s:' "$addr" >>"$OUT"
 		for reg in $(seq 0 79) 232 236; do
 			[ $((reg % 16)) -eq 0 ] && printf '\n  %02x:' "$reg" >>"$OUT"
-			printf ' %s' "$(i2cget -f -y "$bus" "$addr" "$reg" 2>/dev/null | sed 's/0x//')" >>"$OUT"
+			printf ' %s' "$(rd "$addr" "$reg")" >>"$OUT"
 		done
 		echo >>"$OUT"
 	done
@@ -66,26 +93,57 @@ all_ports() {
 	done
 }
 
-# port_test PORT LABEL: power-on time, status, disable/enable from software
-port_test() {
-	local port="$1" t=0
-	ask "Plug the PoE device into $port (front port ${port#lan})" || return
-	say "waiting for $port to deliver power"
-	while ! delivering "$port"; do
+# sample PORT ADDR CH SECONDS: once a second the link, the PSE state, the
+# PoE LED and the registers of the two channels (CH, CH+1 of the quad at
+# ADDR): interrupt and event registers, detection/class, power status,
+# current and voltage (LSB first) and assigned class
+sample() {
+	local port="$1" addr="$2" ch="$3" n="$4" t=0 c0 c1 carrier speed pse cls mw led up=0 r reg
+	local led_dir
+	c0=$ch
+	c1=$((ch + 1))
+	led_dir=$(poe_led "${port#lan}")
+	printf '\n%s, %s channels %d+%d, once a second:\n' "$port" "$addr" "$c0" "$c1" >>"$OUT"
+	printf '  t link speed pse class mW led | 00 02 04 06 08 0a dc%d dc%d 10 I%d.. V%d.. I%d.. V%d.. ac%d ac%d\n' \
+		"$c0" "$c1" "$c0" "$c0" "$c1" "$c1" "$c0" "$c1" >>"$OUT"
+	while [ $t -lt "$n" ]; do
+		carrier=$(cat "/sys/class/net/$port/carrier" 2>/dev/null)
+		speed=$(cat "/sys/class/net/$port/speed" 2>/dev/null)
+		r=$(ethtool --show-pse "$port" 2>/dev/null)
+		pse=$(echo "$r" | sed -n 's/.*Detection Status: //p' | cut -d' ' -f1)
+		cls=$(echo "$r" | sed -n 's/.*Power Class: //p')
+		mw=$(echo "$r" | sed -n 's/.*Actual Power: //p')
+		led=$(cat "$led_dir/brightness" 2>/dev/null)
+		r=""
+		for reg in 0x00 0x02 0x04 0x06 0x08 0x0a $((0x0c + c0)) $((0x0c + c1)) 0x10 \
+			$((0x30 + 4 * c0)) $((0x31 + 4 * c0)) $((0x32 + 4 * c0)) $((0x33 + 4 * c0)) \
+			$((0x30 + 4 * c1)) $((0x31 + 4 * c1)) $((0x32 + 4 * c1)) $((0x33 + 4 * c1)) \
+			$((0x4c + c0)) $((0x4c + c1)); do
+			r="$r $(rd "$addr" "$reg")"
+		done
+		printf '%3d %s %s %s %s %s %s |%s\n' "$t" "${carrier:--}" "${speed:--}" \
+			"${pse:--}" "${cls:--}" "${mw:--}" "${led:--}" "$r" >>"$OUT"
+		if [ "$carrier" = 1 ] && [ $up = 0 ]; then
+			up=1
+			run ethtool "$port"
+		fi
+		[ "$carrier" = 1 ] || up=0
 		t=$((t + 1))
-		[ $t -ge 30 ] && break
 		sleep 1
 	done
-	if delivering "$port"; then
-		say "$port: delivering after ~${t}s"
-	else
-		say "$port: NOT delivering after 30s"
-	fi
-	run ethtool --show-pse "$port"
-	sleep 10
-	say "$port after 10 more seconds:"
-	run ethtool --show-pse "$port"
-	run logread -l 20
+	run sh -c "logread | grep -E '$port|rtl8239' | tail -40"
+}
+
+# port_test PORT ADDR CH: a PoE device on PORT, delivered by channels CH and
+# CH+1 of the quad at ADDR
+port_test() {
+	local port="$1" addr="$2" ch="$3" t=0 n
+	n=${port#lan}
+	ask "Plug the PoE device into $port (front port $n) and watch it and the port LEDs" || return
+	say "recording $port for 60 s"
+	sample "$port" "$addr" "$ch" 60
+	note "Front port $n: which of its LEDs are lit, and what colour? (e.g. 'green link + orange PoE')" >/dev/null
+	note "Did the PoE device stay powered all the time (steady), or did it restart?" >/dev/null
 
 	say "$port: disable from software"
 	run ethtool --set-pse "$port" c33-pse-admin-control disable
@@ -96,10 +154,10 @@ port_test() {
 	else
 		say "$port: off after disable"
 	fi
+	note "Is the PoE device off now, and the port's PoE LED off? (y/n)" >/dev/null
 
 	say "$port: enable again"
 	run ethtool --set-pse "$port" c33-pse-admin-control enable
-	t=0
 	while ! delivering "$port" && [ $t -lt 30 ]; do
 		t=$((t + 1))
 		sleep 1
@@ -107,25 +165,100 @@ port_test() {
 	if delivering "$port"; then
 		say "$port: delivering again after ~${t}s"
 	else
-		say "$port: NOT delivering after enable"
+		say "$port: NOT delivering 30 s after enable"
 	fi
 	run ethtool --show-pse "$port"
-	ask "Did the device power up both times? Note it, then unplug it from $port" || true
+	note "Is the PoE device powered again, and the port's PoE LED on? (y/n)" >/dev/null
+	ask "Unplug the PoE device from $port" || true
+	sleep 3
+	run ethtool --show-pse "$port"
+	run cat "$(poe_led "$n")/brightness"
+	note "Is the port's PoE LED off now? (y/n)" >/dev/null
 }
 
-phase() { # LABEL
-	section "$1: state"
-	run sh -c "dmesg | grep -iE 'rtl8239|pse|i2c-gpio-shared|adt7'"
-	all_ports
-	section "$1: RTL8239 registers 0x00-0x4f, 0xe8, 0xec"
-	dump_chips
-	section "$1: port 1 (second RTL8239, 0x22 channels 0+1)"
-	port_test lan1
-	section "$1: port 5 (first RTL8239, 0x20 channels 2+3)"
-	port_test lan5
-	section "$1: after unplugging"
-	all_ports
-	dump_chips
+# The firmware in 16-byte writes, as an RTL9303 I2C master would have to
+# send it, with the stock preparation of both chips. Only before the driver
+# has the firmware, which it would otherwise reload over this.
+chunk_test() {
+	local addr v n=0 bytes=0 start line b
+	command -v i2ctransfer >/dev/null || { say "skipped: no i2ctransfer"; return; }
+	for addr in $CHIP_ADDRS; do
+		i2cset -f -y "$BUS" "$addr" 0x1a 0x20
+		sleep 1
+		i2cset -f -y "$BUS" "$addr" 0x12 0x00
+	done
+	for addr in 0x20 0x22; do
+		i2cset -f -y "$BUS" "$addr" 0xec 0x03
+	done
+	sleep 1
+	for addr in 0x20 0x22; do
+		v=$(rd "$addr" 0xec)
+		say "$addr: 0xec = $v before the download"
+		[ "$v" = -- ] && continue
+		if [ $((0x$v & 0x04)) -eq 0 ]; then
+			i2cset -f -y "$BUS" "$addr" 0x1a 0x3f
+			sleep 1
+			i2cset -f -y "$BUS" "$addr" 0xec 0x03
+			sleep 1
+			say "$addr: not ready, reset: 0xec = $(rd "$addr" 0xec)"
+		fi
+	done
+	start=$(date +%s)
+	# hexdump pads a short last line, so add the 0x here rather than in
+	# the format
+	hexdump -v -e '16/1 "%02x " "\n"' "$FW_SRC" | while read -r line; do
+		set --
+		for b in $line; do
+			set -- "$@" "0x$b"
+		done
+		i2ctransfer -f -y "$BUS" "w$(($# + 1))@0x60" 0xf4 "$@" || {
+			echo "write failed at byte $bytes" >>"$OUT"
+			break
+		}
+		bytes=$((bytes + $#))
+		n=$((n + 1))
+		[ $((n % 400)) -eq 0 ] && echo "  $bytes bytes" | tee -a "$OUT"
+	done
+	say "sent in $(($(date +%s) - start)) s"
+	sleep 2
+	for addr in 0x20 0x22; do
+		v=$(rd "$addr" 0xec)
+		if [ "$v" != -- ] && [ $((0x$v & 0x20)) -ne 0 ]; then
+			say "$addr: 0xec = $v: firmware RUNNING after 16-byte writes"
+		else
+			say "$addr: 0xec = $v: firmware not running after 16-byte writes"
+		fi
+	done
+}
+
+dump_led_regs() { # RTL9303 LED controller, 0xcc00-0xcd28
+	local off
+	printf '\nLED registers (0x%x + offset):' "$SW_BASE" >>"$OUT"
+	for off in $(seq $((0xcc00)) 4 $((0xcd28))); do
+		[ $(((off - 0xcc00) % 32)) -eq 0 ] && printf '\n  %04x:' "$off" >>"$OUT"
+		printf ' %08x' "$(devmem $((SW_BASE + off)) 32)" >>"$OUT"
+	done
+	echo >>"$OUT"
+}
+
+# led_walk SWITCH_PORT FRONT_PORT: light each LED of the port in turn
+led_walk() {
+	local port="$1" front="$2" led en_reg ctrl_reg load_reg en ctrl mask
+	en_reg=$((SW_BASE + 0xcc4c + (port >> 3 << 2)))
+	ctrl_reg=$((SW_BASE + 0xcc5c + port * 4))
+	load_reg=$((SW_BASE + 0xcc48))
+	en=$(devmem $en_reg 32)
+	ctrl=$(devmem $ctrl_reg 32)
+	for led in 0 1 2 3; do
+		mask=$(((0x7 | 0x7000) << (3 * led)))
+		devmem $en_reg 32 $((en | 1 << (port % 8 * 4 + led)))
+		devmem $ctrl_reg 32 $((ctrl | mask))
+		devmem $load_reg 32 1
+		note "LED $led of front port $front switched on: which LED of the port is lit, and what colour? (none if nothing changed)" >/dev/null
+		devmem $en_reg 32 $((en))
+		devmem $ctrl_reg 32 $((ctrl))
+		devmem $load_reg 32 1
+	done
 }
 
 : >"$OUT"
@@ -133,36 +266,79 @@ section "system"
 run cat /etc/openwrt_release
 run uname -a
 run i2cdetect -l
-run lsmod
+run sh -c "lsmod | grep -E 'rtl8239|pse|leds|i2c|adt'"
 run sh -c "ls -l /lib/firmware/realtek/ 2>&1"
+run sh -c "ls -l /sys/class/leds/"
+run sh -c "dmesg | grep -iE 'rtl8239|pse|leds|i2c-gpio-shared|adt7'"
+BUS=$(poe_bus) || { say "PoE I2C bus not found"; exit 1; }
 
-phase "A (as booted)"
+if [ ! -f "$FW_SRC" ]; then
+	say "No $FW_SRC: copy rtl8239-bt.bin there first (see the top of this script)"
+	exit 1
+fi
+run sha256sum "$FW_SRC"
 
-if [ -f "$FW_SRC" ] && [ ! -f "$FW_DST" ]; then
-	section "B: with the RTL8239 firmware"
-	run sha256sum "$FW_SRC"
+section "1: firmware in 16-byte writes"
+if [ -f "$FW_DST" ]; then
+	say "skipped: the driver already has the firmware"
+elif ask "Firmware download in 16-byte writes (about 30 s, nothing to plug)"; then
+	chunk_test
+	dump_chips
+fi
+
+section "2: firmware loaded by the driver"
+if [ ! -f "$FW_DST" ]; then
+	before=$(fw_running)
 	mkdir -p "${FW_DST%/*}"
 	cp "$FW_SRC" "$FW_DST"
-	# The driver looks for the firmware every 30 s and loads it into
-	# both chips; wait for the two "firmware running" lines
+	# The driver looks for the firmware every 30 s and loads it into both
+	# chips; wait for the two "firmware running" lines
 	say "waiting up to 90 s for the driver to load the firmware"
 	t=0
-	while [ "$(dmesg | grep -c 'firmware running')" -lt 2 ] && [ $t -lt 90 ]; do
+	while [ $(($(fw_running) - before)) -lt 2 ] && [ $t -lt 90 ]; do
 		sleep 5
 		t=$((t + 5))
 	done
-	run sh -c "dmesg | grep -iE 'rtl8239|firmware'"
-	phase "B (firmware loaded)"
-elif [ -f "$FW_DST" ]; then
-	section "B: skipped, the firmware was already installed at boot"
-else
-	section "B: skipped, no $FW_SRC"
+fi
+run sh -c "dmesg | grep -iE 'rtl8239|firmware'"
+run sh -c "logread | grep -i 'firmware' | tail -5"
+all_ports
+dump_chips
+
+section "LEDs"
+for d in /sys/class/leds/*:poe-*; do
+	[ -d "$d" ] || continue
+	printf '%s: brightness %s, trigger %s\n' "${d##*/}" "$(cat "$d/brightness")" \
+		"$(sed -n 's/.*\[\(.*\)\].*/\1/p' "$d/trigger")" >>"$OUT"
+done
+dump_led_regs
+
+section "3: port 1 (second RTL8239, 0x22 channels 0+1)"
+port_test lan1 0x22 0
+led_ok=$(note "Did port 1's PoE LED light while the device was powered? (y/n)")
+
+if [ "$led_ok" != y ]; then
+	section "4: LEDs of port 1, one at a time"
+	ask "Nothing plugged into port 1 now; the next steps light its LEDs one by one" &&
+		led_walk 0 1
 fi
 
-section "RTL9303 I2C master test"
-if ask "Last step: the I2C master test. It stops fan and PoE control until the next power cycle"; then
-	mokerlink-i2c-master-test 2>&1 | tee -a "$OUT"
+section "3: port 5 (first RTL8239, 0x20 channels 2+3)"
+port_test lan5 0x20 2
+
+section "5: port 1 with a device without PoE"
+if ask "Plug a device WITHOUT PoE (laptop, another switch) into port 1"; then
+	say "recording lan1 for 30 s at the normal speed"
+	sample lan1 0x22 0 30
+	say "lan1 now advertises 100 Mbps only (until the next reboot)"
+	run ethtool -s lan1 speed 100 duplex full autoneg on
+	sample lan1 0x22 0 45
+	ask "Unplug the device from port 1" || true
 fi
+
+section "after the tests"
+all_ports
+dump_chips
 
 section "kernel log"
 run dmesg

@@ -3,8 +3,8 @@
  * MokerLink POE-10G07110GSM
  * 7x 10GBASE-T (PoE++) + 1x 10G SFP+, Realtek RTL9303
  *
- * STAGE 1 DEVICE TREE: the copper ports are verified; PoE is driven by
- * the RTL8239 driver but not yet verified.
+ * STAGE 1 DEVICE TREE: the copper ports, fan control and PoE (with the
+ * RTL8239 firmware installed) are verified; the PoE LEDs are not yet.
  *
  * Confirmed from the board and the stock boot log:
  *   - SoC RTL9303, 128 MiB RAM, 16 MiB Winbond W25Q128 SPI NOR
@@ -28,7 +28,11 @@
  *     that I2C bus
  *
  * Confirmed by booting this device tree from RAM: all seven PHYs probe,
- * front ports 1-7 are lan1-lan7 and every copper port passes traffic.
+ * front ports 1-7 are lan1-lan7 and every copper port passes traffic; the
+ * ADT7476 runs the fans at the stock 50 %; with the firmware loaded the
+ * RTL8239s detect, classify and power an 802.3bt PD on ports 1 and 5 and
+ * ethtool switches it off and on; the RTL9303 I2C master 1 reaches the
+ * ADT7476 with SDA0 and the RTL8239s with SDA1, so SCL GPIO 8 is its SCL.
  *
  * Everything marked UNVERIFIED still needs confirming on hardware.
  *
@@ -49,11 +53,22 @@
 #include "rtl930x.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/leds/common.h>
 #include <dt-bindings/phy/phy.h>
 
 / {
 	compatible = "mokerlink,poe-10g07110gsm", "realtek,rtl9303-soc";
 	model = "MokerLink POE-10G07110GSM";
+
+	/*
+	 * Fixed I2C bus numbers, so that the PSE LED trigger names below
+	 * ("pse-<bus>-<address>:port<n>:delivering") do not change.
+	 */
+	aliases {
+		i2c0 = &i2c_fan;
+		i2c1 = &i2c_poe;
+		i2c2 = &i2c_sfp;
+	};
 
 	/*
 	 * 128 MiB RAM ("DRAM: 128 MB") and the 115200 baud console of the
@@ -397,6 +412,74 @@
 				speed = <1000>;
 				full-duplex;
 			};
+		};
+	};
+
+	/*
+	 * PoE status LEDs. The stock firmware (poe_led_detect_monitor in
+	 * ski.ko) takes LED 2 of every RJ45 port, the third in the serial LED
+	 * stream, under software control and switches it on while the port
+	 * delivers power. UNVERIFIED: the colour.
+	 */
+	port-leds {
+		compatible = "realtek,rtl9300-port-leds";
+		#address-cells = <2>;
+		#size-cells = <0>;
+
+		led@0,2 {
+			reg = <0 2>;
+			color = <LED_COLOR_ID_ORANGE>;
+			function = "poe";
+			function-enumerator = <1>;
+			linux,default-trigger = "pse-1-0022:port0:delivering";
+		};
+
+		led@8,2 {
+			reg = <8 2>;
+			color = <LED_COLOR_ID_ORANGE>;
+			function = "poe";
+			function-enumerator = <2>;
+			linux,default-trigger = "pse-1-0022:port1:delivering";
+		};
+
+		led@10,2 {
+			reg = <16 2>;
+			color = <LED_COLOR_ID_ORANGE>;
+			function = "poe";
+			function-enumerator = <3>;
+			linux,default-trigger = "pse-1-0022:port2:delivering";
+		};
+
+		led@14,2 {
+			reg = <20 2>;
+			color = <LED_COLOR_ID_ORANGE>;
+			function = "poe";
+			function-enumerator = <4>;
+			linux,default-trigger = "pse-1-0020:port0:delivering";
+		};
+
+		led@18,2 {
+			reg = <24 2>;
+			color = <LED_COLOR_ID_ORANGE>;
+			function = "poe";
+			function-enumerator = <5>;
+			linux,default-trigger = "pse-1-0020:port1:delivering";
+		};
+
+		led@19,2 {
+			reg = <25 2>;
+			color = <LED_COLOR_ID_ORANGE>;
+			function = "poe";
+			function-enumerator = <6>;
+			linux,default-trigger = "pse-1-0020:port2:delivering";
+		};
+
+		led@1a,2 {
+			reg = <26 2>;
+			color = <LED_COLOR_ID_ORANGE>;
+			function = "poe";
+			function-enumerator = <7>;
+			linux,default-trigger = "pse-1-0020:port3:delivering";
 		};
 	};
 };

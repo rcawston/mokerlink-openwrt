@@ -1,0 +1,46 @@
+From: OpenWrt contributors
+Subject: [PATCH] leds: add Realtek RTL9300 port LED driver
+
+The RTL9300 switch drives the port LEDs over its serial LED interface,
+each LED showing a hardware function chosen by the LED set of its port.
+Some boards wire LEDs that have no hardware function to it, such as the
+PoE status LEDs of the MokerLink POE-10G07110GSM, which the vendor
+firmware drives in software. Add a driver that takes such LEDs over and
+exposes them as LED class devices.
+
+Add the Kconfig and Makefile entries; the driver itself lives in
+files-6.18.
+
+---
+--- a/drivers/leds/Kconfig
++++ b/drivers/leds/Kconfig
+@@ -676,6 +676,19 @@ config LEDS_RTL8231
+ 	  of the RTL8231 GPIO and LED expander chip.
+ 	  When built as a module, this module will be named leds-rtl8231.
+ 
++config LEDS_RTL9300_PORT
++	tristate "LED support for Realtek RTL9300 switch port LEDs"
++	depends on LEDS_CLASS
++	depends on MACH_REALTEK_RTL || COMPILE_TEST
++	select MFD_SYSCON
++	help
++	  This option enables software control of the port LEDs of the
++	  Realtek RTL9300 switch, for port LEDs that have no hardware
++	  function, such as the PoE status LEDs of PoE switches.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called leds-rtl9300-port.
++
+ config LEDS_BD2606MVV
+ 	tristate "LED driver for BD2606MVV"
+ 	depends on LEDS_CLASS
+--- a/drivers/leds/Makefile
++++ b/drivers/leds/Makefile
+@@ -85,6 +85,7 @@ obj-$(CONFIG_LEDS_PWM)			+= leds-pwm.o
+ obj-$(CONFIG_LEDS_QNAP_MCU)		+= leds-qnap-mcu.o
+ obj-$(CONFIG_LEDS_REGULATOR)		+= leds-regulator.o
+ obj-$(CONFIG_LEDS_RTL8231)		+= leds-rtl8231.o
++obj-$(CONFIG_LEDS_RTL9300_PORT)		+= leds-rtl9300-port.o
+ obj-$(CONFIG_LEDS_SC27XX_BLTC)		+= leds-sc27xx-bltc.o
+ obj-$(CONFIG_LEDS_ST1202)		+= leds-st1202.o
+ obj-$(CONFIG_LEDS_SUN50I_A100)		+= leds-sun50i-a100.o

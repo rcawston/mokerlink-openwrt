@@ -450,15 +450,17 @@ static const char *rtl8239_fw_name(struct rtl8239_priv *priv)
 }
 
 /*
- * Look for the firmware, quietly when it is not there. The image belongs to
- * Realtek and is not redistributable; it has to be copied out of the vendor
- * firmware of the device. Returns true when a valid image is held.
+ * Look for the firmware, quietly when it is not there and without the user
+ * helper fallback, as this runs again every RTL8239_FW_CHECK_INTERVAL. The
+ * image belongs to Realtek and is not redistributable; it has to be copied
+ * out of the vendor firmware of the device. Returns true when a valid image
+ * is held.
  */
 static bool rtl8239_get_fw(struct rtl8239_priv *priv)
 {
 	const struct firmware *fw;
 
-	if (firmware_request_nowarn(&fw, rtl8239_fw_name(priv), priv->pcdev.dev))
+	if (request_firmware_direct(&fw, rtl8239_fw_name(priv), priv->pcdev.dev))
 		return false;
 
 	if (rtl8239_fw_validate(priv, fw)) {

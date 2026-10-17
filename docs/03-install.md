@@ -134,10 +134,12 @@ rebuild and repeat from step 1 with the new RAM image.
       128 ([05-porting.md](05-porting.md#fans-and-temperature)).
 - [ ] **Heat:** the temperatures in `mokerlink-probe` stay below about
       100 °C under load.
-- [ ] **PoE** (driver not yet verified): extract the RTL8239 firmware
-      from your stock image, then run `mokerlink-poe-test` with a PoE
-      device ([05-porting.md](05-porting.md#poe)). If you need PoE you
-      can rely on now, keep the stock firmware.
+- [ ] **PoE** (works in the first test, LEDs not yet verified): extract
+      the RTL8239 firmware from your stock image, then run
+      `mokerlink-poe-test` with a PoE device
+      ([05-porting.md](05-porting.md#poe)). The PoE LED of a port lights
+      while it powers a device. If you need PoE you can rely on now, keep
+      the stock firmware.
 
 ## 4. Write OpenWrt to flash
 

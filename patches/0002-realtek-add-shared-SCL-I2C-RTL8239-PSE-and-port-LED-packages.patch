@@ -1,4 +1,4 @@
-realtek: add shared-SCL I2C and RTL8239 PSE kernel packages
+realtek: add shared-SCL I2C, RTL8239 PSE and port LED kernel packages
 
 kmod-i2c-gpio-shared-scl: bit-banged I2C buses with one common SCL GPIO
 (drivers/i2c/busses/i2c-gpio-shared-scl.c in files-6.18).
@@ -6,11 +6,14 @@ kmod-i2c-gpio-shared-scl: bit-banged I2C buses with one common SCL GPIO
 kmod-pse-realtek-rtl8239: Realtek RTL8239 PoE PSE controllers driven
 directly over I2C (drivers/net/pse-pd/realtek-rtl8239.c in files-6.18).
 
+kmod-leds-rtl9300-port: RTL9300 switch port LEDs under software control,
+such as PoE status LEDs (drivers/leds/leds-rtl9300-port.c in files-6.18).
+
 diff --git a/target/linux/realtek/modules.mk b/target/linux/realtek/modules.mk
 index 5702500..0b49a8c 100644
 --- a/target/linux/realtek/modules.mk
 +++ b/target/linux/realtek/modules.mk
-@@ -56,3 +56,36 @@ define KernelPackage/hasivo-mcu-sensor/description
+@@ -56,3 +56,52 @@ define KernelPackage/hasivo-mcu-sensor/description
  endef
  
  $(eval $(call KernelPackage,hasivo-mcu-sensor))
@@ -47,3 +50,19 @@ index 5702500..0b49a8c 100644
 +endef
 +
 +$(eval $(call KernelPackage,pse-realtek-rtl8239))
++
++define KernelPackage/leds-rtl9300-port
++  SUBMENU:=$(LEDS_MENU)
++  TITLE:=Realtek RTL9300 switch port LED support
++  KCONFIG:=CONFIG_LEDS_RTL9300_PORT
++  FILES:=$(LINUX_DIR)/drivers/leds/leds-rtl9300-port.ko
++  DEPENDS:=@TARGET_realtek
++  AUTOLOAD:=$(call AutoProbe,leds-rtl9300-port)
++endef
++
++define KernelPackage/leds-rtl9300-port/description
++ Software control of RTL9300 switch port LEDs that have no hardware
++ function, such as the PoE status LEDs of PoE switches.
++endef
++
++$(eval $(call KernelPackage,leds-rtl9300-port))

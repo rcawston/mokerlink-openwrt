@@ -160,8 +160,9 @@ gpio_bits() { # value -> list of set bit numbers
 	for p in $(ports); do
 		[ "$p" = lan8 ] || run ethtool --show-pse "$p"
 	done
-	run sh -c "dmesg | grep -iE 'rtl8239|pse'"
+	run sh -c "dmesg | grep -iE 'rtl8239|pse|rtl9300-port'"
 	run ls -l /lib/firmware/realtek/
+	run sh -c "grep -H . /sys/class/leds/*:poe-*/brightness"
 
 	section "GPIO"
 	if have devmem && [ -e /dev/mem ]; then

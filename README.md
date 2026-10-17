@@ -8,17 +8,18 @@ It is [OpenWrt](https://openwrt.org) plus board support for this switch,
 pinned to an exact source revision, with defaults for a plain layer-2
 switch and tools to bring up the hardware safely.
 
-> **Status: stage 1, RAM-tested on real hardware. PoE written, untested.**
+> **Status: stage 1, RAM-tested on real hardware. PoE works, in testing.**
 > Booted from RAM on a real unit: all seven 10G PHYs come up, front ports
 > 1-7 are `lan1`-`lan7`, and every copper port forwards traffic (tested at
 > 1 Gbit/s). The PHY map and lane polarity come straight from the vendor
-> U-Boot (`scripts/uboot-wiring.py`). **PoE** has a new driver for the two
-> RTL8239 chips, built from what the stock firmware does, but has not run
-> on the switch yet; it needs the RTL8239 firmware copied out of your stock
-> image ([docs/05-porting.md](docs/05-porting.md#poe)). Fan control, also
-> taken from the stock firmware, is in but not yet tested on the switch
-> ([docs/05-porting.md](docs/05-porting.md#fans-and-temperature)). Still
-> untested: SFP+, and copper at 2.5/5/10 Gbit/s.
+> U-Boot (`scripts/uboot-wiring.py`). Fan control, taken from the stock
+> firmware, runs the fans at 50 % like stock
+> ([docs/05-porting.md](docs/05-porting.md#fans-and-temperature)). **PoE**
+> has a new driver for the two RTL8239 chips, built from what the stock
+> firmware does; it powered an 802.3bt device in the first test and needs
+> the RTL8239 firmware copied out of your stock image. The PoE LEDs are
+> written but untested ([docs/05-porting.md](docs/05-porting.md#poe)).
+> Still untested: SFP+, and copper at 2.5/5/10 Gbit/s.
 
 ## Why OpenWrt and not firmware from scratch
 
@@ -43,7 +44,8 @@ reviewable board description on top of it is the most reliable option.
 - Hardware watchdog: a hung system reboots itself
 - Fan control like the stock firmware: 50 % normally, full speed when hot
 - PoE (802.3af/at/bt) on ports 1-7, all on by default, per port with
-  `ethtool`; needs the RTL8239 firmware from your stock image (untested)
+  `ethtool`; needs the RTL8239 firmware from your stock image. PoE LEDs
+  (untested)
 - Bring-up tools on the switch: `mokerlink-probe`, `mokerlink-backup`,
   `mokerlink-polarity-scan`, `mokerlink-gpio-watch`, `mokerlink-fan`,
   `mokerlink-poe-test`
@@ -94,7 +96,7 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 |---|---|
 | `openwrt/target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts` | Board description (device tree); every unconfirmed detail is marked `UNVERIFIED` |
 | `patches/` | OpenWrt changes: image recipe, MAC address source, kernel packages |
-| `openwrt/target/linux/realtek/files-6.18`, `patches-6.18/83x-*` | New kernel drivers with their bindings: RTL8239 PoE (`realtek-rtl8239`) and the shared-SCL I²C buses (`i2c-gpio-shared-scl`) |
+| `openwrt/target/linux/realtek/files-6.18`, `patches-6.18/83x-*` | New kernel drivers with their bindings: RTL8239 PoE (`realtek-rtl8239`), the shared-SCL I²C buses (`i2c-gpio-shared-scl`) and the PoE LEDs (`leds-rtl9300-port`) |
 | `files/` | Files added to the firmware: switch defaults and bring-up tools |
 | `config/` | Pinned OpenWrt and feed revisions, package selection |
 | `scripts/` | `build.sh`, `check-dts.sh`, `uimage-remagic.py`, `uboot-wiring.py` (reads the port wiring from U-Boot), `uboot-md2bin.py` (turns a U-Boot flash dump into a binary), `uboot-collect.py` (collects all U-Boot information and dumps the flash over the serial port, CRC-verified), `extract-poe-firmware.py` (copies the RTL8239 PoE firmware out of a stock image) |
