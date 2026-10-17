@@ -36,16 +36,14 @@
  *
  * Everything marked UNVERIFIED still needs confirming on hardware.
  *
- * Deliberately left out until confirmed, because a wrong guess there can
- * hurt stability rather than just disable a feature:
- *   - reset button: a floating or wrong GPIO makes /etc/rc.button/reset
- *     reboot or factory-reset the switch at random
- *   - GPIO LEDs: driving the wrong GPIO as an output can hold a PHY or the
+ * Deliberately left out:
+ *   - GPIO LEDs: the system LED already works as the boot loader leaves
+ *     it, and driving the wrong GPIO as an output can hold a PHY or the
  *     PoE controller in reset
  *   - port LED sets: without a "realtek,rtl9300-leds" node the switch keeps
- *     the LED setup the boot loader programmed
- *   - SFP cage I2C/GPIOs
- *   - the RTL8231 expander and anything wired to it
+ *     the LED setup the boot loader programmed, which is right
+ *   - the RTL8231 expander: the stock firmware registers none of its pins
+ *     on this board
  */
 
 /dts-v1/;
@@ -53,6 +51,7 @@
 #include "rtl930x.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
 #include <dt-bindings/leds/common.h>
 #include <dt-bindings/phy/phy.h>
 
@@ -68,6 +67,39 @@
 		i2c0 = &i2c_fan;
 		i2c1 = &i2c_poe;
 		i2c2 = &i2c_sfp;
+	};
+
+	keys {
+		compatible = "gpio-keys";
+
+		/*
+		 * The stock firmware's reset button (buttonConfSys_9303M5XC2XF,
+		 * resetGpio5 in board_conf.ko): pressed reads 0. UNVERIFIED on
+		 * the switch.
+		 */
+		button-reset {
+			label = "reset";
+			gpios = <&gpio0 5 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RESTART>;
+		};
+	};
+
+	/*
+	 * The SFP+ cage of lan8. Its signals are SoC GPIOs, as the stock
+	 * firmware registers them for this board (board_gpio_init in
+	 * board_conf.ko): module present (MDO_FX_0) on GPIO 13, loss of
+	 * signal (LOS_FX_0) on GPIO 12, transmitter disable (TX_DIS_FX_0) on
+	 * GPIO 14, and no transmitter fault line. The module EEPROM is on the
+	 * bit-banged bus with SDA GPIO 11. UNVERIFIED on the switch: module
+	 * detection and 1G modules.
+	 */
+	sfp0: sfp-p8 {
+		compatible = "sff,sfp";
+		i2c-bus = <&i2c_sfp>;
+		mod-def0-gpios = <&gpio0 13 GPIO_ACTIVE_LOW>;
+		los-gpios = <&gpio0 12 GPIO_ACTIVE_HIGH>;
+		tx-disable-gpios = <&gpio0 14 GPIO_ACTIVE_HIGH>;
+		maximum-power-milliwatt = <2000>;
 	};
 
 	/*
@@ -228,7 +260,7 @@
 			};
 		};
 
-		/* SFP+ module EEPROM (0x50); no "sff,sfp" node yet */
+		/* SFP+ module EEPROM and diagnostics (0x50, 0x51), for sfp0 */
 		i2c_sfp: i2c@2 {
 			reg = <2>;
 			sda-gpios = <&gpio0 11 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
@@ -387,19 +419,15 @@
 		SWITCH_PORT_SDS(26, 7, 8, 0, usxgmii)
 
 		/*
-		 * SFP+ cage, lan8. UNVERIFIED: MAC port 27 on SerDes 9.
-		 *
-		 * Stage 1 runs the cage as a bare 10GBASE-R link with in-band
-		 * status instead of a "sff,sfp" node, so no unconfirmed I2C bus
-		 * or GPIO is touched. 10G optics, DAC cables and 10GBASE-T SFP+
-		 * modules link up this way; 1G modules and module EEPROM/DOM
-		 * readout need the full SFP description (docs/05-porting.md).
+		 * SFP+ cage, lan8: MAC port 27 on SerDes 9, confirmed with a 10G
+		 * module. phylink picks the interface the module needs.
 		 */
 		port27: port@27 {
 			reg = <27>;
 			label = "lan8";
 			pcs-handle = <&serdes9 0>;
 			phy-mode = "10gbase-r";
+			sfp = <&sfp0>;
 			managed = "in-band-status";
 		};
 

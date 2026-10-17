@@ -115,81 +115,40 @@ works whichever side the board needs it on. "Normal" needs no line.
 
 ## SFP+ cage (full support)
 
-Stage 1 runs the cage as a bare 10GBASE-R link. That works with 10G optics,
-DAC cables and 10GBASE-T SFP+ modules, but not with 1G modules or for
-module information (`ethtool -m lan8`). Full support needs the I²C bus of
-the cage and its MOD-DEF0 (module present) GPIO, ideally also LOS and
-TX-DISABLE:
+The cage is described in full: an `sff,sfp` node with the module EEPROM on
+the bit-banged bus (SDA GPIO 11) and the cage signals on SoC GPIOs, as the
+stock firmware registers them for this board (`board_gpio_init` in
+`board_conf.ko`, the branch for hardware profile `0x8de847`):
 
-- **MOD-DEF0:** run `mokerlink-gpio-watch`, then insert and remove a module.
-  The input that toggles is MOD-DEF0 (low = module present).
-- **LOS:** with a module inserted, plug and unplug the fiber or the DAC peer.
-- **I²C:** the stock firmware (board table `9303M7XC1XF`) reads the module
-  EEPROM at `0x50` over a bit-banged bus: SCL on GPIO 8, SDA on GPIO 11.
-  GPIO 8 is also the SCL line of the fan controller's bus, which the device
-  tree already claims, and Linux's `i2c-gpio` cannot share one SCL GPIO
-  between two buses. So the cage needs either the RTL9303's own I²C master
-  for both devices (if its SCL and SDA lines are on GPIO 8, 9 and 11) or a
-  driver that switches SDA lines on one bus.
+| Signal | Stock name | GPIO | Level |
+|---|---|---|---|
+| module present (MOD-DEF0) | `MDO_FX_0` | 13 | low = module in |
+| loss of signal | `LOS_FX_0` | 12 | high = no signal |
+| transmitter disable | `TX_DIS_FX_0` | 14 | high = off |
 
-Then replace the `port@27` node with an SFP description, following
-`rtl9303_hasivo_f1100w-4sx-4xgt-common.dtsi` in OpenWrt:
-
-```dts
-/ {
-	sfp0: sfp-p8 {
-		compatible = "sff,sfp";
-		i2c-bus = <&i2c_sfp0>;
-		mod-def0-gpios = <&gpio0 N GPIO_ACTIVE_LOW>;  /* N from gpio-watch */
-		#thermal-sensor-cells = <0>;
-	};
-};
-
-&i2c_mst1 {
-	status = "okay";
-	i2c_sfp0: i2c@0 { reg = <0>; };
-};
-
-/* in ethernet-ports: */
-SWITCH_PORT_SFP(27, 8, 9, 0, 0)
-```
+There is no transmitter fault line. The idle levels of the first RAM boot
+(13 and 12 high with no module, 14 low) fit. With the full description,
+1G modules work too (phylink switches SerDes 9 to 1000BASE-X), and
+`ethtool -m lan8` shows the module EEPROM and its diagnostics. A 10G
+module in the cage works (bare 10GBASE-R in stage 1); module detection
+and 1G modules are tested by `mokerlink-hw-test`.
 
 ## Reset button
 
-A wrong reset-button GPIO is dangerous: OpenWrt reboots on a short press and
-**factory-resets on a press longer than 5 seconds**. A floating pin can
-trigger either at random. So the button is left out until confirmed.
-
-Run `mokerlink-gpio-watch` and press the button a few times. Note the GPIO
-and its level while pressed (0 means active low). Then add:
-
-```dts
-#include <dt-bindings/input/input.h>
-#include <dt-bindings/gpio/gpio.h>
-
-/ {
-	keys {
-		compatible = "gpio-keys";
-
-		button-reset {
-			label = "reset";
-			gpios = <&gpio0 N GPIO_ACTIVE_LOW>;
-			linux,code = <KEY_RESTART>;
-		};
-	};
-};
-```
-
-Use `GPIO_ACTIVE_HIGH` if it reads 1 while pressed. On supported RTL930x
-boards it is usually GPIO 5 (active low) or GPIO 20.
+SoC GPIO 5, active low, from the stock firmware (`buttonConfSys_9303M5XC2XF`
+and `resetGpio5` in `board_conf.ko`, which this board's `buttonConf` uses).
+The stock firmware ignores the button if it reads pressed at boot and
+factory-resets on a press of 5 s or longer. It read high (released) in the
+first RAM boot. In OpenWrt a press shorter than 1 s reboots, one longer
+than 5 s factory-resets. `mokerlink-hw-test` checks the button with the
+reset action switched off.
 
 ## System LED
 
-A GPIO LED is an output, and driving the wrong output can hold a PHY or the
-PoE controller in reset. Only add it once the pin is known from the board
-traces or the stock firmware's GPIO setup. The candidates are pins that
-`mokerlink-probe` lists as outputs. On supported boards it is often GPIO 21
-or GPIO 0.
+The system LED works as the boot loader leaves it, so the device tree has
+no LED for it. A GPIO LED is an output, and driving the wrong output can
+hold a PHY or the PoE controller in reset; OpenWrt's boot and upgrade
+blinking would need the pin confirmed first.
 
 ## Port LEDs
 

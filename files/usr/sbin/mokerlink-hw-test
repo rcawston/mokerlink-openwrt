@@ -1,0 +1,222 @@
+#!/bin/sh
+# mokerlink-hw-test [OUTPUT_FILE]
+#
+# Guided test of the parts added after the PoE tests. Records everything in
+# one report:
+#
+#   1. the reset button (GPIO 5). The reset action is switched off for the
+#      test, so presses only get logged
+#   2. the SFP+ cage (GPIOs 12-14): module removal and insertion, module
+#      EEPROM and diagnostics, a 1G module if you have one
+#   3. PoE in semi-auto mode on port 1: does the chip detect and classify a
+#      device but wait for the host before powering it? (needed for a PoE
+#      power budget)
+#   4. link drops right after plug-in, with a device that is already up
+#
+# Prepare: boot the image from RAM, copy the PoE firmware as for
+# mokerlink-poe-test (scp -O rtl8239-bt.bin root@<switch>:/tmp/), have a
+# PoE device, the SFP+ module in lan8, and for step 4 a cable from another
+# switch or router. Power-cycle the switch when it is done.
+
+OUT=${1:-/tmp/mokerlink-hw-test-$(date +%Y%m%d-%H%M%S).txt}
+FW_SRC=/tmp/rtl8239-bt.bin
+FW_DST=/lib/firmware/realtek/rtl8239-bt.bin
+RESET_SCRIPT=/etc/rc.button/reset
+GPIO_DATA_REG=0x1800330c
+
+say() { echo "$*" | tee -a "$OUT"; }
+section() { printf '\n========== %s ==========\n' "$*" | tee -a "$OUT"; }
+run() { printf '\n$ %s\n' "$*" >>"$OUT"; "$@" >>"$OUT" 2>&1; }
+ask() { # prompt; waits for Enter, returns 1 on "s" (skip)
+	local a
+	printf '\n>>> %s\n    Enter when done, s + Enter to skip: ' "$*"
+	read -r a </dev/tty
+	echo ">>> $* [${a:-done}]" >>"$OUT"
+	[ "$a" != s ]
+}
+note() { # question; records the typed answer
+	local a
+	printf '\n??? %s\n    answer + Enter: ' "$*" >/dev/tty
+	read -r a </dev/tty
+	echo "??? $* [$a]" >>"$OUT"
+}
+
+gpio() { # n: level of SoC GPIO n
+	echo $((($(devmem $GPIO_DATA_REG 32) >> $1) & 1))
+}
+
+poe_bus() { # i2c bus number of the PoE controllers (SDA GPIO 10)
+	local a
+	for a in /sys/bus/i2c/devices/i2c-*; do
+		case "$(cat "$a/name" 2>/dev/null)" in
+		*i2c-gpio-shared*SDA1) echo "${a##*-}"; return 0 ;;
+		esac
+	done
+	return 1
+}
+
+rd() { # addr reg: register as two hex digits
+	local v
+	v=$(i2cget -f -y "$BUS" "$1" "$2" 2>/dev/null) || { echo --; return; }
+	echo "${v#0x}"
+}
+
+# link_log PORT SECONDS: carrier and speed once a second
+link_log() {
+	local port="$1" n="$2" t=0
+	printf '\n%s once a second (t carrier speed):\n' "$port" >>"$OUT"
+	while [ $t -lt "$n" ]; do
+		printf '%3d %s %s\n' "$t" "$(cat "/sys/class/net/$port/carrier" 2>/dev/null)" \
+			"$(cat "/sys/class/net/$port/speed" 2>/dev/null)" >>"$OUT"
+		t=$((t + 1))
+		sleep 1
+	done
+}
+
+# poe_regs: power status and channels 0+1 of 0x22 (port 1)
+poe_regs() {
+	printf '  0x12 %s  0x10 %s  dc0 %s dc1 %s  I0 %s%s V0 %s%s\n' \
+		"$(rd 0x22 0x12)" "$(rd 0x22 0x10)" "$(rd 0x22 0x0c)" "$(rd 0x22 0x0d)" \
+		"$(rd 0x22 0x31)" "$(rd 0x22 0x30)" "$(rd 0x22 0x33)" "$(rd 0x22 0x32)" >>"$OUT"
+}
+
+restore_reset() {
+	[ -f "$RESET_SCRIPT.mokerlink-test" ] && mv "$RESET_SCRIPT.mokerlink-test" "$RESET_SCRIPT"
+}
+trap 'restore_reset' EXIT INT TERM
+
+: >"$OUT"
+section "system"
+run cat /etc/openwrt_release
+run uname -a
+run sh -c "dmesg | grep -iE 'sfp|gpio-keys|button|rtl8239'"
+run sh -c "cat /sys/kernel/debug/gpio"
+BUS=$(poe_bus) || say "PoE I2C bus not found"
+
+section "1: reset button"
+say "GPIO 5 now: $(gpio 5) (1 expected while not pressed)"
+if [ -f "$RESET_SCRIPT" ]; then
+	# The button handler runs this script; log instead of rebooting
+	mv "$RESET_SCRIPT" "$RESET_SCRIPT.mokerlink-test"
+	cat >"$RESET_SCRIPT" <<'EOF'
+#!/bin/sh
+logger -t mokerlink-hw-test "button $BUTTON $ACTION, seen $SEEN s"
+EOF
+	chmod +x "$RESET_SCRIPT"
+fi
+if ask "Press the reset button briefly, then hold it for about 3 s (it will NOT reboot now)"; then
+	sleep 1
+	run sh -c "logread | grep mokerlink-hw-test"
+	if logread | grep -q 'mokerlink-hw-test.*button reset released'; then
+		say "reset button: events seen"
+	else
+		say "reset button: NO events"
+		say "GPIO 5 is $(gpio 5) now; hold the button for the next 5 s"
+		t=0
+		while [ $t -lt 5 ]; do
+			printf '  GPIO 5 = %s\n' "$(gpio 5)" | tee -a "$OUT"
+			t=$((t + 1))
+			sleep 1
+		done
+	fi
+fi
+restore_reset
+
+section "2: SFP+ cage (lan8)"
+run sh -c "dmesg | grep -i sfp"
+say "GPIO 12 (LOS) $(gpio 12), 13 (module present, 0 = in) $(gpio 13), 14 (TX disable) $(gpio 14)"
+run ethtool lan8
+run ethtool -m lan8
+run sh -c "for h in /sys/class/hwmon/hwmon*; do [ \"\$(cat \$h/name)\" = sfp ] && grep -H . \$h/*_input; done"
+if ask "Unplug the SFP+ module from lan8"; then
+	sleep 3
+	say "GPIO 12 $(gpio 12), 13 $(gpio 13), 14 $(gpio 14)"
+	run sh -c "dmesg | grep -i sfp | tail -5"
+	run cat /sys/class/net/lan8/carrier
+	if ask "Plug it back in, with its cable"; then
+		link_log lan8 30
+		say "GPIO 12 $(gpio 12), 13 $(gpio 13), 14 $(gpio 14)"
+		run sh -c "dmesg | grep -iE 'sfp|lan8' | tail -10"
+		run ethtool lan8
+	fi
+fi
+if ask "If you have a 1G SFP module: put it into lan8 with a cable to a 1G peer (s to skip)"; then
+	link_log lan8 30
+	run sh -c "dmesg | grep -iE 'sfp|lan8' | tail -10"
+	run ethtool lan8
+	run ethtool -m lan8
+	note "Did the 1G module link and pass traffic?"
+	ask "Put the 10G module back into lan8" || true
+fi
+
+section "3: PoE semi-auto mode on port 1"
+if [ ! -f "$FW_DST" ] && [ -f "$FW_SRC" ]; then
+	mkdir -p "${FW_DST%/*}"
+	cp "$FW_SRC" "$FW_DST"
+	say "waiting up to 90 s for the driver to load the firmware"
+	t=0
+	while [ "$(dmesg | grep -c 'rtl8239.*firmware running')" -lt 2 ] && [ $t -lt 90 ]; do
+		sleep 5
+		t=$((t + 5))
+	done
+fi
+run sh -c "dmesg | grep -i 'rtl8239'"
+if [ -n "$BUS" ] && ask "Nothing plugged into port 1 now; the next step puts it in semi-auto mode"; then
+	run ethtool --set-pse lan1 c33-pse-admin-control disable
+	sleep 2
+	# Channels 0 and 1 to semi-auto (2 bits each: 00 off, 10 semi-auto, 11 auto)
+	v=$(rd 0x22 0x12)
+	i2cset -f -y "$BUS" 0x22 0x12 $(((0x$v & 0xf0) | 0x0a))
+	say "0x12 was $v, now $(rd 0x22 0x12)"
+	poe_regs
+	if ask "Plug the PoE device into port 1 and wait 10 s (it should NOT power up yet)"; then
+		t=0
+		while [ $t -lt 10 ]; do
+			poe_regs
+			t=$((t + 1))
+			sleep 1
+		done
+		note "Did the PoE device power up already? (y/n)"
+		say "power on channels 0 and 1 (0x19 = 0x03)"
+		i2cset -f -y "$BUS" 0x22 0x19 0x03
+		t=0
+		while [ $t -lt 10 ]; do
+			poe_regs
+			t=$((t + 1))
+			sleep 1
+		done
+		note "Did the PoE device power up now? (y/n)"
+		say "power off channels 0 and 1 (0x19 = 0x30)"
+		i2cset -f -y "$BUS" 0x22 0x19 0x30
+		sleep 3
+		poe_regs
+		note "Is the PoE device off now? (y/n)"
+	fi
+	say "back to the driver's auto mode"
+	run ethtool --set-pse lan1 c33-pse-admin-control enable
+	sleep 5
+	poe_regs
+	run ethtool --show-pse lan1
+	ask "Unplug the PoE device from port 1" || true
+fi
+
+section "4: link drops right after plug-in"
+if ask "Plug a cable from another switch or router (already running) into port 2"; then
+	link_log lan2 20
+	run sh -c "logread | grep lan2 | tail -20"
+	if ask "Unplug it, wait 5 s, plug it in again"; then
+		link_log lan2 20
+		run sh -c "logread | grep lan2 | tail -20"
+	fi
+	run ethtool lan2
+	run sh -c "ethtool --show-eee lan2 2>&1"
+	ask "Unplug it from port 2" || true
+fi
+
+section "kernel log"
+run dmesg
+
+echo
+echo "Report: $OUT"
+echo "Copy it off the switch with: scp -O root@<switch-ip>:$OUT ."
+echo "Then power-cycle the switch."

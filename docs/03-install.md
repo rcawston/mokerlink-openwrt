@@ -120,7 +120,10 @@ rebuild and repeat from step 1 with the new RAM image.
       mokerlink-polarity-scan lan3 192.168.2.254
       ```
 - [ ] **SFP+ port** (lan8): with a 10G module or DAC cable to a 10G peer,
-      it shows link and passes traffic.
+      it shows link and passes traffic; `ethtool -m lan8` shows the
+      module. Removing and inserting the module works without a reboot.
+- [ ] **Reset button:** `mokerlink-hw-test` sees presses (it switches the
+      reset action off while it runs).
 - [ ] **Full speed:** with two hosts and `iperf3`, each copper port reaches
       about 9.4 Gbit/s at 10G, and `ethtool -S lanN` shows no growing error
       or drop counters.

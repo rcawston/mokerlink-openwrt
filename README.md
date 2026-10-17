@@ -19,7 +19,9 @@ switch and tools to bring up the hardware safely.
 > firmware does: it powers 802.3at and 802.3bt devices, switches ports with
 > `ethtool` and lights the green PoE LEDs. It needs the RTL8239 firmware
 > copied out of your stock image ([docs/05-porting.md](docs/05-porting.md#poe)).
-> Still untested: SFP+, and copper at 2.5/5/10 Gbit/s.
+> Copper at 2.5 and 10 Gbit/s and the SFP+ cage with a 10G module work too.
+> The reset button and full SFP+ support (1G modules, module information)
+> are in, waiting for their test.
 
 ## Why OpenWrt and not firmware from scratch
 
@@ -48,10 +50,9 @@ reviewable board description on top of it is the most reliable option.
   stock image
 - Bring-up tools on the switch: `mokerlink-probe`, `mokerlink-backup`,
   `mokerlink-polarity-scan`, `mokerlink-gpio-watch`, `mokerlink-fan`,
-  `mokerlink-poe-test`
-Not yet supported in stage 1: SFP+ module EEPROM/DOM readout and 1G SFP
-modules, the reset button, the system LED, and anything behind the RTL8231
-GPIO expander.
+  `mokerlink-poe-test`, `mokerlink-hw-test`
+- Reset button and full SFP+ support (1G modules, module EEPROM and
+  diagnostics): from the stock firmware, being tested
 
 ## How to install, in short
 

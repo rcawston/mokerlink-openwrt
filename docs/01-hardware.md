@@ -34,6 +34,7 @@ Confirmed from the chip markings and the stock boot log:
 | PHY map | RTL8261BE on MAC 0/8/16 (SMI bus 1/2/3, address 0); RTL8264B on MAC 20/24/25/26 (bus 0, addresses 0-3) | U-Boot SMI registers |
 | Lane polarity | RTL8261BE links normal; each RTL8264B link inverted once on the PHY and once on the SerDes (alternating tx/rx) | U-Boot PHY and SerDes registers, RAM boot |
 | Front port order | front ports 1-7 are `lan1`-`lan7` (MAC ports 0, 8, 16, 20, 24, 25, 26), all pass traffic | port test in a RAM boot |
+| Link speeds | copper links at 100 Mbit/s, 1, 2.5 and 10 Gbit/s; the SFP+ cage (`lan8`, MAC port 27 on SerDes 9) at 10 Gbit/s with a 10G module | owner's tests in a RAM boot |
 | Fan controller | **ADT7476** at I²C address `0x2e`, on a bit-banged bus: SCL GPIO 8, SDA GPIO 9. Runs the fans at full speed from power-on until programmed; the stock firmware sets 50 %, and full speed above 65 °C | stock firmware (`board_conf.ko` board table `9303M7XC1XF`, `ski.ko`), RAM boot |
 | Stock firmware | "KT-NOS" 1.1.1.34 | boot log |
 
@@ -41,7 +42,8 @@ Still assumed:
 
 | | Assumption | Source of the assumption |
 |---|---|---|
-| SFP+ | MAC port 27 on SerDes 9 | eighth RTL9303 10G lane |
+| Reset button | SoC GPIO 5, active low | stock firmware (`resetGpio5` in `board_conf.ko`) |
+| SFP+ cage signals | module present GPIO 13 (low = in), LOS GPIO 12, TX disable GPIO 14; no TX fault | stock firmware (`board_gpio_init` in `board_conf.ko`) |
 
 The device tree marks each assumption as `UNVERIFIED`, and
 [05-porting.md](05-porting.md) explains how to check each one.
