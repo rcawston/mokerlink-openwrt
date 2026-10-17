@@ -419,7 +419,7 @@
 	 * PoE status LEDs. The stock firmware (poe_led_detect_monitor in
 	 * ski.ko) takes LED 2 of every RJ45 port, the third in the serial LED
 	 * stream, under software control and switches it on while the port
-	 * delivers power. UNVERIFIED: the colour.
+	 * delivers power. The PoE LEDs are green.
 	 */
 	port-leds {
 		compatible = "realtek,rtl9300-port-leds";
@@ -428,7 +428,7 @@
 
 		led@0,2 {
 			reg = <0 2>;
-			color = <LED_COLOR_ID_ORANGE>;
+			color = <LED_COLOR_ID_GREEN>;
 			function = "poe";
 			function-enumerator = <1>;
 			linux,default-trigger = "pse-1-0022:port0:delivering";
@@ -436,7 +436,7 @@
 
 		led@8,2 {
 			reg = <8 2>;
-			color = <LED_COLOR_ID_ORANGE>;
+			color = <LED_COLOR_ID_GREEN>;
 			function = "poe";
 			function-enumerator = <2>;
 			linux,default-trigger = "pse-1-0022:port1:delivering";
@@ -444,7 +444,7 @@
 
 		led@10,2 {
 			reg = <16 2>;
-			color = <LED_COLOR_ID_ORANGE>;
+			color = <LED_COLOR_ID_GREEN>;
 			function = "poe";
 			function-enumerator = <3>;
 			linux,default-trigger = "pse-1-0022:port2:delivering";
@@ -452,7 +452,7 @@
 
 		led@14,2 {
 			reg = <20 2>;
-			color = <LED_COLOR_ID_ORANGE>;
+			color = <LED_COLOR_ID_GREEN>;
 			function = "poe";
 			function-enumerator = <4>;
 			linux,default-trigger = "pse-1-0020:port0:delivering";
@@ -460,7 +460,7 @@
 
 		led@18,2 {
 			reg = <24 2>;
-			color = <LED_COLOR_ID_ORANGE>;
+			color = <LED_COLOR_ID_GREEN>;
 			function = "poe";
 			function-enumerator = <5>;
 			linux,default-trigger = "pse-1-0020:port1:delivering";
@@ -468,7 +468,7 @@
 
 		led@19,2 {
 			reg = <25 2>;
-			color = <LED_COLOR_ID_ORANGE>;
+			color = <LED_COLOR_ID_GREEN>;
 			function = "poe";
 			function-enumerator = <6>;
 			linux,default-trigger = "pse-1-0020:port2:delivering";
@@ -476,7 +476,7 @@
 
 		led@1a,2 {
 			reg = <26 2>;
-			color = <LED_COLOR_ID_ORANGE>;
+			color = <LED_COLOR_ID_GREEN>;
 			function = "poe";
 			function-enumerator = <7>;
 			linux,default-trigger = "pse-1-0020:port3:delivering";

@@ -142,7 +142,7 @@ port_test() {
 	ask "Plug the PoE device into $port (front port $n) and watch it and the port LEDs" || return
 	say "recording $port for 60 s"
 	sample "$port" "$addr" "$ch" 60
-	note "Front port $n: which of its LEDs are lit, and what colour? (e.g. 'green link + orange PoE')" >/dev/null
+	note "Front port $n: which of its LEDs are lit, and what colour? (e.g. 'link + PoE')" >/dev/null
 	note "Did the PoE device stay powered all the time (steady), or did it restart?" >/dev/null
 
 	say "$port: disable from software"

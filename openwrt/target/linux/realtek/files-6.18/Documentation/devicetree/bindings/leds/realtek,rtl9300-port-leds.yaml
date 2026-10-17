@@ -63,14 +63,14 @@ examples:
 
         led@0,2 {
             reg = <0 2>;
-            color = <LED_COLOR_ID_ORANGE>;
+            color = <LED_COLOR_ID_GREEN>;
             function = "poe";
             function-enumerator = <1>;
         };
 
         led@8,2 {
             reg = <8 2>;
-            color = <LED_COLOR_ID_ORANGE>;
+            color = <LED_COLOR_ID_GREEN>;
             function = "poe";
             function-enumerator = <2>;
         };

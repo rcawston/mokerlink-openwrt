@@ -271,10 +271,10 @@ registers, from the vendor SDK's register table (`rtk.ko`):
 | `LED_PORT_SW_CTRL` | `0xcc5c` + port × 4 | 3-bit mode per LED, copper from bit 0, fibre from bit 12: 0 off, 7 on, 1-6 blink |
 
 The new `leds-rtl9300-port` driver exposes such LEDs as LED class devices
-(`/sys/class/leds/orange:poe-1` to `-7`), and the device tree binds each to
+(`/sys/class/leds/green:poe-1` to `-7`), and the device tree binds each to
 the PSE core's `pse-1-0022:port0:delivering`-style trigger, as the Hasivo
 S600WP does with its PoE LEDs. I²C aliases keep the bus number in those
-names fixed. The colour is a guess until round 2.
+names fixed.
 
 ### The RTL8239 firmware
 
@@ -332,11 +332,12 @@ Results so far:
 
 Still open, for round 2 to settle:
 
-- the PoE LEDs: which LED, which colour, and whether the switch's LED
-  controller outputs it as the boot loader configured it
-- the link drops: the PD itself (step 3 shows whether its power dips;
-  powering the PD from the stock firmware is the other cross-check) or the
-  ports at 100 Mbps (step 5)
+- the PoE LEDs (green): which LED of the port, and whether the switch's
+  LED controller outputs it as the boot loader configured it
+- the link drops: the PD itself (step 3 shows whether its power dips) or
+  the ports at 100 Mbps (step 5). The stock firmware can't serve as a
+  cross-check: it often relays no traffic at all, DHCP included, once a
+  device comes up
 - whether the chips accept the firmware in 16-byte writes. If they do,
   all three buses can move to the upstream `i2c-rtl9300` driver on I²C
   master 1 and the shared-SCL bus driver can go
