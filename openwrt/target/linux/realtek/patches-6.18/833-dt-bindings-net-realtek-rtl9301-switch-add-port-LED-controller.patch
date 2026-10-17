@@ -1,0 +1,22 @@
+From: OpenWrt contributors
+Subject: [PATCH] dt-bindings: net: realtek,rtl9301-switch: add port LED controller
+
+The switch drives the port LEDs, and some boards wire LEDs to it that
+have no hardware function and are switched in software, such as PoE
+status LEDs. Allow the software LED control block, described by
+realtek,rtl9301-port-leds, as a child of the switch like its I2C and
+MDIO controllers.
+
+---
+--- a/Documentation/devicetree/bindings/net/realtek,rtl9301-switch.yaml
++++ b/Documentation/devicetree/bindings/net/realtek,rtl9301-switch.yaml
+@@ -57,6 +57,9 @@ patternProperties:
+   'mdio-controller@[0-9a-f]+$':
+     $ref: realtek,rtl9301-mdio.yaml#
+ 
++  'led-controller@[0-9a-f]+$':
++    $ref: /schemas/leds/realtek,rtl9301-port-leds.yaml#
++
+ required:
+   - compatible
+   - reg

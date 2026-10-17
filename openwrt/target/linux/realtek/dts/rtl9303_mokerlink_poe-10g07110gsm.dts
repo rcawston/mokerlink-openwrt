@@ -421,8 +421,9 @@
 	 * stream, under software control and switches it on while the port
 	 * delivers power. The PoE LEDs are green.
 	 */
-	port-leds {
-		compatible = "realtek,rtl9300-port-leds";
+	led-controller@cc48 {
+		compatible = "realtek,rtl9301-port-leds";
+		reg = <0xcc48 0x84>;
 		#address-cells = <2>;
 		#size-cells = <0>;
 

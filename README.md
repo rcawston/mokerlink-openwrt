@@ -96,7 +96,7 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 |---|---|
 | `openwrt/target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts` | Board description (device tree); every unconfirmed detail is marked `UNVERIFIED` |
 | `patches/` | OpenWrt changes: image recipe, MAC address source, kernel packages |
-| `openwrt/target/linux/realtek/files-6.18`, `patches-6.18/83x-*` | New kernel drivers with their bindings: RTL8239 PoE (`realtek-rtl8239`), the shared-SCL I²C buses (`i2c-gpio-shared-scl`) and the PoE LEDs (`leds-rtl9300-port`) |
+| `openwrt/target/linux/realtek/files-6.18`, `patches-6.18/83x-*` | New kernel drivers with their bindings: RTL8239 PoE (`realtek-rtl8239`), the shared-SCL I²C buses (`i2c-gpio-shared-scl`) and the PoE LEDs (`leds-rtl9300-port`), plus two binding patches for upstream (`833`, `834`) |
 | `files/` | Files added to the firmware: switch defaults and bring-up tools |
 | `config/` | Pinned OpenWrt and feed revisions, package selection |
 | `scripts/` | `build.sh`, `check-dts.sh`, `uimage-remagic.py`, `uboot-wiring.py` (reads the port wiring from U-Boot), `uboot-md2bin.py` (turns a U-Boot flash dump into a binary), `uboot-collect.py` (collects all U-Boot information and dumps the flash over the serial port, CRC-verified), `extract-poe-firmware.py` (copies the RTL8239 PoE firmware out of a stock image) |

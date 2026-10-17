@@ -1,0 +1,21 @@
+From: OpenWrt contributors
+Subject: [PATCH] dt-bindings: leds: common: add PSE power interface triggers
+
+The PSE core registers LED triggers for each power interface of a PSE
+controller, named pse-<controller>:port<n>:delivering, :enabled and
+:fault, so that boards can show PoE state on port LEDs. Accept these
+names in linux,default-trigger.
+
+---
+--- a/Documentation/devicetree/bindings/leds/common.yaml
++++ b/Documentation/devicetree/bindings/leds/common.yaml
+@@ -136,6 +136,9 @@ properties:
+       - pattern: "^mmc[0-9]+$"
+         # LED is triggered by WLAN activity
+       - pattern: "^phy[0-9]+tx$"
++        # LED is triggered by the state of a PSE power interface: delivering
++        # power, administratively enabled, or in a fault state
++      - pattern: "^pse-.+:port[0-9]+:(delivering|enabled|fault)$"
+ 
+   led-pattern:
+     description: |

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 %YAML 1.2
 ---
-$id: http://devicetree.org/schemas/leds/realtek,rtl9300-port-leds.yaml#
+$id: http://devicetree.org/schemas/leds/realtek,rtl9301-port-leds.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
 title: Realtek RTL9300 switch port LEDs under software control
@@ -19,7 +19,12 @@ description: |
 
 properties:
   compatible:
-    const: realtek,rtl9300-port-leds
+    const: realtek,rtl9301-port-leds
+
+  reg:
+    description: The software LED control registers, from SW_LED_LOAD to the
+      end of LED_PORT_SW_CTRL, as an offset into the switch registers.
+    maxItems: 1
 
   "#address-cells":
     const: 2
@@ -47,6 +52,7 @@ patternProperties:
 
 required:
   - compatible
+  - reg
   - "#address-cells"
   - "#size-cells"
 
@@ -56,8 +62,9 @@ examples:
   - |
     #include <dt-bindings/leds/common.h>
 
-    port-leds {
-        compatible = "realtek,rtl9300-port-leds";
+    led-controller@cc48 {
+        compatible = "realtek,rtl9301-port-leds";
+        reg = <0xcc48 0x84>;
         #address-cells = <2>;
         #size-cells = <0>;
 
