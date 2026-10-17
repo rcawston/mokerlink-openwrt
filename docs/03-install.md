@@ -4,23 +4,22 @@ The order matters: **RAM boot → backup → verify → flash**. Up to step 4 th
 switch runs OpenWrt from RAM only, and a power cycle brings back the stock
 firmware unchanged.
 
-> **In a hurry, no serial console?** The stock web UI accepts our image
-> directly — there is no firmware signature, only the uImage magic and CRC
-> that our build already produces. See
+> **No serial console?** The stock web UI accepts the RAM image directly:
+> there is no firmware signature, only the uImage magic and CRC that the
+> build already produces. See
 > [Flashing from the stock web UI](#flashing-from-the-stock-web-ui) below.
-> For the **first** boot on an unverified unit the serial/RAM route here is
-> still safer, because the web UI has no fallback if the network does not
-> come up. Once the port map is confirmed, the web UI is the easy path.
+> On a unit that may differ from the documented one (another hardware
+> revision), the serial route here is safer, because the web UI has no
+> fallback if the network does not come up.
 
 ## 0. Prepare
 
 - Serial console working and the stock boot log captured
   ([02-serial-console.md](02-serial-console.md)). The stock boot command
   is `bootcmd=boota`.
-- The port wiring read from U-Boot and put into the device tree
-  ([02-serial-console.md](02-serial-console.md#read-the-port-wiring)). This
-  is optional, but it usually makes the first RAM image work on every
-  copper port.
+- Optional: the port wiring read from U-Boot
+  ([02-serial-console.md](02-serial-console.md#read-the-port-wiring)), to
+  compare your unit with the documented one.
 - The images (see the README): `*-initramfs-kernel.bin`,
   `*-initramfs-kernel-stdmagic.bin` and `*-squashfs-sysupgrade.bin`.
 - A PC with a TFTP server serving the image directory: `tftpd-hpa` or
@@ -29,7 +28,7 @@ firmware unchanged.
 - Give the PC the static address **192.168.2.254/24** (the TFTP server
   address the stock U-Boot expects) and connect it to **port 1** with a
   cable. Disconnect the switch from your network and
-  unplug all PoE devices for now.
+  unplug all PoE devices until step 3.
 
 ## 1. Boot OpenWrt from RAM
 
@@ -99,16 +98,15 @@ mokerlink-probe
 ```
 
 It prints a port summary and writes a full report to `/tmp`. Copy the report
-to the PC (`scp -O root@192.168.2.1:/tmp/mokerlink-probe-*.txt .`). If you
-want help, share it together with the stock boot log.
+to the PC (`scp -O root@192.168.2.1:/tmp/mokerlink-probe-*.txt .`) and keep
+it with the stock boot log.
 
-Then go through this list, fixing the device tree as described in
-[05-porting.md](05-porting.md) whenever an item fails. After each fix,
-rebuild and repeat from step 1 with the new RAM image.
+Then go through this list. If an item fails,
+[05-porting.md](05-porting.md) describes where the device tree sets it;
+after a fix, rebuild and repeat from step 1 with the new RAM image.
 
-- [x] **RAM:** 128 MiB, as declared (stock boot log).
-- [x] **Flash layout:** matches the stock partition table
-      ([01-hardware.md](01-hardware.md#flash-layout)).
+- [ ] **RAM and flash:** the stock boot log shows 128 MiB and the
+      partition table in [01-hardware.md](01-hardware.md#flash-layout).
 - [ ] **Backup:** `full-flash.bin` is on your PC and `sha256sum -c` passes.
 - [ ] **PHYs:** the summary shows `RTL8261BE 10Gbps PHY` for lan1-lan3 and
       `RTL8264B 10Gbps PHY` for lan4-lan7.
@@ -199,16 +197,16 @@ settings area. Then:
 ## Flashing from the stock web UI
 
 The stock firmware's own firmware-upgrade page will accept and install our
-image, with no serial console, no TFTP and no soldering. This was confirmed
-by reading the stock firmware: its web upgrade checks only that the uploaded
-file is a uImage with magic `0x83800000` and valid header and data CRC32s.
-**There is no cryptographic signature and no model lock on the image.** Our
+image, with no serial console, no TFTP and no soldering. The stock
+firmware's web upgrade checks only that the uploaded file is a uImage with
+magic `0x83800000` and valid header and data CRC32s.
+**There is no cryptographic signature and no model lock on the image.** The
 build already produces exactly that magic, so the stock web UI treats it as
 a normal upgrade: it writes the whole file to the 12 MiB RUNTIME partition
 and reboots. The configuration partitions are never touched.
 
 The stock image is itself a single uImage with its root filesystem embedded
-in the kernel, which is exactly the shape of our `*-initramfs-kernel.bin`.
+in the kernel, which is exactly the shape of the `*-initramfs-kernel.bin`.
 That makes the initramfs image the safest thing to upload first.
 
 1. **Upload the RAM image.** In the stock web UI, open the firmware upgrade
@@ -219,7 +217,7 @@ That makes the initramfs image the safest thing to upload first.
    `http://192.168.2.1` or `ssh root@192.168.2.1`. On your network instead,
    look for DHCP hostname `mokerlink-switch`.
 3. **Verify the hardware** exactly as in [step 3](#3-verify-the-hardware)
-   above (`mokerlink-probe`, the port and PoE checks). Share the results.
+   above (`mokerlink-probe`, the port and PoE checks).
 4. **Make it persistent.** Once the ports check out, copy the sysupgrade
    image over and install it, as in [step 4](#4-write-openwrt-to-flash):
    ```sh
@@ -229,17 +227,20 @@ That makes the initramfs image the safest thing to upload first.
    its settings across reboots.
 
 The one catch: this path has **no boot-loader safety net**. If OpenWrt boots
-but the network never comes up (for example a wrong port map on a unit we
-have not tested yet), the stock web UI is gone and you cannot re-flash
-without the serial console. So keep `full-flash.bin` and, for a first boot
-on an unverified unit, prefer the serial/RAM route at the top of this page.
+but the network never comes up (for example a different port map on
+another hardware revision), the stock web UI is gone and you cannot
+re-flash without the serial console. So keep `full-flash.bin` and, on a
+unit that may differ from the documented one, prefer the serial/RAM route
+at the top of this page.
 
 **Back to stock the same way.** The stock image you have (the `...en.bin`
-uImage) can go straight back onto the RUNTIME partition from OpenWrt, no
-serial needed, because it is a plain uImage that fits the partition:
+uImage) can go straight back onto the RUNTIME partition, no serial needed,
+because it is a plain uImage that fits the partition. Do it from OpenWrt
+running from RAM (the initramfs image installed this way), not from a
+flash install, which would overwrite the filesystem it is running from:
 
 ```sh
-# from OpenWrt, with the stock uImage in /tmp
+# from the RAM-running OpenWrt, with the stock uImage in /tmp
 mtd -r write /tmp/stock.bin firmware
 ```
 

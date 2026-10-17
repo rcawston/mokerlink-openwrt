@@ -14,8 +14,6 @@ From the MokerLink datasheet and manual:
 
 ## What is on the board
 
-Confirmed from the chip markings and the stock boot log:
-
 | | Fact | Source |
 |---|---|---|
 | SoC | Realtek **RTL9303** (8× 10G MAC, MIPS 34Kc, 800 MHz) | chip marking, U-Boot `Board: RTL9300` |
@@ -23,10 +21,11 @@ Confirmed from the chip markings and the stock boot log:
 | Flash | **16 MiB** Winbond W25Q128 SPI NOR (ID `EF4018`) | U-Boot `SPI-F:` line |
 | 10G PHYs | three single **RTL8261BE** (front ports 1-3) plus one **RTL8264B** quad (front ports 4-7) | vendor hardware profile `RTL9303_8264B_3X8261BE_XGE_POE`, RAM boot |
 | PoE | two **RTL8239-VB** PSE chips, driven **directly** by the CPU (no PSE MCU) | chip marking, stock log `find RTL8239-VB` (once per chip) |
-| PoE link | bit-banged **I²C**, SDA GPIO 10: first RTL8239 at `0x20`/`0x21`, second at `0x22`/`0x23` (one address per 4-channel half), broadcast `0x60`. The stock firmware sends a 25460-byte Realtek firmware image to both chips at every boot, in one write (they refuse it split up); without it they detect and power nothing | stock firmware (`board_conf.ko` table `poeDevConf_9303M7XC1XF_BT`, `ski.ko`), `mokerlink-poe-test` |
-| I²C | three buses bit-banged on SoC GPIOs with one common SCL (GPIO 8): fan controller (SDA 9), PoE (SDA 10), SFP+ EEPROM (SDA 11). The same pins are the RTL9303's I²C master 1 (SCL, SDA0-SDA2) | stock firmware (`board_conf.ko`, SDK `r9300_i2c_dev_init`), `mokerlink-i2c-master-test` |
-| Port LEDs | three per RJ45 port in the switch's serial LED stream: LEDs 0 and 1 the link LED (orange, green), LED 2 the green PoE LED, which the stock firmware drives in software | stock firmware (`poe_led_detect_monitor` in `ski.ko`), `mokerlink-poe-test` |
-| GPIO expander | Realtek **RTL8231** (LEDs/GPIOs) | stock SDK: `RTL8231 probe: (found)` |
+| PoE link | bit-banged **I²C**, SDA GPIO 10: first RTL8239 at `0x20`/`0x21`, second at `0x22`/`0x23` (one address per 4-channel half), broadcast `0x60`. The stock firmware sends a 25460-byte Realtek firmware image to both chips at every boot, in one write (they refuse it split up); without it they detect and power nothing | stock firmware (`board_conf.ko` table `poeDevConf_9303M7XC1XF_BT`, `ski.ko`), tests on the switch |
+| I²C | three buses bit-banged on SoC GPIOs with one common SCL (GPIO 8): fan controller (SDA 9), PoE (SDA 10), SFP+ EEPROM (SDA 11). The same pins are the RTL9303's I²C master 1 (SCL, SDA0-SDA2), which reaches the chips but can't send the PoE firmware | stock firmware (`board_conf.ko`, SDK `r9300_i2c_dev_init`), tests on the switch |
+| Port LEDs | three per RJ45 port in the switch's serial LED stream: LEDs 0 and 1 the link LED (orange, green), LED 2 the green PoE LED, which the stock firmware drives in software | stock firmware (`poe_led_detect_monitor` in `ski.ko`), tests on the switch |
+| System LED | works as the boot loader sets it up | RAM boot |
+| GPIO expander | Realtek **RTL8231** (LEDs/GPIOs) is detected, but the stock firmware uses none of its pins on this board | stock SDK: `RTL8231 probe: (found)`, `board_conf.ko` |
 | Console | header **J4** (GND, TXD, RXD, 3V3, 3.3 V logic), **115200 8N1** | board, boot log |
 | Boot loader | Realtek U-Boot 2011.12 (1.0.0.2, Dec 2024), **Esc** stops autoboot, `bootcmd=boota` | boot log, `printenv` |
 | Stock image format | uImage with magic **`0x83800000`**, LZMA kernel, rootfs embedded in the kernel initramfs | `md.b b4300000 40`, stock image |
@@ -35,18 +34,10 @@ Confirmed from the chip markings and the stock boot log:
 | Lane polarity | RTL8261BE links normal; each RTL8264B link inverted once on the PHY and once on the SerDes (alternating tx/rx) | U-Boot PHY and SerDes registers, RAM boot |
 | Front port order | front ports 1-7 are `lan1`-`lan7` (MAC ports 0, 8, 16, 20, 24, 25, 26), all pass traffic | port test in a RAM boot |
 | Link speeds | copper links at 100 Mbit/s, 1, 2.5 and 10 Gbit/s; the SFP+ cage (`lan8`, MAC port 27 on SerDes 9) at 10 Gbit/s with a 10G module | owner's tests in a RAM boot |
-| Fan controller | **ADT7476** at I²C address `0x2e`, on a bit-banged bus: SCL GPIO 8, SDA GPIO 9. Runs the fans at full speed from power-on until programmed; the stock firmware sets 50 %, and full speed above 65 °C | stock firmware (`board_conf.ko` board table `9303M7XC1XF`, `ski.ko`), RAM boot |
+| Fan controller | **ADT7476** at I²C address `0x2e`, on a bit-banged bus: SCL GPIO 8, SDA GPIO 9. Runs the fans at full speed from power-on until programmed; the stock firmware sets 50 %, and full speed above 65 °C. Two fans, on tach inputs 1 and 2 (about 4500-4800 rpm at 50 %); all three temperature sensors (local and two remote diodes) connected | stock firmware (`board_conf.ko` board table `9303M7XC1XF`, `ski.ko`), RAM boot |
+| Reset button | SoC GPIO 5, active low (reads 1 while released) | stock firmware (`resetGpio5` in `board_conf.ko`); presses not yet tested |
+| SFP+ cage signals | module present GPIO 13 (low = in), LOS GPIO 12 (high = no signal), TX disable GPIO 14 (high = off); no TX fault line | stock firmware (`board_gpio_init` in `board_conf.ko`); idle levels match, module detection not yet tested |
 | Stock firmware | "KT-NOS" 1.1.1.34 | boot log |
-
-Still assumed:
-
-| | Assumption | Source of the assumption |
-|---|---|---|
-| Reset button | SoC GPIO 5, active low | stock firmware (`resetGpio5` in `board_conf.ko`) |
-| SFP+ cage signals | module present GPIO 13 (low = in), LOS GPIO 12, TX disable GPIO 14; no TX fault | stock firmware (`board_gpio_init` in `board_conf.ko`) |
-
-The device tree marks each assumption as `UNVERIFIED`, and
-[05-porting.md](05-porting.md) explains how to check each one.
 
 ## Flash layout
 
@@ -65,25 +56,12 @@ Confirmed by the partition table the stock firmware prints at boot:
 There is a single firmware slot (no second RUNTIME), so a firmware write
 always replaces the stock firmware. Keep the backup.
 
-## Looking inside
+## Opening the case
 
-The case has to be opened anyway for the console header J4, and photos
-settle most open questions at once. Unplug power and PoE devices first. The 10G PHY heatsinks are glued or spring-loaded on most of these
-boards: leave them in place unless you have thermal pads to replace them.
-
-Note the markings of:
-
-- the main chip under the large heatsink (confirmed: RTL9303)
-- the PHY chips near the RJ45 ports (confirmed: one RTL8264B, three RTL8261BE)
-- the PoE chips (confirmed: two RTL8239-VB, talked to directly by the SoC
-  over I²C; there is no separate PoE microcontroller)
-- the SPI flash (8-pin chip, e.g. FM25Q128, W25Q128, GD25Q256)
-- the RAM chips, which give the RAM size
-- the fan controller (confirmed from the stock firmware: ADT7476)
-- the serial console header: J4 (GND, TXD, RXD, 3V3)
-
-Take a sharp photo of both sides of the board. These answer most questions
-in [05-porting.md](05-porting.md).
+The console header J4 is inside, so the case has to be opened once. Unplug
+power and PoE devices first. The 10G PHY heatsinks are glued or
+spring-loaded: leave them in place unless you have thermal pads to replace
+them.
 
 ## Heat
 

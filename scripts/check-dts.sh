@@ -142,7 +142,7 @@ else:
 
 for _, _, label, ro, _ in parts:
     if label != "firmware" and not ro:
-        errors.append(f"partition {label} should be read-only in stage 1")
+        errors.append(f"partition {label} should be read-only")
 
 # first compatible in the decompiled tree is the root node's; dtc prints the
 # string list as "a\0b"

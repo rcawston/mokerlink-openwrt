@@ -15,11 +15,40 @@ this repository; the commit messages are in `upstream/`.
 | PSE LED trigger names in `leds/common.yaml` | not needed | `pse-led-triggers`: with the PSE LED trigger series |
 | the device | `realtek: rtl930x: add support for MokerLink POE-10G07110GSM` | none |
 
-Not submitted: the `mokerlink-*` tools and the fan control service. Without
-the service the fans run at full speed, as the ADT7476 does from power-on;
-the adt7475 driver cannot set a start duty cycle from the device tree
-without a deprecated binding form. A fan control solution OpenWrt accepts
-is an open point for the device commit.
+Not submitted: the `mokerlink-*` tools and the `mokerlink-fan` service.
+
+## Fan control
+
+Without fan control the fans run at full speed, as the ADT7476 does from
+power-on. The device tree can't set a lower start duty: the adt7475
+binding allows that only in a deprecated form.
+
+OpenWrt's realtek target already has the way to do this:
+`target/linux/realtek/base-files/etc/init.d/hwmon_fancontrol` programs a
+board's fan controller once at boot. For the Plasma Cloud ESX28/PSX28 it
+puts the same ADT7476 into its automatic mode through the `adt7475`
+driver's sysfs files. The stock behaviour of this board maps onto that
+mode directly:
+
+- all three PWM outputs follow the hottest of the three sensors
+  (`pwmN_auto_channels_temp` = 7)
+- 50 % up to 64 °C (`pwmN_auto_point1_pwm` = 128,
+  `tempN_auto_point1_temp` = 64000)
+- full speed from 66 °C (`tempN_auto_point2_temp` = 66000, the chip's
+  smallest range of 2 °C)
+
+The chip then controls the fans by itself: no daemon, and it keeps
+working if userspace dies. Compared with `mokerlink-fan` it drops the PHY
+temperature rule (the stock firmware has none), and the 2 °C ramp takes
+the place of the 5 °C hysteresis. It belongs in the device commit as a
+`hwmon_fancontrol` case, once it has been tested on the switch.
+
+In Linux, the general solution would be thermal support in `adt7475`:
+registering its PWM outputs as cooling devices (`cooling-levels` from
+`fan-common.yaml`, as `emc2305` and `max6650` do), so that a board's
+`thermal-zones` drive them, including from the 10G PHYs' temperature
+sensors. That is driver work beyond this board and not needed for
+OpenWrt.
 
 ## Dependencies
 

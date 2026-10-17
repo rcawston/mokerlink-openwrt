@@ -36,9 +36,9 @@ On Windows, use PuTTY with *Serial*, the COM port, and 115200.
 
 Before anything else, power the switch on with the terminal **logging to a
 file** (`picocom ... --logfile stock-boot.log`, or *Session → Logging* in
-PuTTY) and let the stock firmware boot completely. This one log usually
-answers half the open questions: SoC, RAM size, flash chip and layout, PHY
-types, and the boot command.
+PuTTY) and let the stock firmware boot completely. The log shows the SoC,
+RAM size, flash chip and partition table, PHY types and boot command, so
+it tells whether your unit matches [01-hardware.md](01-hardware.md).
 
 ## Entering U-Boot
 
@@ -47,10 +47,8 @@ so there is no time to react. Press **Esc** repeatedly (or hold it down)
 while you switch the power on, until a prompt such as `RTL9300#` appears
 instead of `## Booting kernel`.
 
-Some vendors protect U-Boot with a password. The Hasivo boards ask for one
-after Esc (`Hs2021cfgmg`, then type `XXXX`). If yours asks for a password,
-note the exact prompt and try that one. Otherwise ask for help with the
-exact text you see.
+If your unit asks for a password after Esc, note the exact prompt: the
+documented unit doesn't, so it is a different U-Boot.
 
 ## Facts to record in U-Boot
 
@@ -73,8 +71,8 @@ harmless.
   first four bytes are the uImage magic the boot loader accepts:
   - `83 80 00 00`: MokerLink magic. Use the normal `*-initramfs-kernel.bin`.
   - `27 05 19 56`: standard magic. Use `*-initramfs-kernel-stdmagic.bin`.
-  - anything else: stop here and report it; the flash layout differs
-    from the assumption.
+  - anything else: stop here; the flash layout differs from this
+    board's.
 
   The bytes from offset `0x20` are the image name in ASCII, often naming
   the vendor SDK version.
@@ -110,16 +108,18 @@ switch (no PuTTY needed); `--skip-dump` or `--skip-info` runs only one
 half; `--skip-link-test` leaves out the cable moving; `--link-test-only`
 repeats just the link test (a few minutes, saves `uboot-link.log`).
 
-Send `uboot-info.log` and `uboot-wiring.txt`. Keep `full-flash.bin` private
-(it holds your MAC address and stock configuration) and in two places.
+Keep `uboot-info.log` and `uboot-wiring.txt` with the stock boot log. Keep
+`full-flash.bin` private (it holds your MAC address and stock
+configuration) and in two places.
 
 ## Read the port wiring
 
 Once U-Boot has brought up the switch (`rtk network on`), its registers hold
 the manufacturer's own port configuration: which bus and address each 10G
 PHY is on, the mode of every SerDes lane, and the lane polarity on both
-ends of every PHY link (switch SerDes and PHY). Reading them settles the biggest open questions before OpenWrt
-is ever booted.
+ends of every PHY link (switch SerDes and PHY). The device tree's PHY map
+and polarity values come from this read; on another unit or hardware
+revision it shows whether they still apply.
 
 The `md` commands only display registers. The `mw` lines ask the switch to
 read one PHY or SerDes register (for the PHY reads the port mask is set to
@@ -186,7 +186,7 @@ mw.l bb0003b0 00000025; md.l bb0003b0 2
    link bits latch low, so only the second read is current). Repeat for
    every port, including the SFP+ port with a module and peer. Note in the
    log which front port each run was for (this U-Boot has no `echo`).
-5. Send the log, or decode it yourself:
+5. Decode the log:
 
    ```sh
    python3 scripts/uboot-wiring.py decode uboot.log
@@ -233,11 +233,3 @@ ping 192.168.2.254
 
 This U-Boot has `md`, `mw`, `crc32`, `sf`, `tftpboot`, `bootm` and `boota`,
 but no `bdinfo`.
-
-## Stock firmware shell (optional)
-
-Realtek SDK firmware often hides a debug shell. On the Hasivo boards it is
-reached by pressing Ctrl-T on the console (or in the SSH CLI) and entering
-`switchrtk`, then `s`. This is not needed for the installation, but a shell
-on the stock firmware lets you read its `/proc/mtd` and kernel log, which
-confirms the flash layout before any flash write.

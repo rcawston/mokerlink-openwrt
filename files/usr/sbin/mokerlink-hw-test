@@ -1,8 +1,9 @@
 #!/bin/sh
 # mokerlink-hw-test [OUTPUT_FILE]
 #
-# Guided test of the parts added after the PoE tests. Records everything in
-# one report:
+# Guided test of the reset button, the SFP+ cage, PoE semi-auto mode and
+# the link-up behaviour of the copper ports. Records everything in one
+# report:
 #
 #   1. the reset button (GPIO 5). The reset action is switched off for the
 #      test, so presses only get logged

@@ -44,9 +44,9 @@ touched the configuration partition.
 
 ## Writing from U-Boot only
 
-If no OpenWrt RAM image boots, you can write the stock image from U-Boot,
-provided it has the `sf` command (check with `help`). After `rtk network on`
-and the `ipaddr`/`serverip` setup from step 1:
+If no OpenWrt RAM image boots, write the stock image from U-Boot with its
+`sf` command. After `rtk network on`, with the PC at `192.168.2.254` as in
+[step 1](03-install.md#1-boot-openwrt-from-ram):
 
 ```
 tftpboot 0x84f00000 firmware.bin

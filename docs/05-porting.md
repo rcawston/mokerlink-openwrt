@@ -1,44 +1,37 @@
-# Porting: from assumptions to a verified device tree
+# Board support
 
 The board description is
-[`openwrt/target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts`](../openwrt/target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts).
-Every detail that still needs confirming on real hardware is marked
-`UNVERIFIED` there. This page covers how to confirm or fix each one.
+[`openwrt/target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts`](../openwrt/target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts),
+the image recipe is in `patches/0001-*.patch`, and the new kernel drivers
+are in `openwrt/target/linux/realtek/files-6.18`. This page explains how
+each part of the switch is supported, where the values come from, and how
+to check them on another unit or hardware revision.
 
-## Workflow
+## Making a change
 
 1. Edit the device tree (or the image recipe in `patches/`).
-2. Run `scripts/check-dts.sh`. It compiles the device tree against the
-   pinned OpenWrt and checks that the flash layout, image size and uImage
-   magic agree.
+2. Run `scripts/check-dts.sh`. It checks that the board patches apply to
+   the pinned OpenWrt, compiles the device tree, and checks that the flash
+   layout, image size and uImage magic agree.
 3. Build: push to GitHub and download the artifact, or run
    `scripts/build.sh`.
 4. RAM-boot the new image ([03-install.md, step 1](03-install.md#1-boot-openwrt-from-ram))
-   and re-run `mokerlink-probe`.
+   and run `mokerlink-probe`.
 
-## RAM size
+## Memory, console and flash
 
-Confirmed: 128 MiB (`DRAM: 128 MB`), the default in `rtl930x.dtsi`.
-Declaring more RAM than fitted crashes the kernel, so leave it.
+RAM (128 MiB) and the console (115200 8N1) are the `rtl930x.dtsi`
+defaults. Declaring more RAM than is fitted crashes the kernel.
 
-## Console speed
+The `partitions` node copies the partition table the stock firmware prints
+at boot ([01-hardware.md](01-hardware.md#flash-layout)). Everything except
+`firmware` is read-only, and `IMAGE_SIZE` in the image recipe equals the
+firmware partition size. A hardware revision with another table needs both
+changed.
 
-Confirmed: 115200 8N1, the `rtl930x.dtsi` default.
-
-## Flash layout
-
-Confirmed: the device tree matches the partition table the stock firmware
-prints at boot ([01-hardware.md](01-hardware.md#flash-layout)). If a future
-hardware revision differs, copy its table into the `partitions` node, keep
-everything except `firmware` read-only, and set `IMAGE_SIZE` in the patch
-to the new firmware partition size.
-
-## uImage magic
-
-The image is built with `0x83800000`, like the other MokerLink switches. If
-`md.b b4300000 4` in U-Boot shows `27 05 19 56`, or only the
-`-stdmagic` RAM image boots, change `0x83800000` to `0x27051956` in both
-places:
+The image is built with the uImage magic `0x83800000`, which the stock
+boot loader and web upgrader expect. A unit whose U-Boot shows
+`27 05 19 56` at `md.b b4300000 4` would need `0x27051956` in both places:
 
 - `openwrt,ih-magic` in the device tree (`firmware` partition)
 - `UIMAGE_MAGIC` in `patches/0001-*.patch` (change only the value on the
@@ -46,7 +39,7 @@ places:
 
 `check-dts.sh` fails if the two disagree.
 
-## PHY addresses and SerDes mapping
+## PHYs and SerDes
 
 On RTL9303 each 10G MAC port has a fixed SerDes lane:
 
@@ -61,30 +54,21 @@ A copper port is declared with two macros:
 SWITCH_PORT_SDS(0, 1, 2, 0, usxgmii)             /* MAC port 0 = lan1, SerDes 2 */
 ```
 
-On this board the vendor U-Boot maps the PHYs like this (read from the
-switch's SMI registers after `rtk network on`), and the device tree follows
-it:
+The PHY map comes from the vendor U-Boot (its SMI registers after
+`rtk network on`, [02-serial-console.md](02-serial-console.md#read-the-port-wiring)):
 
-| MAC port | SMI bus | Address | PHY |
-|---|---|---|---|
-| 0 | 1 | 0 | RTL8261BE (ID `001c:caf3` read back) |
-| 8 | 2 | 0 | RTL8261BE |
-| 16 | 3 | 0 | RTL8261BE |
-| 20, 24, 25, 26 | 0 | 0, 1, 2, 3 | RTL8264B quad |
-| 27 | - | - | SFP+ (no PHY) |
+| Front port | MAC port | SMI bus | Address | PHY |
+|---|---|---|---|---|
+| 1-3 | 0, 8, 16 | 1, 2, 3 | 0 | RTL8261BE (ID `001c:caf3`) |
+| 4-7 | 20, 24, 25, 26 | 0 | 0, 1, 2, 3 | RTL8264B quad |
+| 8 (SFP+) | 27 | - | - | none |
 
-Confirmed in a RAM boot: front ports 1-7 are `lan1`-`lan7`, in this MAC
-port order. So front ports 1-3 are the RTL8261BEs and front ports 4-7 the
-RTL8264B.
-
-Signs that a PHY address or bus is wrong: `mokerlink-probe` shows no
-driver for a port, the port is missing entirely, or `dmesg` shows PHY
-errors for it. For another board revision, read the wiring from U-Boot the
-same way and decode it with `scripts/uboot-wiring.py decode`. It prints
-the `&mdio_busN` lines and the polarity lines ready to paste.
-
-If the SFP+ cage is not the last port, swap its port node with the
-copper port that is really on SerDes 9.
+Front ports 1-7 are `lan1`-`lan7`. Signs of a wrong PHY address or bus:
+`mokerlink-probe` shows no driver for a port, the port is missing, or
+`dmesg` shows PHY errors for it. For another board revision, read the
+wiring from U-Boot the same way and decode it with
+`scripts/uboot-wiring.py decode`, which prints the `&mdio_busN` and
+polarity lines ready to paste.
 
 ## SerDes lane polarity
 
@@ -92,17 +76,17 @@ The lane polarity between switch chip and PHY can be set on either end: on
 the PHY (`&phyN { tx-polarity/rx-polarity }`, RTL826x driver) or on the
 switch SerDes (`&serdesN { ... }`, PCS driver). Both drivers program it
 from the device tree on every boot and default to "normal". A wrong value
-makes a port show link but pass no frames in one or both directions. The
-MokerLink 10GT080M, for example, inverts on the SerDes side.
+makes a port show link but pass no frames in one or both directions.
 
 The vendor U-Boot programs the correct values, so the
 [U-Boot wiring read](02-serial-console.md#read-the-port-wiring) gives them
 directly. On this board the RTL8261BE links are normal, and each RTL8264B
 link is inverted on the PHY in one direction and on the SerDes in the
-other; the device tree carries these values, and with them every copper
-port passed traffic in the RAM boot. To check another unit, or find the values when U-Boot did not set them, run
-the scan from a RAM-booted OpenWrt with a host at `192.168.2.254` on the
-port under test:
+other. The device tree carries these values.
+
+When U-Boot didn't set the polarity (another revision, or a port that
+shows link but no traffic), find it from a RAM-booted OpenWrt with a host
+at `192.168.2.254` on the port under test:
 
 ```sh
 mokerlink-polarity-scan lan2 192.168.2.254
@@ -113,11 +97,11 @@ line to use, e.g. `&phy8 { rx-polarity = <PHY_POL_INVERT>; };`. A
 mismatch on a differential lane can be corrected at either end, so this
 works whichever side the board needs it on. "Normal" needs no line.
 
-## SFP+ cage (full support)
+## SFP+ cage
 
-The cage is described in full: an `sff,sfp` node with the module EEPROM on
-the bit-banged bus (SDA GPIO 11) and the cage signals on SoC GPIOs, as the
-stock firmware registers them for this board (`board_gpio_init` in
+`lan8` (MAC port 27, SerDes 9) has an `sff,sfp` node: the module EEPROM is
+on the bit-banged bus with SDA GPIO 11, and the cage signals are SoC GPIOs,
+as the stock firmware registers them for this board (`board_gpio_init` in
 `board_conf.ko`, the branch for hardware profile `0x8de847`):
 
 | Signal | Stock name | GPIO | Level |
@@ -126,52 +110,41 @@ stock firmware registers them for this board (`board_gpio_init` in
 | loss of signal | `LOS_FX_0` | 12 | high = no signal |
 | transmitter disable | `TX_DIS_FX_0` | 14 | high = off |
 
-There is no transmitter fault line. The idle levels of the first RAM boot
-(13 and 12 high with no module, 14 low) fit. With the full description,
-1G modules work too (phylink switches SerDes 9 to 1000BASE-X), and
-`ethtool -m lan8` shows the module EEPROM and its diagnostics. A 10G
-module in the cage works (bare 10GBASE-R in stage 1); module detection
-and 1G modules are tested by `mokerlink-hw-test`.
+There is no transmitter fault line. With the cage described, phylink reads
+the module, switches SerDes 9 between 10GBASE-R and 1000BASE-X to match it,
+and `ethtool -m lan8` shows the module EEPROM and diagnostics.
 
 ## Reset button
 
 SoC GPIO 5, active low, from the stock firmware (`buttonConfSys_9303M5XC2XF`
-and `resetGpio5` in `board_conf.ko`, which this board's `buttonConf` uses).
-The stock firmware ignores the button if it reads pressed at boot and
-factory-resets on a press of 5 s or longer. It read high (released) in the
-first RAM boot. In OpenWrt a press shorter than 1 s reboots, one longer
-than 5 s factory-resets. `mokerlink-hw-test` checks the button with the
-reset action switched off.
+and `resetGpio5` in `board_conf.ko`, which this board's `buttonConf`
+uses). The device tree declares it as `KEY_RESTART`, so OpenWrt's button
+handler applies: a press shorter than 1 s reboots, one longer than 5 s
+resets to defaults. The stock firmware factory-resets on a press of 5 s or
+longer too, and ignores the button if it reads pressed at boot.
+`mokerlink-gpio-watch` shows the GPIO level live; `mokerlink-hw-test`
+checks the button with the reset action switched off.
 
-## System LED
+## LEDs
 
 The system LED works as the boot loader leaves it, so the device tree has
 no LED for it. A GPIO LED is an output, and driving the wrong output can
-hold a PHY or the PoE controller in reset; OpenWrt's boot and upgrade
-blinking would need the pin confirmed first.
+hold a PHY or the PoE controller in reset, so OpenWrt's boot and upgrade
+blinking would need the pin identified first.
 
-## Port LEDs
-
-Without a `realtek,rtl9300-leds` node, the port LEDs keep the boot loader's
-configuration, which is usually right. To define them yourself, copy the
-`led_set` node of a similar board (the Hasivo S1100W-8XGT-SE uses four LEDs
-per port) and add `led-set = <0>` to the ports, using `SWITCH_PORT_LED`
-instead of `SWITCH_PORT_SDS`. A wrong LED set only lights the wrong LEDs.
-The PoE LEDs are driven in software instead: see [PoE LEDs](#poe-leds).
+Each RJ45 port has three LEDs in the switch's serial LED stream: LEDs 0
+and 1 are the link LED (orange and green), LED 2 is the green PoE LED.
+Without a `realtek,rtl9300-leds` node, the link LEDs keep the boot
+loader's configuration, which is right; the driver for the PoE LEDs relies
+on the boot loader having set up three LEDs per port. The PoE LEDs are
+driven in software: see [PoE LEDs](#poe-leds).
 
 ## PoE
 
-**Works with the Realtek firmware installed**, tested on ports 1 and 5
-(one on each chip) with an 802.3bt access point (class 7) and an 802.3at
-camera (class 4): detection, classification, power, measurements,
-switching ports off and on with ethtool, and the green PoE LEDs. A device
-without PoE is left unpowered. Without the firmware the chips detect
-nothing and power nothing.
-
 The board has two Realtek **RTL8239-VB** PSE chips and no PSE
 microcontroller. Everything below comes from the stock firmware (board
-tables in `board_conf.ko`, PoE code in `ski.ko`) and the tests; there is no
-RTL8239 datasheet.
+tables in `board_conf.ko`, PoE code in `ski.ko`) and tests on the switch;
+there is no RTL8239 datasheet.
 
 **Wiring.** Both chips are on the bit-banged I²C bus with SDA on GPIO 10
 (SCL GPIO 8, shared with the fan and SFP+ buses). Each answers on two
@@ -196,15 +169,39 @@ the chips in download mode (`0xec` = `0x03`) and sends a 25460-byte Realtek
 firmware image ("BT Dumb mode") to `0x60`, register `0xf4`, in one write.
 A port is switched on by putting both its channels in auto mode (two bits
 each in `0x12`) and off by clearing them; detection, classification, 4-pair
-operation and the power budget are left to the chip firmware. Every 30 s
-it checks bit 5 of `0xec` (firmware running) and reloads the image if it
-dropped. Status comes from `0x10` (power enable and power good), `0x0c` +
-channel (class), `0x30`/`0x32` + 4 × channel (current, voltage) and `0x2c`
-(temperature). The tests showed the event registers (`0x00`-`0x0b`) behave
-like the TPS2388x ones too, and `0x2e`/`0x2f` read the 54 V supply.
+operation and power limits are left to the chip firmware. Every 30 s it
+checks bit 5 of `0xec` (firmware running) and reloads the image if it
+dropped.
 
-**In OpenWrt** the `realtek-rtl8239` driver does the same through the
-Linux PSE framework:
+Status registers:
+
+- `0x10`: power enable and power good per channel
+- `0x0c` + channel: class in bits 7:4, 1-8 for classes 1-8 and `0xc` for
+  class 0
+- `0x30`/`0x32` + 4 × channel: current (125/4096 mA per step) and voltage
+  (1/512 V per step)
+- `0x2c`: temperature; `0x2e`/`0x2f`: the 54 V supply
+- `0x00`-`0x0b`: events, as on the TPS2388x
+
+**Behaviour.** Without the firmware the chips detect and power nothing.
+With it, each chip loads the image in about 3 s, and a valid PD gets power
+within seconds of plug-in. Both pairsets are powered even for a class 4
+device (an 802.3at camera drew about 64 + 54 mA at 52.7 V). A device
+without PoE is not powered and links normally. Some PDs take their own
+link down and up repeatedly while they boot (an 802.3bt access point went
+down for about 25 s at a time, over and over); that is the PD, not the
+port.
+
+**Why the PoE bus is bit-banged.** The three buses' pins are also the
+RTL9303's I²C master 1 (SCL GPIO 8, SDA0-SDA2 on GPIOs 9-11), and the
+master does reach the ADT7476 and the RTL8239s. But it moves at most 16
+bytes per transfer, and the RTL8239s take their firmware only as one
+write: sent in 16-byte writes, they accept the first and NAK the second.
+So the PoE bus is bit-banged, and since the three buses share SCL, the fan
+and SFP+ buses are on the same `i2c-gpio-shared-scl` driver.
+
+**In OpenWrt** the `realtek-rtl8239` driver does what the stock firmware
+does, through the Linux PSE framework:
 
 - all ports are on at boot, like the stock firmware's default; the chips
   power only valid PoE devices
@@ -212,17 +209,15 @@ Linux PSE framework:
   `ethtool --set-pse lanN c33-pse-admin-control disable|enable` switches a
   port
 - the firmware image is loaded at probe if it is installed, and looked for
-  again every 30 s otherwise; the driver also reloads it if the chip stops
+  again every 30 s otherwise; the driver also reloads it if a chip stops
   running it
 
 ### PoE LEDs
 
-The stock firmware lights LED 2 of each RJ45 port (the third LED of the
-port in the switch's serial LED stream) while the port delivers power. It
-takes that LED under software control of the RTL9303 LED controller, which
-OpenWrt's switch driver doesn't do, so the LED stayed dark in round 1. The
-new driver does the same, and round 2 confirmed it. The
-registers, from the vendor SDK's register table (`rtk.ko`):
+The stock firmware lights LED 2 of each RJ45 port while the port delivers
+power, by taking that LED under software control of the RTL9303 LED
+controller. The registers, from the vendor SDK's register table
+(`rtk.ko`):
 
 | Register | Offset | Use |
 |---|---|---|
@@ -230,11 +225,13 @@ registers, from the vendor SDK's register table (`rtk.ko`):
 | `LED_PORT_SW_EN_CTRL` | `0xcc4c` + port / 8 × 4 | 4 bits per port: LED under software control |
 | `LED_PORT_SW_CTRL` | `0xcc5c` + port × 4 | 3-bit mode per LED, copper from bit 0, fibre from bit 12: 0 off, 7 on, 1-6 blink |
 
-The new `leds-rtl9300-port` driver exposes such LEDs as LED class devices
-(`/sys/class/leds/green:poe-1` to `-7`), and the device tree binds each to
-the PSE core's `pse-1-0022:port0:delivering`-style trigger, as the Hasivo
-S600WP does with its PoE LEDs. I²C aliases keep the bus number in those
-names fixed.
+OpenWrt's switch driver doesn't use them, so the `leds-rtl9300-port`
+driver exposes such LEDs as LED class devices (`/sys/class/leds/green:poe-1`
+to `-7`). The device tree binds each to the PSE core's
+`pse-1-0022:port0:delivering`-style trigger, as the Hasivo S600WP does with
+its PoE LEDs; I²C aliases keep the bus number in those names fixed. The
+LED lights while the port delivers and goes off when the port is switched
+off or the device unplugged.
 
 ### The RTL8239 firmware
 
@@ -252,9 +249,9 @@ one (SHA-256). Install it on the switch as
 `/lib/firmware/realtek/rtl8239-bt.bin`; the driver loads it within 30 s.
 Once OpenWrt runs from flash it stays in the overlay across reboots, and
 `sysupgrade` keeps it (`/lib/upgrade/keep.d/mokerlink-poe`), but a
-`sysupgrade -n` or a factory reset removes it. PoE needs it.
+`sysupgrade -n` or a factory reset removes it.
 
-### Testing
+### Checking PoE
 
 With a PoE device, optionally a device without PoE (a laptop), and the
 switch RAM-booted:
@@ -267,84 +264,35 @@ mokerlink-poe-test
 ```
 
 The script installs the firmware and waits for the driver to load it,
-records port 1 and then port 5 with the PoE device once a second (link,
-PSE state, LED, chip registers), asks what the LEDs show and switches the
-port off and on. If the PoE LED stays dark it lights the LEDs of port 1 one
-by one, and it optionally records port 1 with a device without PoE, at its
-normal speed and then at 100 Mbps. Power-cycle the switch afterwards.
-
-Results:
-
-- round 1: fans at 50 % (4500-4800 rpm, fan 3 not fitted); no PoE without
-  the firmware; with it, both chips load it in about 3 s each and power an
-  802.3bt PD (Ruckus T750SE, class 7, 5-10 W) within seconds; ethtool
-  disable/enable works
-- round 1: the RTL9303 I²C master 1 is wired to these buses: with
-  `mokerlink-i2c-master-test`, SDA0 reaches the ADT7476 and SDA1 the
-  RTL8239s, so GPIO 8 is its SCL
-- round 2: the RTL8239s take the firmware only as one write. Sent in
-  16-byte writes, the most I²C master 1 moves per transfer, the chips
-  accept the first and NAK the second. So the PoE bus has to stay
-  bit-banged, and since the three buses share SCL, the fan and SFP+ buses
-  stay on `i2c-gpio-shared-scl` too
-- round 2: an Axis camera (class 4) on ports 1 and 5 is powered within
-  seconds and passes traffic at 1 Gbit/s. The chips power both pairsets
-  for it (about 64 + 54 mA at 52.7 V, 6-7 W)
-- round 2: LED 2 of each port is the green PoE LED, as in the stock
-  firmware; it lights while the port delivers and goes off when the port
-  is switched off or the device unplugged. LEDs 0 and 1 are the port's
-  link LED (orange and green), LED 3 is not fitted. The boot loader sets
-  up three LEDs per port, which the driver relies on
-- round 2: a device without PoE links at 1 Gbit/s and at 100 Mbit/s and
-  stays up, and is not powered. The T750SE's link drops in round 1
-  (100 Mbps, down twice and back 25 s later, over and over) were the
-  access point's own behaviour while it starts up
-
-Still open:
-
-- right after plug-in, every device's link went down and up 2-4 times in
-  the first 10 s before staying up, on both PHY types and with or without
-  PoE. It settles by itself; it looks like the 10G PHYs' link-up
-  behaviour rather than PoE, and is not investigated yet
-- which channel of a pair is alternative A and which B
-
-### Upstreaming
-
-See [08-upstreaming.md](08-upstreaming.md): the drivers go to OpenWrt as
-pending patches and to Linux, built by `scripts/make-upstream.py`. All
-bindings pass `make dt_binding_check` and all three drivers
-`checkpatch.pl --strict`. The shared-SCL bus driver is needed rather than
-the upstream `i2c-rtl9300` on the same pins, because the RTL8239s refuse
-their firmware in the 16-byte writes that controller is limited to
-(round 2). With patches 833 and 834, the board's PSE, I²C and LED nodes
-validate against the bindings. The switch node itself still fails, but
-only because OpenWrt's `rtl930x.dtsi` differs from the upstream switch
-binding (`ethernet`, `pcs`, `thermal` and other children).
+records port 1 and then port 5 (one port on each chip) with the PoE device
+once a second (link, PSE state, LED, chip registers), asks what the LEDs
+show and switches the port off and on. If the PoE LED stays dark it lights
+the LEDs of port 1 one by one, and it optionally records port 1 with a
+device without PoE, at its normal speed and then at 100 Mbps. Power-cycle
+the switch afterwards.
 
 ## Fans and temperature
 
-The fans are driven by an **ADT7476** fan controller at I²C address `0x2e`.
-Its power-on default is full speed, which is why the fans run at full speed
-in U-Boot. The stock firmware (board table `9303M7XC1XF` in `board_conf.ko`,
-fan code in `ski.ko`) reaches it over a bit-banged I²C bus, SCL on GPIO 8
-and SDA on GPIO 9, and:
+The fans are driven by an **ADT7476** fan controller at I²C address `0x2e`,
+on the bit-banged bus with SDA GPIO 9. Its power-on default is full speed,
+which is why the fans run at full speed in U-Boot. Two fans are fitted, on
+tach inputs 1 and 2; all three temperature sensors (the chip's own and two
+remote diodes) are connected. The stock firmware (board table
+`9303M7XC1XF` in `board_conf.ko`, fan code in `ski.ko`):
 
 1. starts monitoring (register `0x40` = `0x05`), puts all three PWM outputs
    in manual mode (`0x5c`-`0x5e` = `0xe2`) and pin 14 in GPIO mode (`0x7d` =
    `0x03`)
 2. sets the fans to 50 % (duty `0x80` on all three PWM outputs)
-3. from then on reads the chip's three temperature sensors (its own and two
-   remote diodes) and takes the hottest: above 65 °C full speed (`0xff`),
-   otherwise 50 %
+3. from then on reads the three temperature sensors and takes the hottest:
+   above 65 °C full speed (`0xff`), otherwise 50 %
 
-OpenWrt does the same. The device tree declares the bus (`i2c-gpio`) and the
-chip (`adt7475` driver), and the `mokerlink-fan` service sets manual mode
-and switches between 50 % and full speed. It adds a 5 °C hysteresis, and
-full speed while any 10G PHY is above 95 °C. When the service stops or the
+OpenWrt does the same. The device tree declares the bus and the chip
+(`adt7475` driver), and the `mokerlink-fan` service sets manual mode and
+switches between 50 % and full speed. It adds a 5 °C hysteresis, and full
+speed while any 10G PHY is above 95 °C. When the service stops or the
 switch reboots, the fans go back to full speed. The settings are in
 `/etc/config/mokerlink`, section `fan`.
-
-Check it on the switch:
 
 ```sh
 mokerlink-fan status     # temp1-3, fan RPM, pwm1-3 = 128 (50 %), pwmN_enable = 1
@@ -354,24 +302,45 @@ logread -e mokerlink-fan # every speed change, with the temperatures
 `no ADT7476 found` means the chip did not answer on the bus
 (`dmesg | grep -i adt`); the fans then keep running at full speed.
 
-Still to confirm on the switch: which PWM outputs and tach inputs have fans
-(the stock firmware sets all three PWM outputs alike), and which remote
-diodes are connected (`temp1_fault` or `temp3_fault` reads 1 for an open
-one, and `mokerlink-fan` ignores it).
+## Images
 
-## A factory image for the stock web UI
+The stock web upgrade accepts any uImage with magic `0x83800000` and valid
+CRCs, with no signature, so the `*-initramfs-kernel.bin` image installs
+from the stock web interface as it is
+([03-install.md](03-install.md#flashing-from-the-stock-web-ui)). The
+MokerLink 2G080GM in OpenWrt also builds a `factory.bix`, kernel and
+squashfs root filesystem in one file, for a direct flash install from its
+stock web UI. The same image for this board would skip the RAM step; it
+isn't built yet.
 
-The format is known now: the stock web upgrade accepts any uImage with
-magic `0x83800000` and valid CRCs, with no signature, so the
-`*-initramfs-kernel.bin` image installs from the stock web interface as it
-is ([03-install.md](03-install.md#flashing-from-the-stock-web-ui)). A
-separate `factory` image would only rename it; the MokerLink 2G080GM in
-OpenWrt ships the same kind of plain uImage as `.bix`.
+## Open points
+
+- **Not yet tested on hardware:** the reset button, SFP+ module detection
+  and hot-plug, 1G modules, and running from flash. `mokerlink-hw-test`
+  goes through the button and the SFP+ cage.
+- **Link drops after plug-in:** a newly plugged device's link goes down and
+  up 2-4 times within about 10 s before it stays up, on both PHY types and
+  with or without PoE; the first link-up reports flow control off. It
+  settles by itself. It looks like the RTL826x PHYs reporting link before
+  autonegotiation has finished; `mokerlink-hw-test` records the PHY status
+  registers during plug-in.
+- **PoE power budget:** ports are powered whatever their class, within the
+  chips' own limits, as in the stock firmware. A budget with port
+  priorities in the PSE framework needs the chips to detect and classify
+  but wait for the host before powering a port (semi-auto mode);
+  `mokerlink-hw-test` checks whether they do.
+- **PoE pairsets:** which channel of a port is alternative A and which B.
+- **Factory image:** see [Images](#images).
+- **Fan control upstream:** see
+  [08-upstreaming.md](08-upstreaming.md#fan-control).
 
 ## Upstreaming
 
-Once everything is verified, the device tree, the image recipe and the
-`02_network` entry can be submitted to OpenWrt as a pull request against
-`main`, following the commit format of the Hasivo and MokerLink commits
-(device specification, flash layout, install steps). Then OpenWrt
-maintains the board and it appears in official builds.
+See [08-upstreaming.md](08-upstreaming.md): the drivers go to OpenWrt as
+pending patches and to Linux, and the board to OpenWrt, all built by
+`scripts/make-upstream.py`. All bindings pass `make dt_binding_check` and
+all three drivers `checkpatch.pl --strict`. With patches 833 and 834, the
+board's PSE, I²C and LED nodes validate against the bindings. The switch
+node itself still fails, but only because OpenWrt's `rtl930x.dtsi` differs
+from the upstream switch binding (`ethernet`, `pcs`, `thermal` and other
+children).

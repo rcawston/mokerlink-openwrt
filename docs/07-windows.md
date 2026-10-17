@@ -58,8 +58,8 @@ scripts/check-dts.sh     # about a minute
 scripts/build.sh         # 1-3 hours the first time, about 25 GB of disk
 ```
 
-If it fails, it repeats the failing step with full output. Send the last
-100 or so lines.
+If it fails, it repeats the failing step with full output; the error is
+in the last 100 or so lines.
 
 The images are in `~/mokerlink/out/`. Copy them to a Windows folder for the
 TFTP server:
@@ -89,17 +89,17 @@ Later builds after `git pull` only rebuild what changed and take minutes.
    gateway. This is the TFTP server address the stock U-Boot expects; the
    switch's U-Boot uses `192.168.2.1`.
 3. **Cables:** PC Ethernet to **front port 1**. Disconnect the switch from
-   your network and unplug PoE devices for now.
+   your network and unplug PoE devices until the PoE step.
 4. **Console:** PuTTY on COM3, 115200, with *Session → Logging → All session
-   output* to a file. Send that log after the first boot.
+   output* to a file, and keep the log of the first boot.
 
 > **Shortcut without the serial console.** The stock web UI accepts our
 > image directly (no signature, just the uImage magic and CRC). You can skip
 > Parts 2-3 and upload `...-initramfs-kernel.bin` from the stock firmware's
 > own upgrade page instead — see
 > [03-install.md](03-install.md#flashing-from-the-stock-web-ui). You still
-> need the Part 1 build. For a first boot on a unit we have not tested, the
-> serial route below is safer because it can always recover; the web UI
+> need the Part 1 build. On a unit that may differ from the documented one,
+> the serial route below is safer because it can always recover; the web UI
 > cannot if the network does not come up.
 
 ## Part 3: Test from RAM (nothing is written to flash)
@@ -121,25 +121,25 @@ Later builds after `git pull` only rebuild what changed and take minutes.
 4. After about 60 seconds without a DHCP server, the switch takes the
    fallback address `192.168.2.1`. From the PC: `ping 192.168.2.1`, and the
    web interface at `http://192.168.2.1`.
-5. On the console, run `mokerlink-probe` and send its output with the boot
-   log. I check them before you go on.
+5. On the console, run `mokerlink-probe` and keep its report with the
+   boot log.
 6. **Port test:** in a Windows command prompt run `ping -t 192.168.2.1`.
-   Move the PC cable through front ports 1-7, about 15 seconds each. Note
-   which ports answer, and after each move run `ip link | grep lan` on the
-   console: the `lanN` showing `state UP` is that front port (on the first
-   unit tested, front port N was `lanN`). If a port shows link but ping
-   fails, note it.
-7. **PoE** (optional, driver untested): extract the RTL8239 firmware on
-   the PC with `py scripts\extract-poe-firmware.py <stock .bin>`, copy
+   Move the PC cable through front ports 1-7, about 15 seconds each. Every
+   port should answer, and after each move `ip link | grep lan` on the
+   console shows the matching `lanN` (front port N) as `state UP`. If a
+   port shows link but ping fails, see
+   [05-porting.md](05-porting.md#serdes-lane-polarity).
+7. **PoE** (optional): extract the RTL8239 firmware on the PC with
+   `py scripts\extract-poe-firmware.py <stock .bin>`, copy
    `rtl8239-bt.bin` to the switch's `/tmp/` with `scp -O`, then run
    `mokerlink-poe-test` on the console with a PoE device at hand
-   ([05-porting.md](05-porting.md#poe)).
+   ([05-porting.md](05-porting.md#checking-poe)).
 
 To go back to stock at any point in Part 3, just power-cycle the switch.
 
 ## Part 4: Write OpenWrt to flash
 
-Only after the RAM test passes and I have checked the logs.
+Only after the RAM test passes on every port.
 
 1. Still running from RAM, open `http://192.168.2.1` → *System → Backup /
    Flash Firmware* → *Flash new firmware image*.

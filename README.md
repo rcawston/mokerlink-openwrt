@@ -8,20 +8,16 @@ It is [OpenWrt](https://openwrt.org) plus board support for this switch,
 pinned to an exact source revision, with defaults for a plain layer-2
 switch and tools to bring up the hardware safely.
 
-> **Status: stage 1, RAM-tested on real hardware, PoE included.**
-> Booted from RAM on a real unit: all seven 10G PHYs come up, front ports
-> 1-7 are `lan1`-`lan7`, and every copper port forwards traffic (tested at
-> 1 Gbit/s). The PHY map and lane polarity come straight from the vendor
-> U-Boot (`scripts/uboot-wiring.py`). Fan control, taken from the stock
-> firmware, runs the fans at 50 % like stock
-> ([docs/05-porting.md](docs/05-porting.md#fans-and-temperature)). **PoE**
-> has a new driver for the two RTL8239 chips, built from what the stock
-> firmware does: it powers 802.3at and 802.3bt devices, switches ports with
-> `ethtool` and lights the green PoE LEDs. It needs the RTL8239 firmware
-> copied out of your stock image ([docs/05-porting.md](docs/05-porting.md#poe)).
-> Copper at 2.5 and 10 Gbit/s and the SFP+ cage with a 10G module work too.
-> The reset button and full SFP+ support (1G modules, module information)
-> are in, waiting for their test.
+> **Status.** Tested on a real unit booted from RAM: all seven copper
+> ports forward traffic, with links tested at 100 Mbit/s and 1, 2.5 and
+> 10 Gbit/s; the SFP+ cage works at 10 Gbit/s with a 10G module; the fans
+> run at 50 % like stock; and PoE powers 802.3at and 802.3bt devices with
+> the green PoE LEDs lit. PoE needs the RTL8239 firmware copied out of your
+> stock image
+> ([docs/05-porting.md](docs/05-porting.md#the-rtl8239-firmware)).
+> Not yet tested: the reset button, SFP+ module detection and 1G modules,
+> and running from flash. Open points are listed in
+> [docs/05-porting.md](docs/05-porting.md#open-points).
 
 ## Why OpenWrt and not firmware from scratch
 
@@ -48,32 +44,34 @@ reviewable board description on top of it is the most reliable option.
 - PoE (802.3af/at/bt) on ports 1-7, all on by default, per port with
   `ethtool`, with the PoE LEDs; needs the RTL8239 firmware from your
   stock image
-- Bring-up tools on the switch: `mokerlink-probe`, `mokerlink-backup`,
+- SFP+ with module EEPROM and diagnostics (`ethtool -m`), 1G modules,
+  and the reset button (short press reboots, 5 s resets to defaults)
+- Tools on the switch: `mokerlink-probe`, `mokerlink-backup`,
   `mokerlink-polarity-scan`, `mokerlink-gpio-watch`, `mokerlink-fan`,
   `mokerlink-poe-test`, `mokerlink-hw-test`
-- Reset button and full SFP+ support (1G modules, module EEPROM and
-  diagnostics): from the stock firmware, being tested
 
 ## How to install, in short
 
 The full procedure is in [docs/03-install.md](docs/03-install.md).
 
-1. **Console:** connect a serial console, capture the stock boot log, and
-   read the port wiring from U-Boot
+1. **Console:** connect a serial console and capture the stock boot log
    ([docs/02-serial-console.md](docs/02-serial-console.md)).
 2. **RAM boot:** boot the OpenWrt RAM image over TFTP from U-Boot. Flash
    is not touched, and a power cycle returns to stock.
-3. **Back up and probe:** run `mokerlink-backup` and keep the files safe.
-   Run `mokerlink-probe` and `mokerlink-polarity-scan` and fix the device
-   tree until every port passes traffic.
-4. **Flash:** only then write OpenWrt to flash with `sysupgrade`.
+3. **Back up and check:** run `mokerlink-backup` and keep the files safe,
+   then check that every port passes traffic.
+4. **Flash:** write OpenWrt to flash with `sysupgrade`.
+
+The stock web UI also accepts the RAM image directly, without a serial
+console ([docs/03-install.md](docs/03-install.md#flashing-from-the-stock-web-ui)).
 
 Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 
 ## Getting the images
 
-- **GitHub Actions:** every push builds the firmware. Download it from the
-  run's *Artifacts* section under the repository's *Actions* tab.
+- **GitHub Actions:** every push that changes more than the documentation
+  builds the firmware. Download it from the run's *Artifacts* section under
+  the repository's *Actions* tab.
 - **Local build** on a Linux machine with the
   [OpenWrt build prerequisites](https://openwrt.org/docs/guide-developer/toolchain/install-buildsystem):
 
@@ -94,24 +92,24 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 
 | Path | Contents |
 |---|---|
-| `openwrt/target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts` | Board description (device tree); every unconfirmed detail is marked `UNVERIFIED` |
+| `openwrt/target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts` | Board description (device tree) |
 | `patches/` | OpenWrt changes: image recipe, MAC address source, kernel packages |
 | `openwrt/target/linux/realtek/files-6.18`, `patches-6.18/83x-*` | New kernel drivers with their bindings: RTL8239 PoE (`realtek-rtl8239`), the shared-SCL I²C buses (`i2c-gpio-shared-scl`) and the PoE LEDs (`leds-rtl9300-port`), plus two binding patches for upstream (`833`, `834`) |
 | `files/` | Files added to the firmware: switch defaults and bring-up tools |
 | `config/` | Pinned OpenWrt and feed revisions, package selection |
 | `upstream/` | Commit messages for the OpenWrt and Linux submissions ([docs/08-upstreaming.md](docs/08-upstreaming.md)) |
 | `scripts/` | `build.sh`, `check-dts.sh`, `make-upstream.py` (builds the OpenWrt and Linux submissions), `uimage-remagic.py`, `uboot-wiring.py` (reads the port wiring from U-Boot), `uboot-md2bin.py` (turns a U-Boot flash dump into a binary), `uboot-collect.py` (collects all U-Boot information and dumps the flash over the serial port, CRC-verified), `extract-poe-firmware.py` (copies the RTL8239 PoE firmware out of a stock image) |
-| `tests/` | Simulation test for `uboot-wiring.py` |
+| `tests/` | Tests for `uboot-wiring.py` and `uboot-collect.py` against a simulated U-Boot |
 | `docs/` | Hardware notes, console, install, recovery, porting, everyday use |
 
 ## Documentation
 
-1. [Hardware](docs/01-hardware.md): what is known and what to check inside
+1. [Hardware](docs/01-hardware.md): chips, wiring, flash layout
 2. [Serial console and U-Boot](docs/02-serial-console.md)
 3. [Install](docs/03-install.md): RAM boot, backup, verification, flashing
 4. [Recovery](docs/04-recovery.md): back to stock, unbricking
-5. [Porting](docs/05-porting.md): turning probe results into a verified
-   device tree
+5. [Board support](docs/05-porting.md): how each part of the switch is
+   supported, where the values come from, open points
 6. [Using the switch](docs/06-using.md): defaults, VLANs, updates, and
    why traffic may not forward
 7. [Build and install from Windows](docs/07-windows.md): WSL2 build, TFTP,
