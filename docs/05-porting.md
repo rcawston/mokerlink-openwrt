@@ -201,56 +201,109 @@ instead of `SWITCH_PORT_SDS`. A wrong LED set only lights the wrong LEDs.
 
 ## PoE
 
-**Not supported yet.** The board has two Realtek **RTL8239-VB** PSE chips,
-and no PSE microcontroller in front of them. The stock firmware talks to the
-chips themselves over `uart1`:
+**Written, not yet tested on the switch.** The board has two Realtek
+**RTL8239-VB** PSE chips and no PSE microcontroller. Everything below comes
+from the stock firmware (board tables in `board_conf.ko`, PoE code in
+`ski.ko`); there is no RTL8239 datasheet.
 
-- its boot log prints `find RTL8239-VB` once per chip
-- its PoE driver (`ski.ko`) has functions like `rtl8239_init_chip_reset`,
-  `rtl8239_transmit_image_packages_boardcast` and
-  `rtl8239_check_image_upgrade_pass`
-- it carries RTL8239 firmware images, such as
-  `pse_image_RTL8239_Bt_Dumb_mode_V0_B_bin`, and sends them to the chips at
-  boot
-- `show poe` in the stock CLI reads voltage, current and temperature per
-  port straight from the chips
+**Wiring.** Both chips are on the bit-banged I²C bus with SDA on GPIO 10
+(SCL GPIO 8, shared with the fan and SFP+ buses). Each answers on two
+addresses, one per 4-channel half: the first chip on `0x20`/`0x21`, the
+second on `0x22`/`0x23`. All RTL8239s also listen on the broadcast address
+`0x60` for the firmware download. Every front port is 4-pair (802.3bt) on
+two consecutive channels:
 
-OpenWrt's `realtek-pse-mcu` driver is for boards where an MCU running
-Realtek's PoE firmware sits in front of the PSE chips (Zyxel XMG1915-10EP,
-the Ubiquiti PoE switches and others). Declared on this board's `uart1`, it
-timed out (`failed to read MCU info`) because nothing here speaks that
-protocol. The device tree therefore declares no PSE. It keeps `uart1`
-enabled, muxed as the stock firmware uses it, so `/dev/ttyS1` is there for
-the work below.
+| Front port | Chip | Address | Channels |
+|---|---|---|---|
+| 1 | second | `0x22` | 0+1 |
+| 2 | second | `0x22` | 2+3 |
+| 3 | second | `0x23` | 0+1 (chip channels 4+5) |
+| 4 | first | `0x20` | 0+1 |
+| 5 | first | `0x20` | 2+3 |
+| 6 | first | `0x21` | 0+1 (chip channels 4+5) |
+| 7 | first | `0x21` | 2+3 (chip channels 6+7) |
 
-### Does PoE work without any driver?
+**How the stock firmware runs them.** The registers follow TI's TPS2388x.
+At every boot it resets each half (`0x1a` = `0x20`, all channels off), puts
+the chips in download mode (`0xec` = `0x03`) and sends a 25460-byte Realtek
+firmware image ("BT Dumb mode") to `0x60`, register `0xf4`, in one write.
+A port is switched on by putting both its channels in auto mode (two bits
+each in `0x12`) and off by clearing them; detection, classification, 4-pair
+operation and the power budget are left to the chip firmware. Every 30 s
+it checks bit 5 of `0xec` (firmware running) and reloads the image if it
+dropped. Status comes from `0x10` (power enable and power good), `0x0c` +
+channel (class), `0x30`/`0x32` + 4 × channel (current, voltage) and `0x2c`
+(temperature).
 
-Unknown, and it is the next thing to test. The names "Dumb mode" and
-"image upgrade" suggest the RTL8239s may keep their firmware in their own
-memory and power devices on their own, without any management. Test it
-while running OpenWrt, from RAM or from flash, after a cold boot:
+**In OpenWrt** the `realtek-rtl8239` driver does the same through the
+Linux PSE framework:
 
-1. Plug a PoE device (camera, access point, phone) into one front port.
-2. Note whether it powers up, and after how long.
+- all ports are on at boot, like the stock firmware's default; the chips
+  power only valid PoE devices
+- `ethtool --show-pse lanN` shows the state, class, voltage and power,
+  `ethtool --set-pse lanN c33-pse-admin-control disable|enable` switches a
+  port
+- the firmware image is loaded at probe if it is installed, and looked for
+  again every 30 s otherwise; the driver also reloads it if the chip stops
+  running it
 
-- **It powers up:** PoE works without management. The chips decide power
-  per port by themselves (classification, budget). There is no per-port
-  control or readout in OpenWrt.
-- **It stays dark:** the chips wait for the firmware that the stock firmware
-  sends at every boot. PoE then needs a loader for OpenWrt that does what the
-  stock driver does over `/dev/ttyS1`: reset the chips, send the firmware
-  image and start it.
+### The RTL8239 firmware
 
-### A loader (if needed)
+The image belongs to Realtek and can't be shipped in this repository or in
+OpenWrt. Copy it out of the stock firmware you have, on the PC:
 
-The firmware images belong to Realtek and can't be shipped in this
-repository. A loader would take the image from the stock firmware you
-already have (the `...en.bin` uImage from MokerLink, or the RUNTIME part of
-`full-flash.bin`) at install time and keep it in the OpenWrt overlay. The
-UART protocol (framing, chip addressing, the download and start sequence)
-has to be worked out from the stock `ski.ko` and then checked on the switch
-with a PoE device connected. That is a project of its own. Until it is
-done, use the stock firmware if you need PoE.
+```sh
+python3 scripts/extract-poe-firmware.py POE-10G07110GSM_F11134_0220_en.bin
+# or from the flash backup:
+python3 scripts/extract-poe-firmware.py full-flash.bin
+```
+
+It writes `rtl8239-bt.bin` only if the image is byte-identical to the known
+one (SHA-256). Install it on the switch as
+`/lib/firmware/realtek/rtl8239-bt.bin` (it stays in the overlay across
+reboots once OpenWrt runs from flash). Whether the chips need it at all is
+the first thing round 1 of the tests answers.
+
+### Testing
+
+With one PoE device (802.3bt preferred) and the switch RAM-booted:
+
+```sh
+# on the PC
+scp -O rtl8239-bt.bin root@192.168.2.1:/tmp/
+# on the switch, serial console or SSH
+mokerlink-poe-test
+```
+
+It asks you to plug the device into port 1 (second chip) and port 5 (first
+chip), records power-on time, class and power, switches each port off and on
+from software, repeats everything after installing the firmware, and ends
+with `mokerlink-i2c-master-test`. Power-cycle the switch afterwards and send
+the report it writes.
+
+Still open, for the test to settle:
+
+- whether the chips power devices without the Realtek firmware
+- whether the second chip's firmware download disturbs the first chip,
+  which already runs it (each chip's driver instance downloads through the
+  shared broadcast address; the stock firmware's watchdog does the same)
+- which channel of a pair is alternative A and which B, and the exact units
+  of the current and voltage readings (taken from the stock code)
+- whether the RTL9303's I²C master 1 drives GPIO 8-11; if it does, the fan
+  and SFP+ buses can move to the upstream `i2c-rtl9300` driver (the PoE bus
+  stays bit-banged, because the master moves at most 16 bytes per transfer)
+
+### Upstreaming
+
+The kernel parts are written for upstream: the driver
+(`drivers/net/pse-pd/realtek-rtl8239.c`), the shared-SCL bus driver
+(`drivers/i2c/busses/i2c-gpio-shared-scl.c`) and their bindings in
+`openwrt/target/linux/realtek/files-6.18`, with the Kconfig/Makefile hooks
+in `patches-6.18/83x-*.patch`. Both bindings pass `make dt_binding_check`,
+both drivers `checkpatch.pl --strict`. Before submitting, the submitter
+replaces the placeholder authorship (copyright lines, `maintainers` in the
+bindings, patch `From:`) with their own and adds a `Signed-off-by`. The
+firmware stays out of tree.
 
 ## Fans and temperature
 

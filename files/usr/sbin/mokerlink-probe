@@ -3,9 +3,9 @@
 #
 # Collect the hardware facts needed to finish the POE-10G07110GSM board
 # support: PHY IDs and their SerDes polarity, link states, flash layout,
-# boot loader environment, temperatures, fan controller state, GPIO register
-# state and the kernel log. Prints a port summary and writes everything to
-# one text file.
+# boot loader environment, temperatures, fan controller and PoE state, GPIO
+# register state and the kernel log. Prints a port summary and writes
+# everything to one text file.
 #
 # Read-only: it changes nothing on the switch or in flash.
 
@@ -155,6 +155,13 @@ gpio_bits() { # value -> list of set bit numbers
 	section "fans"
 	run mokerlink-fan status
 	run logread -e mokerlink-fan
+
+	section "PoE"
+	for p in $(ports); do
+		[ "$p" = lan8 ] || run ethtool --show-pse "$p"
+	done
+	run sh -c "dmesg | grep -iE 'rtl8239|pse'"
+	run ls -l /lib/firmware/realtek/
 
 	section "GPIO"
 	if have devmem && [ -e /dev/mem ]; then

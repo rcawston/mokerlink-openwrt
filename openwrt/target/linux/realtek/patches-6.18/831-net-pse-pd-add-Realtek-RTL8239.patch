@@ -1,0 +1,43 @@
+From: OpenWrt contributors
+Subject: [PATCH] net: pse-pd: add Realtek RTL8239 driver
+
+The RTL8239 is an 8-channel IEEE 802.3af/at/bt PSE controller. On boards
+such as the MokerLink POE-10G07110GSM it is driven directly over I2C, with
+no PSE microcontroller in front of it, so the realtek-pse-mcu driver does
+not apply. The host loads Realtek firmware into the chip at power-up and
+switches ports through the operating mode register.
+
+Add the Kconfig and Makefile entries; the driver itself lives in
+files-6.18.
+
+---
+diff --git a/drivers/net/pse-pd/Kconfig b/drivers/net/pse-pd/Kconfig
+index 04c996fe4..aab1c47ea 100644
+--- a/drivers/net/pse-pd/Kconfig
++++ b/drivers/net/pse-pd/Kconfig
+@@ -88,4 +88,16 @@ config PSE_HASIVO_HS104
+ 	  Support for the Hasivo HS104 PoE PSE Controller chip.
+ 	  This driver allows control and monitoring of PoE ports via I2C.
+ 
++config PSE_REALTEK_RTL8239
++	tristate "Realtek RTL8239 PSE controller"
++	depends on I2C
++	select FW_LOADER
++	help
++	  This module provides support for the Realtek RTL8239 PoE PSE
++	  controller, driven directly over I2C without a PSE
++	  microcontroller in front of it.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called realtek-rtl8239.
++
+ endif
+diff --git a/drivers/net/pse-pd/Makefile b/drivers/net/pse-pd/Makefile
+index 511255854..be7d12db1 100644
+--- a/drivers/net/pse-pd/Makefile
++++ b/drivers/net/pse-pd/Makefile
+@@ -11,3 +11,4 @@ obj-$(CONFIG_PSE_PD692X0) += pd692x0.o
+ obj-$(CONFIG_PSE_SI3474) += si3474.o
+ obj-$(CONFIG_PSE_TPS23881) += tps23881.o
+ obj-$(CONFIG_PSE_HASIVO_HS104) += hasivo_hs104.o
++obj-$(CONFIG_PSE_REALTEK_RTL8239) += realtek-rtl8239.o

@@ -129,8 +129,10 @@ Later builds after `git pull` only rebuild what changed and take minutes.
    console: the `lanN` showing `state UP` is that front port (on the first
    unit tested, front port N was `lanN`). If a port shows link but ping
    fails, note it.
-7. **PoE** (optional): OpenWrt doesn't drive the PoE chips yet. If you have
-   a PoE device, plug it in and note whether it powers up anyway
+7. **PoE** (optional, driver untested): extract the RTL8239 firmware on
+   the PC with `py scripts\extract-poe-firmware.py <stock .bin>`, copy
+   `rtl8239-bt.bin` to the switch's `/tmp/` with `scp -O`, then run
+   `mokerlink-poe-test` on the console with a PoE device at hand
    ([05-porting.md](05-porting.md#poe)).
 
 To go back to stock at any point in Part 3, just power-cycle the switch.

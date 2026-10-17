@@ -7,7 +7,7 @@ $schema: http://devicetree.org/meta-schemas/core.yaml#
 title: Bit-banged I2C buses sharing one SCL line
 
 maintainers:
-  - OpenWrt contributors
+  - OpenWrt Developers <openwrt-devel@lists.openwrt.org>
 
 description: |
   Several I2C buses bit-banged on GPIOs, with one SCL line common to all of

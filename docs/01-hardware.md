@@ -41,7 +41,7 @@ Still assumed:
 | | Assumption | Source of the assumption |
 |---|---|---|
 | SFP+ | MAC port 27 on SerDes 9 | eighth RTL9303 10G lane |
-| PoE without stock firmware | unknown whether the RTL8239s power devices on their own | needs a test with a PoE device under OpenWrt |
+| PoE without the Realtek image | unknown whether the RTL8239s power devices without the firmware the stock firmware loads | round 1 of `mokerlink-poe-test` |
 
 The device tree marks each assumption as `UNVERIFIED`, and
 [05-porting.md](05-porting.md) explains how to check each one.

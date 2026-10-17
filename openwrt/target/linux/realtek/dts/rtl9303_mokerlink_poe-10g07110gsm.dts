@@ -3,8 +3,8 @@
  * MokerLink POE-10G07110GSM
  * 7x 10GBASE-T (PoE++) + 1x 10G SFP+, Realtek RTL9303
  *
- * STAGE 1 DEVICE TREE: the copper ports are verified, PoE is not supported
- * yet.
+ * STAGE 1 DEVICE TREE: the copper ports are verified; PoE is driven by
+ * the RTL8239 driver but not yet verified.
  *
  * Confirmed from the board and the stock boot log:
  *   - SoC RTL9303, 128 MiB RAM, 16 MiB Winbond W25Q128 SPI NOR
@@ -101,6 +101,115 @@
 			sda-gpios = <&gpio0 10 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
 			#address-cells = <1>;
 			#size-cells = <0>;
+
+			/*
+			 * Two RTL8239-VB, each answering on two addresses
+			 * (channels 0-3 and 4-7). Port to channel mapping from
+			 * the stock firmware (poePortConf_9303M7XC1XF_BT): every
+			 * port is 4-pair on two consecutive channels; channels
+			 * 6 and 7 of the second chip are not wired.
+			 */
+			pse_a: ethernet-pse@20 {
+				compatible = "realtek,rtl8239";
+				reg = <0x20>;
+
+				channels {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					pse_a_ch0: channel@0 { reg = <0>; };
+					pse_a_ch1: channel@1 { reg = <1>; };
+					pse_a_ch2: channel@2 { reg = <2>; };
+					pse_a_ch3: channel@3 { reg = <3>; };
+					pse_a_ch4: channel@4 { reg = <4>; };
+					pse_a_ch5: channel@5 { reg = <5>; };
+					pse_a_ch6: channel@6 { reg = <6>; };
+					pse_a_ch7: channel@7 { reg = <7>; };
+				};
+
+				pse-pis {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					/* front port 4 */
+					pse_port4: pse-pi@0 {
+						reg = <0>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&pse_a_ch0>, <&pse_a_ch1>;
+					};
+
+					/* front port 5 */
+					pse_port5: pse-pi@1 {
+						reg = <1>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&pse_a_ch2>, <&pse_a_ch3>;
+					};
+
+					/* front port 6 */
+					pse_port6: pse-pi@2 {
+						reg = <2>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&pse_a_ch4>, <&pse_a_ch5>;
+					};
+
+					/* front port 7 */
+					pse_port7: pse-pi@3 {
+						reg = <3>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&pse_a_ch6>, <&pse_a_ch7>;
+					};
+				};
+			};
+
+			pse_b: ethernet-pse@22 {
+				compatible = "realtek,rtl8239";
+				reg = <0x22>;
+
+				channels {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					pse_b_ch0: channel@0 { reg = <0>; };
+					pse_b_ch1: channel@1 { reg = <1>; };
+					pse_b_ch2: channel@2 { reg = <2>; };
+					pse_b_ch3: channel@3 { reg = <3>; };
+					pse_b_ch4: channel@4 { reg = <4>; };
+					pse_b_ch5: channel@5 { reg = <5>; };
+				};
+
+				pse-pis {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					/* front port 1 */
+					pse_port1: pse-pi@0 {
+						reg = <0>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&pse_b_ch0>, <&pse_b_ch1>;
+					};
+
+					/* front port 2 */
+					pse_port2: pse-pi@1 {
+						reg = <1>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&pse_b_ch2>, <&pse_b_ch3>;
+					};
+
+					/* front port 3 */
+					pse_port3: pse-pi@2 {
+						reg = <2>;
+						#pse-cells = <0>;
+						pairset-names = "alternative-a", "alternative-b";
+						pairsets = <&pse_b_ch4>, <&pse_b_ch5>;
+					};
+				};
+			};
 		};
 
 		/* SFP+ module EEPROM (0x50); no "sff,sfp" node yet */
@@ -292,17 +401,11 @@
 	};
 };
 
-/*
- * PoE: two RTL8239-VB on uart1, with no PSE MCU in front of them. The stock
- * firmware talks to the chips themselves ("find RTL8239-VB" once per chip at
- * boot) and carries RTL8239 firmware images that it sends to them over this
- * UART. OpenWrt's realtek-pse-mcu driver expects an MCU and times out here
- * ("failed to read MCU info"), so no PSE node is declared.
- *
- * uart1 stays enabled, muxed as the stock firmware uses it, so that
- * /dev/ttyS1 is there for a future loader. Whether the RTL8239s power
- * devices on their own without the stock firmware is UNVERIFIED.
- */
-&uart1 {
-	status = "okay";
-};
+/* PoE: front ports 1-7 to their PSE PIs */
+&phy0 { pses = <&pse_port1>; };
+&phy8 { pses = <&pse_port2>; };
+&phy16 { pses = <&pse_port3>; };
+&phy20 { pses = <&pse_port4>; };
+&phy24 { pses = <&pse_port5>; };
+&phy25 { pses = <&pse_port6>; };
+&phy26 { pses = <&pse_port7>; };

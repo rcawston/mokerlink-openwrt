@@ -5,7 +5,8 @@
 # records everything in one report: driver and bus state, the RTL8239
 # registers, ethtool PSE status per port, power-on time, class and power,
 # disable/enable from software, and the same again with the RTL8239
-# firmware loaded if /tmp/rtl8239-bt.bin is there. Ends with
+# firmware loaded if /tmp/rtl8239-bt.bin is there (the driver picks it up
+# within 30 s of it appearing in /lib/firmware). Ends with
 # mokerlink-i2c-master-test, which needs a power cycle afterwards.
 #
 # Prepare: scp -O rtl8239-bt.bin root@<switch>:/tmp/   (optional, from
@@ -14,7 +15,6 @@
 OUT=${1:-/tmp/mokerlink-poe-test-$(date +%Y%m%d-%H%M%S).txt}
 FW_SRC=/tmp/rtl8239-bt.bin
 FW_DST=/lib/firmware/realtek/rtl8239-bt.bin
-MODULE=realtek-rtl8239
 CHIP_ADDRS="0x20 0x21 0x22 0x23"
 
 say() { echo "$*" | tee -a "$OUT"; }
@@ -119,9 +119,9 @@ phase() { # LABEL
 	all_ports
 	section "$1: RTL8239 registers 0x00-0x4f, 0xe8, 0xec"
 	dump_chips
-	section "$1: port 1 (RTL8261BE side, first RTL8239)"
+	section "$1: port 1 (second RTL8239, 0x22 channels 0+1)"
 	port_test lan1
-	section "$1: port 5 (RTL8264B side, second RTL8239)"
+	section "$1: port 5 (first RTL8239, 0x20 channels 2+3)"
 	port_test lan5
 	section "$1: after unplugging"
 	all_ports
@@ -138,15 +138,23 @@ run sh -c "ls -l /lib/firmware/realtek/ 2>&1"
 
 phase "A (as booted)"
 
-if [ -f "$FW_SRC" ]; then
+if [ -f "$FW_SRC" ] && [ ! -f "$FW_DST" ]; then
 	section "B: with the RTL8239 firmware"
 	run sha256sum "$FW_SRC"
 	mkdir -p "${FW_DST%/*}"
 	cp "$FW_SRC" "$FW_DST"
-	run rmmod "$MODULE"
-	run modprobe "$MODULE"
-	sleep 5
+	# The driver looks for the firmware every 30 s and loads it into
+	# both chips; wait for the two "firmware running" lines
+	say "waiting up to 90 s for the driver to load the firmware"
+	t=0
+	while [ "$(dmesg | grep -c 'firmware running')" -lt 2 ] && [ $t -lt 90 ]; do
+		sleep 5
+		t=$((t + 5))
+	done
+	run sh -c "dmesg | grep -iE 'rtl8239|firmware'"
 	phase "B (firmware loaded)"
+elif [ -f "$FW_DST" ]; then
+	section "B: skipped, the firmware was already installed at boot"
 else
 	section "B: skipped, no $FW_SRC"
 fi

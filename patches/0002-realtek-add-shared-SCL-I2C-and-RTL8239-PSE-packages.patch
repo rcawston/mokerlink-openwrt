@@ -1,13 +1,16 @@
-realtek: add shared-SCL I2C kernel package
+realtek: add shared-SCL I2C and RTL8239 PSE kernel packages
 
 kmod-i2c-gpio-shared-scl: bit-banged I2C buses with one common SCL GPIO
 (drivers/i2c/busses/i2c-gpio-shared-scl.c in files-6.18).
 
+kmod-pse-realtek-rtl8239: Realtek RTL8239 PoE PSE controllers driven
+directly over I2C (drivers/net/pse-pd/realtek-rtl8239.c in files-6.18).
+
 diff --git a/target/linux/realtek/modules.mk b/target/linux/realtek/modules.mk
-index 5702500..492ed1e 100644
+index 5702500..0b49a8c 100644
 --- a/target/linux/realtek/modules.mk
 +++ b/target/linux/realtek/modules.mk
-@@ -56,3 +56,20 @@ define KernelPackage/hasivo-mcu-sensor/description
+@@ -56,3 +56,36 @@ define KernelPackage/hasivo-mcu-sensor/description
  endef
  
  $(eval $(call KernelPackage,hasivo-mcu-sensor))
@@ -28,3 +31,19 @@ index 5702500..492ed1e 100644
 +endef
 +
 +$(eval $(call KernelPackage,i2c-gpio-shared-scl))
++
++define KernelPackage/pse-realtek-rtl8239
++  TITLE:=Realtek RTL8239 PSE controller support
++  KCONFIG:=CONFIG_PSE_REALTEK_RTL8239
++  FILES:=$(LINUX_DIR)/drivers/net/pse-pd/realtek-rtl8239.ko
++  AUTOLOAD:=$(call AutoProbe,realtek-rtl8239)
++  $(call AddDepends/pse-pd,@TARGET_realtek +kmod-i2c-core)
++endef
++
++define KernelPackage/pse-realtek-rtl8239/description
++ Kernel module for Realtek RTL8239 PoE PSE controllers driven directly
++ over I2C, without a PSE microcontroller in front of them. The chip
++ firmware is not included; see the driver.
++endef
++
++$(eval $(call KernelPackage,pse-realtek-rtl8239))

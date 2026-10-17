@@ -11,10 +11,10 @@ index b090ff2..55ae20b 100644
  	zyxel,xgs1010-12-a1|\
  	zyxel,xgs1010-12-b1)
 diff --git a/target/linux/realtek/image/rtl930x.mk b/target/linux/realtek/image/rtl930x.mk
-index dd86ade..68740d7 100644
+index dd86ade..2aef103 100644
 --- a/target/linux/realtek/image/rtl930x.mk
 +++ b/target/linux/realtek/image/rtl930x.mk
-@@ -232,6 +232,22 @@ define Device/mokerlink_2g080gm
+@@ -232,6 +232,23 @@ define Device/mokerlink_2g080gm
  endef
  TARGET_DEVICES += mokerlink_2g080gm
  
@@ -28,6 +28,7 @@ index dd86ade..68740d7 100644
 +  DEVICE_PACKAGES := \
 +	kmod-hwmon-adt7475 \
 +	kmod-i2c-gpio-shared-scl \
++	kmod-pse-realtek-rtl8239 \
 +	rtl826x-firmware
 +  IMAGE_SIZE := 12288k
 +  $(Device/kernel-lzma)

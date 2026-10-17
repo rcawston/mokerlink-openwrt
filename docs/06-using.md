@@ -11,6 +11,7 @@
 | Management MTU | 1500 | interface `lan` |
 | EEE (802.3az) | off | `/etc/config/mokerlink`, then `service mokerlink reload` |
 | Fans | 50 %, full speed above 65 °C (fan controller sensors) or 95 °C (PHYs) | `/etc/config/mokerlink`, section `fan` |
+| PoE | all ports on; only valid PoE devices get power. Needs the RTL8239 firmware ([05-porting.md](05-porting.md#poe)) | `ethtool --set-pse lanN c33-pse-admin-control disable` |
 | Spanning tree | off | *Devices → switch → Bridge options* |
 | DHCP server, routing, firewall | not installed | |
 | Web UI | `http://<address>/` (LuCI) | |
@@ -51,6 +52,7 @@ These are the usual causes on a 10G switch, roughly in order of likelihood:
 ```sh
 mokerlink-probe              # port, PHY, link and temperature summary
 mokerlink-fan status         # fan controller temperatures, fan RPM, PWM
+ethtool --show-pse lan3      # PoE state, class, voltage and power
 ethtool lan3                 # link speed and duplex
 ethtool -S lan3              # per-port counters
 bridge fdb show              # learned MAC addresses
