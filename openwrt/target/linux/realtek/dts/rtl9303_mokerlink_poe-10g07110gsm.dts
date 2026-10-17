@@ -10,7 +10,7 @@
  *   - stock flash layout as declared below
  *   - console on header J4 at 115200 8N1
  *   - stock firmware is a uImage with magic 0x83800000, booted by "boota"
- *   - PHY bus/address map, read from the vendor U-Boot (see &mdio_bus*)
+ *   - PHY bus/address map and lane polarity, read from the vendor U-Boot
  *   - vendor hardware profile RTL9303_8264B_3X8261BE_XGE_POE: one RTL8264B
  *     quad PHY plus three discrete RTL8261BE PHYs
  *   - PoE: two RTL8239-VB behind a PSE MCU; the stock SDK registers a UART
@@ -18,10 +18,8 @@
  *   - an RTL8231 GPIO/LED expander (not used here yet)
  *   - stock U-Boot 2011.12 (1.0.0.2), firmware "KT-NOS" 1.1.1.34
  *
- * Everything marked UNVERIFIED still needs confirming. scripts/uboot-wiring.py
- * reads the lane polarity from the vendor U-Boot
- * (docs/02-serial-console.md#read-the-port-wiring). Confirm everything before
- * the image is written to flash.
+ * Everything marked UNVERIFIED still needs confirming on hardware before the
+ * image is written to flash.
  *
  * Deliberately left out until confirmed, because a wrong guess there can
  * hurt stability rather than just disable a feature:
@@ -163,17 +161,23 @@
 };
 
 /*
- * UNVERIFIED lane polarity: left at "normal" on both ends of every link.
- *
- * The RTL826x PHY driver (&phyN) and the switch SerDes driver (&serdesN)
- * both program polarity on every init and default to "normal", so a wrong
- * value silently kills traffic on that port: the link LED comes up but no
- * frames pass. scripts/uboot-wiring.py reads the values the vendor U-Boot
- * programs on both ends and prints the lines to add here, e.g.
- *	&phy8 { rx-polarity = <PHY_POL_INVERT>; };
- *	&serdes3 { rx-polarity = <PHY_POL_INVERT>; };
- * mokerlink-polarity-scan confirms a port from a running OpenWrt.
+ * Lane polarity on both ends of every PHY link, exactly as the vendor U-Boot
+ * programs it after `rtk network on` (read back from the RTL8264B VEND1
+ * register 0xc1 and the SerDes polarity registers). The RTL8261BE links
+ * (MAC 0/8/16, SerDes 2-4) and the SFP+ lane (SerDes 9) are normal on both
+ * ends. The RTL826x PHY driver (&phyN) and the SerDes driver (&serdesN) both
+ * default to "normal" and reprogram polarity on every init, so these lines
+ * are required: without them the RTL8264B ports link up but pass no frames.
  */
+&phy20 { tx-polarity = <PHY_POL_INVERT>; };
+&phy24 { rx-polarity = <PHY_POL_INVERT>; };
+&phy25 { tx-polarity = <PHY_POL_INVERT>; };
+&phy26 { rx-polarity = <PHY_POL_INVERT>; };
+
+&serdes5 { rx-polarity = <PHY_POL_INVERT>; };
+&serdes6 { tx-polarity = <PHY_POL_INVERT>; };
+&serdes7 { rx-polarity = <PHY_POL_INVERT>; };
+&serdes8 { tx-polarity = <PHY_POL_INVERT>; };
 
 &switch0 {
 	ethernet-ports {

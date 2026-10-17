@@ -12,9 +12,9 @@ switch and tools to bring up the hardware safely.
 > Confirmed from the board and the stock boot log: RTL9303 SoC, 128 MiB RAM,
 > 16 MiB flash with the expected layout, one RTL8264B plus three RTL8261BE
 > 10G PHYs, two RTL8239 PoE chips. Still to confirm on your unit before
-> anything is written to flash: front port order, lane polarity, SFP+ lane
-> and the PoE MCU link. The PHY map and lane polarity come straight from
-> the vendor U-Boot (`scripts/uboot-wiring.py`). Every test runs from RAM,
+> anything is written to flash: front port order, SFP+ lane and the PoE MCU
+> link. The PHY map and lane polarity come straight from the vendor U-Boot
+> (`scripts/uboot-wiring.py`). Every test runs from RAM,
 > and the stock firmware stays untouched until the very end.
 
 ## Why OpenWrt and not firmware from scratch

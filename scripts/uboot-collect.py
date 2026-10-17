@@ -214,6 +214,11 @@ class UBoot:
         return text
 
 
+PHY_PORTS = (0, 8, 16, 20, 24, 25, 26)
+SMI_READ = ("mw.l bb00cb70 0; mw.l bb00cb78 {port:08x}; mw.l bb00cb7c {c45:08x}; "
+            "mw.l bb00cb74 3; md.l bb00cb74 3")
+
+
 def link_ports(md_output):
     m = re.search(r"^%s: ([0-9a-fA-F]{8})" % LINK_REG, md_output, re.M)
     if not m:
@@ -222,47 +227,83 @@ def link_ports(md_output):
     return [p for p in (0, 8, 16, 20, 24, 25, 26, 27) if value >> p & 1]
 
 
-def collect_info(ub, outdir, wiring, link_test=True):
-    log_path = outdir / "uboot-info.log"
+def phy_read(ub, port, mmd, reg):
+    """Read a PHY register through the switch's MDIO read-request registers."""
+    out = ub.run(SMI_READ.format(port=port << 16, c45=mmd << 16 | reg))
+    m = re.search(r"^bb00cb74: ([0-9a-fA-F]{8}) ([0-9a-fA-F]{8})", out, re.M)
+    if not m or int(m.group(1), 16) & (1 << 25 | 1):
+        return None
+    return int(m.group(2), 16) & 0xFFFF
+
+
+def phy_links(ub):
+    """MAC ports whose PHY reports link (PMA/PMD status 1.1 bit 2, latched low)."""
+    up = []
+    for port in PHY_PORTS:
+        phy_read(ub, port, 1, 1)
+        value = phy_read(ub, port, 1, 1)
+        if value is not None and value & 0x4:
+            up.append(port)
+    return up
+
+
+def link_test(ub, log):
+    print("\n== Link test: which internal port each front port is")
+    for n in range(1, 9):
+        label = f"front-port-{n}" + ("-sfp" if n == 8 else "")
+        if n == 1:
+            answer = input("Cable in front port 1 with the link LED on? Press Enter "
+                           "(s = skip) ... ")
+        elif n == 8:
+            answer = input("Front port 8 is the SFP+ cage: insert a module or DAC cable "
+                           "connected to a peer, wait for link, press Enter (s = skip) ... ")
+        else:
+            answer = input(f"Move the cable to front port {n}, wait about 5 s for the "
+                           "link LED, press Enter (s = skip) ... ")
+        if answer.strip().lower().startswith("s"):
+            continue
+        # This U-Boot has no echo command: label the sample in the log
+        # itself. The link bits latch low, so the first read after a link
+        # change can still say "down"; the second is current.
+        log.write(f"### {label}\n")
+        ub.run(f"md.l {LINK_REG} 1")
+        mac = link_ports(ub.run(f"md.l {LINK_REG} 1")) or []
+        phy = phy_links(ub)
+        log.write(f"### result {label} mac={mac} phy={phy}\n")
+        print(f"  front port {n}: switch reports link on {mac or 'none'}, "
+              f"PHY reports link on {phy or 'none'}")
+
+
+def collect_info(ub, outdir, wiring, link_test_wanted=True, link_only=False):
+    log_path = outdir / ("uboot-link.log" if link_only else "uboot-info.log")
     with open(log_path, "w", encoding="latin-1", newline="\n") as log:
         ub.transcript = log
-        print("\n== Board information")
-        for cmd in INFO_COMMANDS:
-            print(f"  {cmd}")
-            ub.run(cmd, timeout=60)
+        if not link_only:
+            print("\n== Board information")
+            for cmd in INFO_COMMANDS:
+                print(f"  {cmd}")
+                ub.run(cmd, timeout=60)
 
         print("\n== Port wiring")
-        if link_test:
+        if link_test_wanted:
             input("Plug a cable from front port 1 into a running PC, then press Enter ... ")
         print("  rtk network on (takes a few seconds)")
         ub.run("rtk network on", timeout=120)
-        cmds = [c for c in wiring.commands().splitlines()
-                if c and not c.startswith("#") and c != "rtk network on" and LINK_REG not in c]
-        for i, cmd in enumerate(cmds, 1):
-            print(f"\r  register reads {i}/{len(cmds)}", end="", flush=True)
-            ub.run(cmd)
-        print()
+        if not link_only:
+            cmds = [c for c in wiring.commands().splitlines()
+                    if c and not c.startswith("#") and c != "rtk network on" and LINK_REG not in c]
+            for i, cmd in enumerate(cmds, 1):
+                print(f"\r  register reads {i}/{len(cmds)}", end="", flush=True)
+                ub.run(cmd)
+            print()
 
-        if link_test:
-            print("\n== Link test: which internal port each front port is")
-            for n in range(1, 9):
-                label = f"front-port-{n}" + ("-sfp" if n == 8 else "")
-                if n == 1:
-                    answer = input("Cable in front port 1 with the link LED on? Press Enter "
-                                   "(s = skip) ... ")
-                elif n == 8:
-                    answer = input("Front port 8 is the SFP+ cage: insert a module or DAC cable "
-                                   "connected to a peer, wait for link, press Enter (s = skip) ... ")
-                else:
-                    answer = input(f"Move the cable to front port {n}, wait about 5 s for the "
-                                   "link LED, press Enter (s = skip) ... ")
-                if answer.strip().lower().startswith("s"):
-                    continue
-                ub.run(f"echo {label}")
-                ports = link_ports(ub.run(f"md.l {LINK_REG} 1"))
-                print(f"  front port {n}: link on internal port(s) {ports if ports else 'none'}")
+        if link_test_wanted:
+            link_test(ub, log)
         ub.transcript = None
 
+    if link_only:
+        print(f"Saved {log_path}")
+        return
     decoded = io.StringIO()
     with contextlib.redirect_stdout(decoded):
         wiring.decode(log_path.read_text(encoding="latin-1"))
@@ -396,6 +437,8 @@ def main():
     ap.add_argument("--skip-dump", action="store_true", help="only collect the information")
     ap.add_argument("--skip-link-test", action="store_true",
                     help="no interactive cable moving (the link test is left out)")
+    ap.add_argument("--link-test-only", action="store_true",
+                    help="only the link test (saves uboot-link.log); no dump")
     ap.add_argument("--chunk", type=lambda x: int(x, 0), default=0x1000,
                     help="dump chunk size (default 0x1000)")
     ap.add_argument("--base", type=lambda x: int(x, 0), default=FLASH_BASE, help=argparse.SUPPRESS)
@@ -412,9 +455,11 @@ def main():
     ub = UBoot(args.port, args.baud)
     try:
         ub.attach(auto_esc=args.auto_esc)
-        if not (args.skip_info or args.resume):
-            collect_info(ub, outdir, wiring, link_test=not args.skip_link_test)
-        if not args.skip_dump:
+        if args.link_test_only:
+            collect_info(ub, outdir, wiring, link_only=True)
+        elif not (args.skip_info or args.resume):
+            collect_info(ub, outdir, wiring, link_test_wanted=not args.skip_link_test)
+        if not (args.skip_dump or args.link_test_only):
             dump_flash(ub, outdir, args.base, args.size, args.chunk)
     except KeyboardInterrupt:
         print(f"\nStopped. Continue later with:  py {Path(__file__).name} --port {args.port} "

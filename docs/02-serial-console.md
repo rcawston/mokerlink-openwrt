@@ -107,7 +107,8 @@ the command it prints (`--resume <folder>`) to continue.
 
 Options: `--auto-esc` stops autoboot by itself while you power-cycle the
 switch (no PuTTY needed); `--skip-dump` or `--skip-info` runs only one
-half; `--skip-link-test` leaves out the cable moving.
+half; `--skip-link-test` leaves out the cable moving; `--link-test-only`
+repeats just the link test (a few minutes, saves `uboot-link.log`).
 
 Send `uboot-info.log` and `uboot-wiring.txt`. Keep `full-flash.bin` private
 (it holds your MAC address and stock configuration) and in two places.
@@ -181,9 +182,10 @@ mw.l bb0003b0 00004325; md.l bb0003b0 2
 mw.l bb0003b0 00000025; md.l bb0003b0 2
 ```
 
-4. Move the cable to front port 2 and run `md.l bb00cb10 1` again. Repeat for every
-   port, including the SFP+ port with a module and peer. Note in the log
-   which front port each run was for.
+4. Move the cable to front port 2 and run `md.l bb00cb10 1` **twice** (the
+   link bits latch low, so only the second read is current). Repeat for
+   every port, including the SFP+ port with a module and peer. Note in the
+   log which front port each run was for (this U-Boot has no `echo`).
 5. Send the log, or decode it yourself:
 
    ```sh

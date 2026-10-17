@@ -29,6 +29,7 @@ Confirmed from the chip markings and the stock boot log:
 | Boot loader | Realtek U-Boot 2011.12 (1.0.0.2, Dec 2024), **Esc** stops autoboot, `bootcmd=boota` | boot log, `printenv` |
 | Stock image format | uImage with magic **`0x83800000`**, LZMA kernel | `md.b b4300000 40` |
 | PHY map | RTL8261BE on MAC 0/8/16 (SMI bus 1/2/3, address 0); RTL8264B on MAC 20/24/25/26 (bus 0, addresses 0-3) | U-Boot SMI registers |
+| Lane polarity | RTL8261BE links normal; each RTL8264B link inverted once on the PHY and once on the SerDes (alternating tx/rx) | U-Boot PHY and SerDes registers |
 | Stock firmware | "KT-NOS" 1.1.1.34 | boot log |
 
 Still assumed:
@@ -36,11 +37,10 @@ Still assumed:
 | | Assumption | Source of the assumption |
 |---|---|---|
 | Front port order | `lan1`-`lan7` in MAC port order 0, 8, 16, 20, 24, 25, 26 | link test still to do |
-| Lane polarity | normal on both ends of every link | hardware default |
 | SFP+ | MAC port 27 on SerDes 9 | eighth RTL9303 10G lane |
 | PoE MCU | `uart1`, 115200 baud, gen2 protocol | Zyxel XMG1915-10EP (RTL930x, RTL8239 MCU on `uart1`) |
 
-The lane polarity and front port order can be read from U-Boot
+The front port order can be read from U-Boot
 ([02-serial-console.md](02-serial-console.md#read-the-port-wiring)). The
 device tree marks each assumption as `UNVERIFIED`, and
 [05-porting.md](05-porting.md) explains how to check each one.

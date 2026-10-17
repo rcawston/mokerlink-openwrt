@@ -97,7 +97,9 @@ MokerLink 10GT080M, for example, inverts on the SerDes side.
 
 The vendor U-Boot programs the correct values, so the
 [U-Boot wiring read](02-serial-console.md#read-the-port-wiring) gives them
-directly. To confirm them, or find them when U-Boot did not set them, run
+directly. On this board the RTL8261BE links are normal, and each RTL8264B
+link is inverted on the PHY in one direction and on the SerDes in the
+other; the device tree carries these values. To confirm them, or find them when U-Boot did not set them, run
 the scan from a RAM-booted OpenWrt with a host at `192.168.2.254` on the
 port under test:
 

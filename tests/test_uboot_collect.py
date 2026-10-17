@@ -20,7 +20,7 @@ COLLECT = HERE.parent / "scripts" / "uboot-collect.py"
 FAKE = HERE / "fake_uboot.py"
 
 
-def run(tmp, flash_path, extra, drop_in=0.0, drop_out=0.0, seed=1, at_prompt=True):
+def run(tmp, flash_path, extra, drop_in=0.0, drop_out=0.0, seed=1, at_prompt=True, stdin=""):
     master, slave = os.openpty()
     port = os.ttyname(slave)
     fake = subprocess.Popen([sys.executable, str(FAKE), str(master), str(flash_path),
@@ -29,7 +29,7 @@ def run(tmp, flash_path, extra, drop_in=0.0, drop_out=0.0, seed=1, at_prompt=Tru
                             pass_fds=[master])
     try:
         res = subprocess.run([sys.executable, str(COLLECT), "--port", port, *extra],
-                             cwd=tmp, capture_output=True, text=True, timeout=600)
+                             cwd=tmp, capture_output=True, text=True, timeout=600, input=stdin)
     finally:
         fake.kill()
         fake.wait()
@@ -63,6 +63,17 @@ def main():
         assert "RTL8261N/BE 001ccaf3" in wiring and "&mdio_bus1 {" in wiring, wiring
         assert "matches U-Boot" in res.stdout, res.stdout
         print("clean line: ok")
+
+        # 1b. Link test only, answering the cable prompts (skip port 8)
+        out = tmp / "link"
+        res = run(tmp, flash_path, ["--out", str(out), "--link-test-only"],
+                  stdin="\n" * 8 + "s\n")
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "front port 7: switch reports link on" in res.stdout, res.stdout
+        assert "front port 8" not in res.stdout, res.stdout
+        log = (out / "uboot-link.log").read_text(encoding="latin-1")
+        assert "### front-port-1" in log and "### result front-port-7" in log, log
+        print("link test only: ok")
 
         # 2. Lossy line: input characters and md output bytes get lost
         out = tmp / "lossy"

@@ -111,7 +111,8 @@ def commands():
                        f"md.l {a(SDS_ACCESS_CMD)} 2")
     out += [
         "# Then move the cable to each other front port in turn and run this",
-        "# once per port, noting which front port it was:",
+        "# twice per port (the link bits latch low, the second read is",
+        "# current), noting which front port it was:",
         f"md.l {a(MAC_LINK_STS)} 1",
     ]
     return "\n".join(out)
@@ -129,7 +130,12 @@ def parse(log):
     phy = {}  # (port, mmd, reg) -> value or None (failed)
     sds = {}  # (physical SerDes, page, reg) -> value or None (failed)
     pending = None
+    label = None
     for line in log.splitlines():
+        lab = re.match(r"^### (\S+)", line)  # written by uboot-collect.py
+        if lab:
+            label = lab.group(1)
+            continue
         c2, c3 = MW_CTRL2.search(line), MW_CTRL3.search(line)
         if c2 and c3:
             port = int(c2.group(1), 16) >> 16
@@ -167,7 +173,7 @@ def parse(log):
         for i, w in enumerate(words):
             off = addr + 4 * i - BASE
             if off == MAC_LINK_STS:
-                link_samples.append(w)
+                link_samples.append((label, w))
             else:
                 regs[off] = w
     return regs, link_samples, phy, sds
@@ -249,9 +255,18 @@ def decode(log):
     if link_samples:
         print()
         print("Link status samples (MAC_LINK_STS), in the order they were taken:")
-        for n, s in enumerate(link_samples, 1):
+        for n, (lab, s) in enumerate(link_samples, 1):
             up = [p for p in MAC_TO_SDS if s >> p & 1]
-            print(f"  sample {n}: {s:#010x}  link on MAC port(s) {up or 'none'}")
+            print(f"  sample {n}{f' ({lab})' if lab else ''}: {s:#010x}  "
+                  f"link on MAC port(s) {up or 'none'}")
+        last = {}
+        for lab, s in link_samples:  # the last read per label is the current one
+            if lab:
+                last[lab] = [p for p in MAC_TO_SDS if s >> p & 1]
+        if last:
+            print("Front port -> MAC port:")
+            for lab, up in last.items():
+                print(f"  {lab}: {up or 'no link'}")
 
     # A port U-Boot left unmapped reads as bus 0 address 0 and returns the
     # PHY of whichever port really sits there, so a PHY only counts for a

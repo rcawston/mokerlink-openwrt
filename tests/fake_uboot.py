@@ -81,8 +81,6 @@ class Fake:
             self.out(b"baudrate=115200\r\nbootcmd=boota\r\nipaddr=192.168.2.1\r\n")
         elif name in ("printsys", "flshow", "flinfo"):
             self.out(name.encode() + b" output\r\n")
-        elif name == "echo":
-            self.out(" ".join(argv[1:]).encode() + b"\r\n")
         elif name == "rtk" and argv[1:] == ["network", "on"]:
             self.out(b"Enable network\r\nPlease wait for PHY init-time ...\r\n\r\n")
         elif name.startswith("md"):
@@ -112,7 +110,8 @@ class Fake:
         self.regs[off] = val
         if off == 0xCB74 and val & 1:  # SMI read: answer like an RTL8261BE
             dev, reg = (self.regs.get(0xCB7C, 0) >> 16) & 0x1F, self.regs.get(0xCB7C, 0) & 0xFFFF
-            data = {(1, 2): 0x001C, (1, 3): 0xCAF3, (30, 0xC1): 0x0127}.get((dev, reg), 0xFFFF)
+            data = {(1, 1): 0x0006, (1, 2): 0x001C, (1, 3): 0xCAF3,
+                    (30, 0xC1): 0x0127}.get((dev, reg), 0xFFFF)
             self.regs[0xCB78] = (self.regs.get(0xCB78, 0) & 0xFFFF0000) | data
             self.regs[0xCB74] = val & ~1
         if off == 0x03B0 and val & 1:  # SerDes read
