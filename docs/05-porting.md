@@ -202,12 +202,12 @@ The PoE LEDs are driven in software instead: see [PoE LEDs](#poe-leds).
 
 ## PoE
 
-**Works with the Realtek firmware installed** (round 1 of the tests, an
-802.3bt PD on ports 1 and 5): detection, classification (class 7), power
-(5-10 W drawn) and switching ports off and on with ethtool.
-Without the firmware the chips detect nothing and power nothing. Not yet
-confirmed: the PoE LEDs, and why the test PD's link went up and down every
-25 s (round 2, below).
+**Works with the Realtek firmware installed**, tested on ports 1 and 5
+(one on each chip) with an 802.3bt access point (class 7) and an 802.3at
+camera (class 4): detection, classification, power, measurements,
+switching ports off and on with ethtool, and the green PoE LEDs. A device
+without PoE is left unpowered. Without the firmware the chips detect
+nothing and power nothing.
 
 The board has two Realtek **RTL8239-VB** PSE chips and no PSE
 microcontroller. Everything below comes from the stock firmware (board
@@ -262,6 +262,7 @@ The stock firmware lights LED 2 of each RJ45 port (the third LED of the
 port in the switch's serial LED stream) while the port delivers power. It
 takes that LED under software control of the RTL9303 LED controller, which
 OpenWrt's switch driver doesn't do, so the LED stayed dark in round 1. The
+new driver does the same, and round 2 confirmed it. The
 registers, from the vendor SDK's register table (`rtk.ko`):
 
 | Register | Offset | Use |
@@ -294,8 +295,8 @@ reboots once OpenWrt runs from flash). PoE needs it.
 
 ### Testing
 
-With one PoE device (802.3bt preferred), optionally a device without PoE
-(a laptop), and the switch RAM-booted:
+With a PoE device, optionally a device without PoE (a laptop), and the
+switch RAM-booted:
 
 ```sh
 # on the PC
@@ -304,43 +305,46 @@ scp -O rtl8239-bt.bin root@192.168.2.1:/tmp/
 mokerlink-poe-test
 ```
 
-Round 2 of the script:
+The script installs the firmware and waits for the driver to load it,
+records port 1 and then port 5 with the PoE device once a second (link,
+PSE state, LED, chip registers), asks what the LEDs show and switches the
+port off and on. If the PoE LED stays dark it lights the LEDs of port 1 one
+by one, and it optionally records port 1 with a device without PoE, at its
+normal speed and then at 100 Mbps. Power-cycle the switch afterwards.
 
-1. sends the firmware in 16-byte writes, the most an RTL9303 I²C master
-   moves per transfer, before the driver has it
-2. installs the firmware and waits for the driver to load it
-3. records port 1 and then port 5 with the PoE device once a second
-   (link, PSE state, LED, chip registers), asks what the LEDs show and
-   switches the port off and on
-4. if the PoE LED stayed dark, lights the LEDs of port 1 one by one
-5. optionally records port 1 with a device without PoE, at its normal
-   speed and then advertising 100 Mbps only
-
-Power-cycle the switch afterwards and send the report it writes.
-
-Results so far:
+Results:
 
 - round 1: fans at 50 % (4500-4800 rpm, fan 3 not fitted); no PoE without
   the firmware; with it, both chips load it in about 3 s each and power an
-  802.3bt PD within seconds; ethtool disable/enable works
+  802.3bt PD (Ruckus T750SE, class 7, 5-10 W) within seconds; ethtool
+  disable/enable works
 - round 1: the RTL9303 I²C master 1 is wired to these buses: with
   `mokerlink-i2c-master-test`, SDA0 reaches the ADT7476 and SDA1 the
   RTL8239s, so GPIO 8 is its SCL
-- round 1: the PD (Ruckus T750SE) linked at 100 Mbps, and the link dropped
-  twice within 2 s and came back about 25 s later, over and over, on both
-  port 1 (RTL8261BE) and port 5 (RTL8264B), while power stayed on
+- round 2: the RTL8239s take the firmware only as one write. Sent in
+  16-byte writes, the most I²C master 1 moves per transfer, the chips
+  accept the first and NAK the second. So the PoE bus has to stay
+  bit-banged, and since the three buses share SCL, the fan and SFP+ buses
+  stay on `i2c-gpio-shared-scl` too
+- round 2: an Axis camera (class 4) on ports 1 and 5 is powered within
+  seconds and passes traffic at 1 Gbit/s. The chips power both pairsets
+  for it (about 64 + 54 mA at 52.7 V, 6-7 W)
+- round 2: LED 2 of each port is the green PoE LED, as in the stock
+  firmware; it lights while the port delivers and goes off when the port
+  is switched off or the device unplugged. LEDs 0 and 1 are the port's
+  link LED (orange and green), LED 3 is not fitted. The boot loader sets
+  up three LEDs per port, which the driver relies on
+- round 2: a device without PoE links at 1 Gbit/s and at 100 Mbit/s and
+  stays up, and is not powered. The T750SE's link drops in round 1
+  (100 Mbps, down twice and back 25 s later, over and over) were the
+  access point's own behaviour while it starts up
 
-Still open, for round 2 to settle:
+Still open:
 
-- the PoE LEDs (green): which LED of the port, and whether the switch's
-  LED controller outputs it as the boot loader configured it
-- the link drops: the PD itself (step 3 shows whether its power dips) or
-  the ports at 100 Mbps (step 5). The stock firmware can't serve as a
-  cross-check: it often relays no traffic at all, DHCP included, once a
-  device comes up
-- whether the chips accept the firmware in 16-byte writes. If they do,
-  all three buses can move to the upstream `i2c-rtl9300` driver on I²C
-  master 1 and the shared-SCL bus driver can go
+- right after plug-in, every device's link went down and up 2-4 times in
+  the first 10 s before staying up, on both PHY types and with or without
+  PoE. It settles by itself; it looks like the 10G PHYs' link-up
+  behaviour rather than PoE, and is not investigated yet
 - which channel of a pair is alternative A and which B
 
 ### Upstreaming
@@ -350,8 +354,10 @@ The kernel parts are written for upstream: the drivers
 `drivers/i2c/busses/i2c-gpio-shared-scl.c`,
 `drivers/leds/leds-rtl9300-port.c`) and their bindings in
 `openwrt/target/linux/realtek/files-6.18`, with the Kconfig/Makefile hooks
-in `patches-6.18/830`-`832`. Two binding patches carried here belong
-upstream too:
+in `patches-6.18/830`-`832`. The shared-SCL bus driver is needed rather
+than the upstream `i2c-rtl9300` on the same pins: the RTL8239s refuse their
+firmware in the 16-byte writes that controller is limited to (round 2).
+Two binding patches carried here belong upstream too:
 
 - `833`: lets the upstream RTL9301 switch binding have the port LED
   controller as a child, like its `i2c@36c` and `mdio-controller@ca00`.

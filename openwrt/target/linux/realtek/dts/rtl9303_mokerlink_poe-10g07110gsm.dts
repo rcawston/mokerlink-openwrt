@@ -3,8 +3,8 @@
  * MokerLink POE-10G07110GSM
  * 7x 10GBASE-T (PoE++) + 1x 10G SFP+, Realtek RTL9303
  *
- * STAGE 1 DEVICE TREE: the copper ports, fan control and PoE (with the
- * RTL8239 firmware installed) are verified; the PoE LEDs are not yet.
+ * STAGE 1 DEVICE TREE: the copper ports, fan control, PoE (with the
+ * RTL8239 firmware installed) and the PoE LEDs are verified.
  *
  * Confirmed from the board and the stock boot log:
  *   - SoC RTL9303, 128 MiB RAM, 16 MiB Winbond W25Q128 SPI NOR
@@ -79,9 +79,10 @@
 	 * Three I2C buses that the stock firmware bit-bangs on SoC GPIOs, with
 	 * one common SCL line (SDK interface 2, "software I2C"): the fan
 	 * controller (SDA GPIO 9), the two RTL8239 PoE controllers (SDA GPIO
-	 * 10) and the SFP+ cage (SDA GPIO 11). Bit-banged rather than on an
-	 * RTL9303 I2C master because the PoE firmware download is one
-	 * 25460-byte write, far beyond the 16 bytes per transfer of the master.
+	 * 10) and the SFP+ cage (SDA GPIO 11). The pins are those of the
+	 * RTL9303 I2C master 1, but the RTL8239s take their 25460-byte firmware
+	 * only as one write, far beyond the 16 bytes per transfer of the
+	 * master: sent in 16-byte writes, they NAK the second one.
 	 */
 	i2c-gpio-shared {
 		compatible = "i2c-gpio-shared-scl";
@@ -419,7 +420,7 @@
 	 * PoE status LEDs. The stock firmware (poe_led_detect_monitor in
 	 * ski.ko) takes LED 2 of every RJ45 port, the third in the serial LED
 	 * stream, under software control and switches it on while the port
-	 * delivers power. The PoE LEDs are green.
+	 * delivers power. LEDs 0 and 1 are the port's orange/green link LED.
 	 */
 	led-controller@cc48 {
 		compatible = "realtek,rtl9301-port-leds";

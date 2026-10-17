@@ -23,8 +23,9 @@ Confirmed from the chip markings and the stock boot log:
 | Flash | **16 MiB** Winbond W25Q128 SPI NOR (ID `EF4018`) | U-Boot `SPI-F:` line |
 | 10G PHYs | three single **RTL8261BE** (front ports 1-3) plus one **RTL8264B** quad (front ports 4-7) | vendor hardware profile `RTL9303_8264B_3X8261BE_XGE_POE`, RAM boot |
 | PoE | two **RTL8239-VB** PSE chips, driven **directly** by the CPU (no PSE MCU) | chip marking, stock log `find RTL8239-VB` (once per chip) |
-| PoE link | bit-banged **I²C**, SDA GPIO 10: first RTL8239 at `0x20`/`0x21`, second at `0x22`/`0x23` (one address per 4-channel half), broadcast `0x60`. The stock firmware sends a 25460-byte Realtek firmware image to both chips at every boot; without it they detect and power nothing | stock firmware (`board_conf.ko` table `poeDevConf_9303M7XC1XF_BT`, `ski.ko`), `mokerlink-poe-test` |
+| PoE link | bit-banged **I²C**, SDA GPIO 10: first RTL8239 at `0x20`/`0x21`, second at `0x22`/`0x23` (one address per 4-channel half), broadcast `0x60`. The stock firmware sends a 25460-byte Realtek firmware image to both chips at every boot, in one write (they refuse it split up); without it they detect and power nothing | stock firmware (`board_conf.ko` table `poeDevConf_9303M7XC1XF_BT`, `ski.ko`), `mokerlink-poe-test` |
 | I²C | three buses bit-banged on SoC GPIOs with one common SCL (GPIO 8): fan controller (SDA 9), PoE (SDA 10), SFP+ EEPROM (SDA 11). The same pins are the RTL9303's I²C master 1 (SCL, SDA0-SDA2) | stock firmware (`board_conf.ko`, SDK `r9300_i2c_dev_init`), `mokerlink-i2c-master-test` |
+| Port LEDs | three per RJ45 port in the switch's serial LED stream: LEDs 0 and 1 the link LED (orange, green), LED 2 the green PoE LED, which the stock firmware drives in software | stock firmware (`poe_led_detect_monitor` in `ski.ko`), `mokerlink-poe-test` |
 | GPIO expander | Realtek **RTL8231** (LEDs/GPIOs) | stock SDK: `RTL8231 probe: (found)` |
 | Console | header **J4** (GND, TXD, RXD, 3V3, 3.3 V logic), **115200 8N1** | board, boot log |
 | Boot loader | Realtek U-Boot 2011.12 (1.0.0.2, Dec 2024), **Esc** stops autoboot, `bootcmd=boota` | boot log, `printenv` |
@@ -41,7 +42,6 @@ Still assumed:
 | | Assumption | Source of the assumption |
 |---|---|---|
 | SFP+ | MAC port 27 on SerDes 9 | eighth RTL9303 10G lane |
-| PoE LEDs | LED 2 of each RJ45 port in the switch's serial LED stream, under software control | stock firmware (`poe_led_detect_monitor` in `ski.ko`), round 2 of `mokerlink-poe-test` |
 
 The device tree marks each assumption as `UNVERIFIED`, and
 [05-porting.md](05-porting.md) explains how to check each one.

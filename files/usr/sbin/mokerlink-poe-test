@@ -1,16 +1,13 @@
 #!/bin/sh
 # mokerlink-poe-test [OUTPUT_FILE]
 #
-# Guided PoE test, round 2. Records everything in one report:
+# Guided PoE test. Records everything in one report:
 #
-#   1. whether the RTL8239s take their firmware in 16-byte writes, the most
-#      an RTL9303 I2C master can send at once (decides whether the bit-banged
-#      bus can be replaced by the SoC's I2C master)
-#   2. the firmware loaded by the driver from /tmp/rtl8239-bt.bin
-#   3. a PoE device on port 1, then port 5: power, class, link and the chip
+#   1. the firmware loaded by the driver from /tmp/rtl8239-bt.bin
+#   2. a PoE device on port 1, then port 5: power, class, link and the chip
 #      registers once a second, the PoE LEDs, disable/enable from software
-#   4. if the PoE LED did not light: which LED of port 1 is which
-#   5. optionally, a device without PoE on port 1 at its normal speed and
+#   3. if the PoE LED did not light: which LED of port 1 is which
+#   4. optionally, a device without PoE on port 1 at its normal speed and
 #      at 100 Mbps, to tell link drops of the port from those of the PD
 #
 # Prepare: boot the image from RAM, then
@@ -176,61 +173,6 @@ port_test() {
 	note "Is the port's PoE LED off now? (y/n)" >/dev/null
 }
 
-# The firmware in 16-byte writes, as an RTL9303 I2C master would have to
-# send it, with the stock preparation of both chips. Only before the driver
-# has the firmware, which it would otherwise reload over this.
-chunk_test() {
-	local addr v n=0 bytes=0 start line b
-	command -v i2ctransfer >/dev/null || { say "skipped: no i2ctransfer"; return; }
-	for addr in $CHIP_ADDRS; do
-		i2cset -f -y "$BUS" "$addr" 0x1a 0x20
-		sleep 1
-		i2cset -f -y "$BUS" "$addr" 0x12 0x00
-	done
-	for addr in 0x20 0x22; do
-		i2cset -f -y "$BUS" "$addr" 0xec 0x03
-	done
-	sleep 1
-	for addr in 0x20 0x22; do
-		v=$(rd "$addr" 0xec)
-		say "$addr: 0xec = $v before the download"
-		[ "$v" = -- ] && continue
-		if [ $((0x$v & 0x04)) -eq 0 ]; then
-			i2cset -f -y "$BUS" "$addr" 0x1a 0x3f
-			sleep 1
-			i2cset -f -y "$BUS" "$addr" 0xec 0x03
-			sleep 1
-			say "$addr: not ready, reset: 0xec = $(rd "$addr" 0xec)"
-		fi
-	done
-	start=$(date +%s)
-	# hexdump pads a short last line, so add the 0x here rather than in
-	# the format
-	hexdump -v -e '16/1 "%02x " "\n"' "$FW_SRC" | while read -r line; do
-		set --
-		for b in $line; do
-			set -- "$@" "0x$b"
-		done
-		i2ctransfer -f -y "$BUS" "w$(($# + 1))@0x60" 0xf4 "$@" || {
-			echo "write failed at byte $bytes" >>"$OUT"
-			break
-		}
-		bytes=$((bytes + $#))
-		n=$((n + 1))
-		[ $((n % 400)) -eq 0 ] && echo "  $bytes bytes" | tee -a "$OUT"
-	done
-	say "sent in $(($(date +%s) - start)) s"
-	sleep 2
-	for addr in 0x20 0x22; do
-		v=$(rd "$addr" 0xec)
-		if [ "$v" != -- ] && [ $((0x$v & 0x20)) -ne 0 ]; then
-			say "$addr: 0xec = $v: firmware RUNNING after 16-byte writes"
-		else
-			say "$addr: 0xec = $v: firmware not running after 16-byte writes"
-		fi
-	done
-}
-
 dump_led_regs() { # RTL9303 LED controller, 0xcc00-0xcd28
 	local off
 	printf '\nLED registers (0x%x + offset):' "$SW_BASE" >>"$OUT"
@@ -278,15 +220,7 @@ if [ ! -f "$FW_SRC" ]; then
 fi
 run sha256sum "$FW_SRC"
 
-section "1: firmware in 16-byte writes"
-if [ -f "$FW_DST" ]; then
-	say "skipped: the driver already has the firmware"
-elif ask "Firmware download in 16-byte writes (about 30 s, nothing to plug)"; then
-	chunk_test
-	dump_chips
-fi
-
-section "2: firmware loaded by the driver"
+section "1: firmware loaded by the driver"
 if [ ! -f "$FW_DST" ]; then
 	before=$(fw_running)
 	mkdir -p "${FW_DST%/*}"
@@ -313,20 +247,20 @@ for d in /sys/class/leds/*:poe-*; do
 done
 dump_led_regs
 
-section "3: port 1 (second RTL8239, 0x22 channels 0+1)"
+section "2: port 1 (second RTL8239, 0x22 channels 0+1)"
 port_test lan1 0x22 0
 led_ok=$(note "Did port 1's PoE LED light while the device was powered? (y/n)")
 
 if [ "$led_ok" != y ]; then
-	section "4: LEDs of port 1, one at a time"
+	section "3: LEDs of port 1, one at a time"
 	ask "Nothing plugged into port 1 now; the next steps light its LEDs one by one" &&
 		led_walk 0 1
 fi
 
-section "3: port 5 (first RTL8239, 0x20 channels 2+3)"
+section "2: port 5 (first RTL8239, 0x20 channels 2+3)"
 port_test lan5 0x20 2
 
-section "5: port 1 with a device without PoE"
+section "4: port 1 with a device without PoE"
 if ask "Plug a device WITHOUT PoE (laptop, another switch) into port 1"; then
 	say "recording lan1 for 30 s at the normal speed"
 	sample lan1 0x22 0 30

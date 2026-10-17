@@ -8,7 +8,7 @@ It is [OpenWrt](https://openwrt.org) plus board support for this switch,
 pinned to an exact source revision, with defaults for a plain layer-2
 switch and tools to bring up the hardware safely.
 
-> **Status: stage 1, RAM-tested on real hardware. PoE works, in testing.**
+> **Status: stage 1, RAM-tested on real hardware, PoE included.**
 > Booted from RAM on a real unit: all seven 10G PHYs come up, front ports
 > 1-7 are `lan1`-`lan7`, and every copper port forwards traffic (tested at
 > 1 Gbit/s). The PHY map and lane polarity come straight from the vendor
@@ -16,9 +16,9 @@ switch and tools to bring up the hardware safely.
 > firmware, runs the fans at 50 % like stock
 > ([docs/05-porting.md](docs/05-porting.md#fans-and-temperature)). **PoE**
 > has a new driver for the two RTL8239 chips, built from what the stock
-> firmware does; it powered an 802.3bt device in the first test and needs
-> the RTL8239 firmware copied out of your stock image. The PoE LEDs are
-> written but untested ([docs/05-porting.md](docs/05-porting.md#poe)).
+> firmware does: it powers 802.3at and 802.3bt devices, switches ports with
+> `ethtool` and lights the green PoE LEDs. It needs the RTL8239 firmware
+> copied out of your stock image ([docs/05-porting.md](docs/05-porting.md#poe)).
 > Still untested: SFP+, and copper at 2.5/5/10 Gbit/s.
 
 ## Why OpenWrt and not firmware from scratch
@@ -44,15 +44,14 @@ reviewable board description on top of it is the most reliable option.
 - Hardware watchdog: a hung system reboots itself
 - Fan control like the stock firmware: 50 % normally, full speed when hot
 - PoE (802.3af/at/bt) on ports 1-7, all on by default, per port with
-  `ethtool`; needs the RTL8239 firmware from your stock image. PoE LEDs
-  (untested)
+  `ethtool`, with the PoE LEDs; needs the RTL8239 firmware from your
+  stock image
 - Bring-up tools on the switch: `mokerlink-probe`, `mokerlink-backup`,
   `mokerlink-polarity-scan`, `mokerlink-gpio-watch`, `mokerlink-fan`,
   `mokerlink-poe-test`
 Not yet supported in stage 1: SFP+ module EEPROM/DOM readout and 1G SFP
 modules, the reset button, the system LED, and anything behind the RTL8231
-GPIO expander. If you need PoE you can rely on today, stay on the stock
-firmware.
+GPIO expander.
 
 ## How to install, in short
 
