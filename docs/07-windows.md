@@ -124,12 +124,14 @@ Later builds after `git pull` only rebuild what changed and take minutes.
 5. On the console, run `mokerlink-probe` and send its output with the boot
    log. I check them before you go on.
 6. **Port test:** in a Windows command prompt run `ping -t 192.168.2.1`.
-   Move the PC cable through front ports 1-7, a few seconds each. Note
-   which ports answer, and after each move run `mokerlink-probe` on the
-   console: the `lanN` showing `up` is that front port. If a port shows link
-   but ping fails, note it.
-7. **PoE** (optional): `dmesg | grep -i pse` on the console, then plug one
-   PoE device into a port and see whether it powers up.
+   Move the PC cable through front ports 1-7, about 15 seconds each. Note
+   which ports answer, and after each move run `ip link | grep lan` on the
+   console: the `lanN` showing `state UP` is that front port (on the first
+   unit tested, front port N was `lanN`). If a port shows link but ping
+   fails, note it.
+7. **PoE** (optional): OpenWrt doesn't drive the PoE chips yet. If you have
+   a PoE device, plug it in and note whether it powers up anyway
+   ([05-porting.md](05-porting.md#poe)).
 
 To go back to stock at any point in Part 3, just power-cycle the switch.
 

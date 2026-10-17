@@ -22,6 +22,9 @@ HSI_INV=0x40  # rx-polarity
 HSO_INV=0x80  # tx-polarity
 KEEP_MASK=0xff3f
 
+# shellcheck source=../../lib/functions/mokerlink.sh
+. /lib/functions/mokerlink.sh
+
 usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -32,12 +35,10 @@ target=$2
 command -v mdio >/dev/null || die "the mdio tool (package mdio-tools) is missing"
 [ -e "/sys/class/net/$port" ] || die "no such port: $port"
 
-link=$(readlink "/sys/class/net/$port/phydev") || die "$port has no PHY (the SFP+ port has none)"
-name=${link##*/}
-bus=${name%:*}
-addr=$((0x${name##*:}))
-drv=$(readlink "/sys/class/net/$port/phydev/driver")
-drv=${drv##*/}
+mokerlink_phy_of_port "$port" || die "$port has no PHY (the SFP+ port has none)"
+bus=$PHY_BUS
+addr=$PHY_ADDR
+drv=$PHY_DRIVER
 case "$drv" in
 RTL82[56]*) ;;
 *) die "$port PHY uses driver '$drv'; only RTL826x PHYs keep their polarity in VEND1 0xc1" ;;

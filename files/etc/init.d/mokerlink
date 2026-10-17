@@ -7,8 +7,9 @@ START=99
 apply_eee() {
 	local state="$1" dev
 
+	# Ports with a PHY have a phy-handle (no phydev link under DSA)
 	for dev in /sys/class/net/lan*; do
-		[ -e "$dev/phydev" ] || continue
+		[ -e "$dev/of_node/phy-handle" ] || continue
 		ethtool --set-eee "${dev##*/}" eee "$state" 2>/dev/null ||
 			logger -t mokerlink "${dev##*/}: cannot set EEE $state"
 	done

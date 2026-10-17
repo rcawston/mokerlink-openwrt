@@ -21,29 +21,27 @@ Confirmed from the chip markings and the stock boot log:
 | SoC | Realtek **RTL9303** (8× 10G MAC, MIPS 34Kc, 800 MHz) | chip marking, U-Boot `Board: RTL9300` |
 | RAM | **128 MiB** | U-Boot `DRAM: 128 MB` |
 | Flash | **16 MiB** Winbond W25Q128 SPI NOR (ID `EF4018`) | U-Boot `SPI-F:` line |
-| 10G PHYs | one **RTL8264B** quad (ports 1-4) plus three single **RTL8261BE** (ports 5-7) | vendor hardware profile `RTL9303_8264B_3X8261BE_XGE_POE` |
-| PoE | two **RTL8239-VB** PSE chips behind a PSE MCU | chip marking, stock log `find RTL8239-VB` (twice) |
-| PoE MCU link | most likely **UART** | stock SDK: `UART probe: (found)`, no I²C device |
+| 10G PHYs | three single **RTL8261BE** (front ports 1-3) plus one **RTL8264B** quad (front ports 4-7) | vendor hardware profile `RTL9303_8264B_3X8261BE_XGE_POE`, RAM boot |
+| PoE | two **RTL8239-VB** PSE chips, driven **directly** by the CPU (no PSE MCU) | chip marking, stock log `find RTL8239-VB` (once per chip) |
+| PoE link | `uart1` (`/dev/ttyS1`); the stock firmware loads RTL8239 firmware images over it at boot | stock firmware (`ski.ko`) |
 | GPIO expander | Realtek **RTL8231** (LEDs/GPIOs) | stock SDK: `RTL8231 probe: (found)` |
 | Console | header **J4** (GND, TXD, RXD, 3V3, 3.3 V logic), **115200 8N1** | board, boot log |
 | Boot loader | Realtek U-Boot 2011.12 (1.0.0.2, Dec 2024), **Esc** stops autoboot, `bootcmd=boota` | boot log, `printenv` |
 | Stock image format | uImage with magic **`0x83800000`**, LZMA kernel, rootfs embedded in the kernel initramfs | `md.b b4300000 40`, stock image |
 | Stock upgrade check | **no signature**: web UI accepts any uImage with magic `0x83800000` and valid header/data CRC32, writes the whole file to RUNTIME | stock firmware (`sal_sys_fwImageCrc32_check`) |
 | PHY map | RTL8261BE on MAC 0/8/16 (SMI bus 1/2/3, address 0); RTL8264B on MAC 20/24/25/26 (bus 0, addresses 0-3) | U-Boot SMI registers |
-| Lane polarity | RTL8261BE links normal; each RTL8264B link inverted once on the PHY and once on the SerDes (alternating tx/rx) | U-Boot PHY and SerDes registers |
+| Lane polarity | RTL8261BE links normal; each RTL8264B link inverted once on the PHY and once on the SerDes (alternating tx/rx) | U-Boot PHY and SerDes registers, RAM boot |
+| Front port order | front ports 1-7 are `lan1`-`lan7` (MAC ports 0, 8, 16, 20, 24, 25, 26), all pass traffic | port test in a RAM boot |
 | Stock firmware | "KT-NOS" 1.1.1.34 | boot log |
 
 Still assumed:
 
 | | Assumption | Source of the assumption |
 |---|---|---|
-| Front port order | `lan1`-`lan7` in MAC port order 0, 8, 16, 20, 24, 25, 26 | link test still to do |
 | SFP+ | MAC port 27 on SerDes 9 | eighth RTL9303 10G lane |
-| PoE MCU | `uart1`, 115200 baud, gen2 protocol | Zyxel XMG1915-10EP (RTL930x, RTL8239 MCU on `uart1`) |
+| PoE without stock firmware | unknown whether the RTL8239s power devices on their own | needs a test with a PoE device under OpenWrt |
 
-The front port order can be read from U-Boot
-([02-serial-console.md](02-serial-console.md#read-the-port-wiring)). The
-device tree marks each assumption as `UNVERIFIED`, and
+The device tree marks each assumption as `UNVERIFIED`, and
 [05-porting.md](05-porting.md) explains how to check each one.
 
 ## Flash layout
@@ -73,10 +71,8 @@ Note the markings of:
 
 - the main chip under the large heatsink (confirmed: RTL9303)
 - the PHY chips near the RJ45 ports (confirmed: one RTL8264B, three RTL8261BE)
-- the PoE chips (confirmed: two RTL8239-VB) and **the small
-  microcontroller that manages them**: a 20-48 pin chip near the RTL8239s,
-  marked e.g. Nuvoton, GD32, STM32, HK32 or Holtek. Its pins lead to the
-  bus the SoC uses for PoE.
+- the PoE chips (confirmed: two RTL8239-VB, talked to directly by the SoC
+  over `uart1`; the stock firmware shows no separate PoE microcontroller)
 - the SPI flash (8-pin chip, e.g. FM25Q128, W25Q128, GD25Q256)
 - the RAM chips, which give the RAM size
 - any small chip near the fans (fan controller or MCU)

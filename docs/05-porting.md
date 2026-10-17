@@ -73,9 +73,9 @@ it:
 | 20, 24, 25, 26 | 0 | 0, 1, 2, 3 | RTL8264B quad |
 | 27 | - | - | SFP+ (no PHY) |
 
-Which **front** port each MAC port is still needs the link test in
-[Read the port wiring](02-serial-console.md#read-the-port-wiring), step 4.
-The `lanN` labels follow the MAC port order until then.
+Confirmed in a RAM boot: front ports 1-7 are `lan1`-`lan7`, in this MAC
+port order. So front ports 1-3 are the RTL8261BEs and front ports 4-7 the
+RTL8264B.
 
 Signs that a PHY address or bus is wrong: `mokerlink-probe` shows no
 driver for a port, the port is missing entirely, or `dmesg` shows PHY
@@ -99,7 +99,8 @@ The vendor U-Boot programs the correct values, so the
 [U-Boot wiring read](02-serial-console.md#read-the-port-wiring) gives them
 directly. On this board the RTL8261BE links are normal, and each RTL8264B
 link is inverted on the PHY in one direction and on the SerDes in the
-other; the device tree carries these values. To confirm them, or find them when U-Boot did not set them, run
+other; the device tree carries these values, and with them every copper
+port passed traffic in the RAM boot. To check another unit, or find the values when U-Boot did not set them, run
 the scan from a RAM-booted OpenWrt with a host at `192.168.2.254` on the
 port under test:
 
@@ -198,93 +199,56 @@ instead of `SWITCH_PORT_SDS`. A wrong LED set only lights the wrong LEDs.
 
 ## PoE
 
-The board has two Realtek **RTL8239-VB** PSE chips. They are not driven by
-the SoC directly but by a small microcontroller (the "PSE MCU") running
-Realtek's PoE firmware. OpenWrt supports it with the `realtek-pse-mcu`
-driver (headed for Linux 7.3), which handles the RTL8239 with the "gen2"
-protocol over I²C or UART.
+**Not supported yet.** The board has two Realtek **RTL8239-VB** PSE chips,
+and no PSE microcontroller in front of them. The stock firmware talks to the
+chips themselves over `uart1`:
 
-The stock firmware's driver registers a UART and no I²C device, which
-matches the Zyxel XMG1915-10EP: an RTL930x switch with its RTL8239 MCU on
-`uart1` at 115200 baud. The device tree therefore declares the MCU there
-(`kmod-pse-realtek-mcu-uart`). After a RAM boot, check:
+- its boot log prints `find RTL8239-VB` once per chip
+- its PoE driver (`ski.ko`) has functions like `rtl8239_init_chip_reset`,
+  `rtl8239_transmit_image_packages_boardcast` and
+  `rtl8239_check_image_upgrade_pass`
+- it carries RTL8239 firmware images, such as
+  `pse_image_RTL8239_Bt_Dumb_mode_V0_B_bin`, and sends them to the chips at
+  boot
+- `show poe` in the stock CLI reads voltage, current and temperature per
+  port straight from the chips
 
-```sh
-dmesg | grep -i -e pse -e rtl8239
-ethtool --show-pse lan1
-```
+OpenWrt's `realtek-pse-mcu` driver is for boards where an MCU running
+Realtek's PoE firmware sits in front of the PSE chips (Zyxel XMG1915-10EP,
+the Ubiquiti PoE switches and others). Declared on this board's `uart1`, it
+timed out (`failed to read MCU info`) because nothing here speaks that
+protocol. The device tree therefore declares no PSE. It keeps `uart1`
+enabled, muxed as the stock firmware uses it, so `/dev/ttyS1` is there for
+the work below.
 
-- **The driver found the MCU:** it reports the RTL8239 chips, enables the
-  PSE system and creates a PSE port per front port. Plug one PoE device
-  into port 1 and check that `ethtool --show-pse lan1` shows it delivering
-  power. If another port reports it, the PI order in the device tree
-  (`pses = <&pse_piN>`) needs reordering. Ports can be switched with
-  `ethtool --set-pse lanN c33-pse-admin-control disable` (or `enable`).
-- **No answer from the MCU:** the driver logs an error and does nothing
-  else. Try `current-speed = <19200>` (the driver's default), then I²C:
-  on all supported I²C-attached RTL8239 boards the MCU is at `0x20`:
+### Does PoE work without any driver?
 
-| Board | Bus | Address | Compatible |
-|---|---|---|---|
-| Zyxel XMG1915-10EP | `uart1`, 115200 baud | - | `realtek,pse-mcu-gen2` |
-| Ubiquiti USW Pro XG 8 PoE | `i2c_mst2` channel 6 | `0x20` | `realtek,pse-mcu-gen2-smbus` |
-| Ubiquiti USW Pro Max 24 PoE | `i2c_mst2` channel 0 | `0x20` | `realtek,pse-mcu-gen2-smbus` |
-| Zyxel XS1930-12HP | `i2c_mst1` channel 3 | `0x20` | `realtek,pse-mcu-gen2-smbus` |
-| Linksys LGS328MPC v2 | bit-banged I²C, SDA GPIO 9, SCL GPIO 17 | `0x2a` | `realtek,pse-mcu-gen2-i2c` |
+Unknown, and it is the next thing to test. The names "Dumb mode" and
+"image upgrade" suggest the RTL8239s may keep their firmware in their own
+memory and power devices on their own, without any management. Test it
+while running OpenWrt, from RAM or from flash, after a cold boot:
 
-To find an I²C channel, if it comes to that:
+1. Plug a PoE device (camera, access point, phone) into one front port.
+2. Note whether it powers up, and after how long.
 
-1. **Photos:** identify the MCU next to the RTL8239s and look up its pinout.
-   Its I²C (or UART) pins lead towards the SoC.
-2. **Stock boot log:** look for lines mentioning PoE, PSE, I2C or the MCU.
-3. **Trial in a RAM boot**, once the photos rule out a conflict with other
-   pins: declare the MCU on a candidate channel. The driver reports the
-   MCU and its RTL8239 chips in `dmesg` if the guess is right, and fails
-   harmlessly if not. Don't scan with `i2cdetect` first: a scan toggles
-   every address on the bus.
+- **It powers up:** PoE works without management. The chips decide power
+  per port by themselves (classification, budget). There is no per-port
+  control or readout in OpenWrt.
+- **It stays dark:** the chips wait for the firmware that the stock firmware
+  sends at every boot. PoE then needs a loader for OpenWrt that does what the
+  stock driver does over `/dev/ttyS1`: reset the chips, send the firmware
+  image and start it.
 
-An I²C variant, with `i2c_mst2` channel 6 as an example (remove the `&uart1` node first):
+### A loader (if needed)
 
-```dts
-&i2c_mst2 {
-	status = "okay";
-
-	i2c_poe: i2c@6 {
-		reg = <6>;
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		pse: ethernet-pse@20 {
-			compatible = "mokerlink,poe-10g07110gsm-pse", "realtek,pse-mcu-gen2-smbus";
-			reg = <0x20>;
-
-			pse-pis {
-				#address-cells = <1>;
-				#size-cells = <0>;
-
-				PSE_PI(0)
-				PSE_PI(1)
-				PSE_PI(2)
-				PSE_PI(3)
-				PSE_PI(4)
-				PSE_PI(5)
-				PSE_PI(6)
-			};
-		};
-	};
-};
-
-&phy0 { pses = <&pse_pi0>; };
-&phy8 { pses = <&pse_pi1>; };
-&phy16 { pses = <&pse_pi2>; };
-&phy20 { pses = <&pse_pi3>; };
-&phy24 { pses = <&pse_pi4>; };
-&phy25 { pses = <&pse_pi5>; };
-&phy26 { pses = <&pse_pi6>; };
-```
-
-Then replace `kmod-pse-realtek-mcu-uart` with `kmod-pse-realtek-mcu-i2c` in
-`DEVICE_PACKAGES` in the patch.
+The firmware images belong to Realtek and can't be shipped in this
+repository. A loader would take the image from the stock firmware you
+already have (the `...en.bin` uImage from MokerLink, or the RUNTIME part of
+`full-flash.bin`) at install time and keep it in the OpenWrt overlay. The
+UART protocol (framing, chip addressing, the download and start sequence)
+has to be worked out from the stock `ski.ko` and then checked on the switch
+with a PoE device connected. That is a project of its own. Until it is
+done, use the stock firmware if you need PoE.
 
 ## Fans and temperature
 
@@ -295,11 +259,12 @@ PHY temperatures (RTL826x sensors) and the SoC temperature.
 
 ## A factory image for the stock web UI
 
-Later, once the stock firmware's upgrade file format is known (from a
-MokerLink firmware file; support@mokerlink.com sends them on request), a
-`factory` image can be added so that new users can install from the stock
-web interface without a serial console. The MokerLink 2G080GM in OpenWrt
-does this with a plain uImage named `.bix`.
+The format is known now: the stock web upgrade accepts any uImage with
+magic `0x83800000` and valid CRCs, with no signature, so the
+`*-initramfs-kernel.bin` image installs from the stock web interface as it
+is ([03-install.md](03-install.md#flashing-from-the-stock-web-ui)). A
+separate `factory` image would only rename it; the MokerLink 2G080GM in
+OpenWrt ships the same kind of plain uImage as `.bix`.
 
 ## Upstreaming
 

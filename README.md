@@ -8,14 +8,15 @@ It is [OpenWrt](https://openwrt.org) plus board support for this switch,
 pinned to an exact source revision, with defaults for a plain layer-2
 switch and tools to bring up the hardware safely.
 
-> **Status: stage 1. Not yet run on real hardware.**
-> Confirmed from the board and the stock boot log: RTL9303 SoC, 128 MiB RAM,
-> 16 MiB flash with the expected layout, one RTL8264B plus three RTL8261BE
-> 10G PHYs, two RTL8239 PoE chips. Still to confirm on your unit before
-> anything is written to flash: front port order, SFP+ lane and the PoE MCU
-> link. The PHY map and lane polarity come straight from the vendor U-Boot
-> (`scripts/uboot-wiring.py`). Every test runs from RAM,
-> and the stock firmware stays untouched until the very end.
+> **Status: stage 1, RAM-tested on real hardware. No PoE yet.**
+> Booted from RAM on a real unit: all seven 10G PHYs come up, front ports
+> 1-7 are `lan1`-`lan7`, and every copper port forwards traffic (tested at
+> 1 Gbit/s). The PHY map and lane polarity come straight from the vendor
+> U-Boot (`scripts/uboot-wiring.py`). Not yet supported: **PoE**. The stock
+> firmware drives the two RTL8239 PoE chips directly and loads their
+> firmware itself, and OpenWrt has no driver for that
+> ([docs/05-porting.md](docs/05-porting.md#poe)). Still untested: SFP+, and
+> copper at 2.5/5/10 Gbit/s.
 
 ## Why OpenWrt and not firmware from scratch
 
@@ -40,13 +41,9 @@ reviewable board description on top of it is the most reliable option.
 - Hardware watchdog: a hung system reboots itself
 - Bring-up tools on the switch: `mokerlink-probe`, `mokerlink-backup`,
   `mokerlink-polarity-scan`, `mokerlink-gpio-watch`
-- PoE through OpenWrt's `realtek-pse-mcu` driver, assuming the PoE MCU is
-  on `uart1` as the stock firmware suggests
-  ([docs/05-porting.md](docs/05-porting.md#poe))
-
-Not yet supported in stage 1: SFP+ module EEPROM/DOM readout and 1G SFP
+Not yet supported in stage 1: PoE, SFP+ module EEPROM/DOM readout and 1G SFP
 modules, the reset button, the system LED, and anything behind the RTL8231
-GPIO expander.
+GPIO expander. If you need PoE today, stay on the stock firmware.
 
 ## How to install, in short
 

@@ -18,7 +18,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y device-tree-compiler shellcheck
 
       - name: Shellcheck
-        run: shellcheck -x scripts/*.sh files/usr/sbin/mokerlink-* files/etc/init.d/mokerlink files/etc/uci-defaults/*
+        run: shellcheck -x scripts/*.sh files/usr/sbin/mokerlink-* files/etc/init.d/mokerlink files/etc/uci-defaults/* files/lib/functions/mokerlink.sh
 
       - name: U-Boot wiring decoder test
         run: python3 tests/test_uboot_wiring.py

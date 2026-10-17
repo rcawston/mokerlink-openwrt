@@ -10,6 +10,9 @@
 
 OUT=${1:-/tmp/mokerlink-probe-$(date +%Y%m%d-%H%M%S).txt}
 
+# shellcheck source=../../lib/functions/mokerlink.sh
+. /lib/functions/mokerlink.sh
+
 GPIO_DIR_REG=0x18003308   # RTL930x GPIO direction register (1 = output)
 GPIO_DATA_REG=0x1800330c  # RTL930x GPIO data register, bit n = GPIO n
 
@@ -21,23 +24,11 @@ mtd_dev() { # partition label -> mtdN
 	grep "\"$1\"" /proc/mtd | cut -d: -f1
 }
 
-# PHY behind a switch port: sets PHY_BUS, PHY_ADDR (decimal), PHY_DRIVER
-phy_of_port() {
-	local link name drv
-	PHY_BUS="" PHY_ADDR="" PHY_DRIVER=""
-	link=$(readlink "/sys/class/net/$1/phydev" 2>/dev/null) || return 1
-	name=${link##*/}                    # e.g. realtek-mdio-3:10
-	PHY_BUS=${name%:*}
-	PHY_ADDR=$((0x${name##*:}))
-	drv=$(readlink "/sys/class/net/$1/phydev/driver" 2>/dev/null)
-	PHY_DRIVER=${drv##*/}
-}
-
 # RTL826x host-side SerDes polarity: VEND1 (MMD 30) register 0xc1,
 # bit 6 = HSI_INV (rx-polarity), bit 7 = HSO_INV (tx-polarity)
 polarity_of_port() {
 	local val
-	phy_of_port "$1" || { echo "-"; return; }
+	mokerlink_phy_of_port "$1" || { echo "-"; return; }
 	case "$PHY_DRIVER" in
 	RTL82[56]*) ;;
 	*) echo "n/a"; return ;;
@@ -61,7 +52,7 @@ summary() {
 	printf '%-5s %-5s %-20s %-30s %-8s %-9s %s\n' \
 		PORT MAC PHY DRIVER LINK SPEED "SERDES POLARITY"
 	for p in $(ports); do
-		phy_of_port "$p"
+		mokerlink_phy_of_port "$p"
 		carrier=$(cat "/sys/class/net/$p/carrier" 2>/dev/null)
 		speed=$(cat "/sys/class/net/$p/speed" 2>/dev/null)
 		[ "$carrier" = 1 ] && carrier=up || carrier=down
@@ -78,8 +69,7 @@ dump_env() { # partition label
 	mtd=$(mtd_dev "$1")
 	[ -n "$mtd" ] || { echo "(no $1 partition)"; return; }
 	echo "--- $1 ($mtd), printable key=value strings:"
-	dd if="/dev/$mtd" bs=64k count=1 2>/dev/null | tr '\000' '\n' |
-		tr -cd '[:print:]\n' | grep '=' | head -n 200
+	strings "/dev/$mtd" | grep '=' | head -n 200
 }
 
 gpio_bits() { # value -> list of set bit numbers
@@ -120,8 +110,8 @@ gpio_bits() { # value -> list of set bit numbers
 
 	section "PHYs"
 	for p in $(ports); do
-		phy_of_port "$p" || { echo "$p: no PHY (SerDes port)"; continue; }
-		d=/sys/class/net/$p/phydev
+		mokerlink_phy_of_port "$p" || { echo "$p: no PHY (SerDes port)"; continue; }
+		d=$PHY_DEV
 		echo "$p: bus=$PHY_BUS addr=$PHY_ADDR driver=$PHY_DRIVER phy_id=$(cat "$d/phy_id" 2>/dev/null)" \
 			"mmd1_id=$(cat "$d/c45_phy_ids/mmd1_device_id" 2>/dev/null || echo ?)" \
 			"interface=$(cat "$d/phy_interface" 2>/dev/null || echo ?)"
@@ -138,7 +128,9 @@ gpio_bits() { # value -> list of set bit numbers
 	have ethtool && run ethtool --show-module lan8
 
 	section "bridge"
-	run ip -d link show
+	# BusyBox ip: no -d or -br
+	run ip link show
+	run ip addr show
 	have bridge && run bridge link show
 	have bridge && run bridge vlan show
 	have bridge && run bridge fdb show

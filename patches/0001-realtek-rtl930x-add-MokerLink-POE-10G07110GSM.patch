@@ -25,7 +25,7 @@ index dd86aded8..0bb41afc0 100644
 +  UIMAGE_MAGIC := 0x83800000
 +  DEVICE_VENDOR := MokerLink
 +  DEVICE_MODEL := POE-10G07110GSM
-+  DEVICE_PACKAGES := rtl826x-firmware kmod-pse-realtek-mcu-uart
++  DEVICE_PACKAGES := rtl826x-firmware
 +  IMAGE_SIZE := 12288k
 +  $(Device/kernel-lzma)
 +endef

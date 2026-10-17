@@ -3,7 +3,8 @@
  * MokerLink POE-10G07110GSM
  * 7x 10GBASE-T (PoE++) + 1x 10G SFP+, Realtek RTL9303
  *
- * STAGE 1 DEVICE TREE: a conservative starting point, not a verified port.
+ * STAGE 1 DEVICE TREE: the copper ports are verified, PoE is not supported
+ * yet.
  *
  * Confirmed from the board and the stock boot log:
  *   - SoC RTL9303, 128 MiB RAM, 16 MiB Winbond W25Q128 SPI NOR
@@ -13,13 +14,15 @@
  *   - PHY bus/address map and lane polarity, read from the vendor U-Boot
  *   - vendor hardware profile RTL9303_8264B_3X8261BE_XGE_POE: one RTL8264B
  *     quad PHY plus three discrete RTL8261BE PHYs
- *   - PoE: two RTL8239-VB behind a PSE MCU; the stock SDK registers a UART
- *     and no I2C device, as on the Zyxel XMG1915-10EP (RTL8239 MCU on uart1)
+ *   - PoE: two RTL8239-VB, driven directly by the stock firmware over uart1
+ *     (no PSE MCU in between, see the end of this file)
  *   - an RTL8231 GPIO/LED expander (not used here yet)
  *   - stock U-Boot 2011.12 (1.0.0.2), firmware "KT-NOS" 1.1.1.34
  *
- * Everything marked UNVERIFIED still needs confirming on hardware before the
- * image is written to flash.
+ * Confirmed by booting this device tree from RAM: all seven PHYs probe,
+ * front ports 1-7 are lan1-lan7 and every copper port passes traffic.
+ *
+ * Everything marked UNVERIFIED still needs confirming on hardware.
  *
  * Deliberately left out until confirmed, because a wrong guess there can
  * hurt stability rather than just disable a feature:
@@ -185,9 +188,9 @@
 		#size-cells = <0>;
 
 		/*
-		 * RJ45 10GBASE-T ports, lan1-7. UNVERIFIED: labels follow the MAC
-		 * port order; which front port each MAC port is still needs the
-		 * link test (docs/02-serial-console.md#read-the-port-wiring).
+		 * RJ45 10GBASE-T ports: front ports 1-7 are MAC ports 0, 8, 16,
+		 * 20, 24, 25, 26 (port test in the RAM-booted image), so front
+		 * ports 1-3 are the RTL8261BEs and 4-7 the RTL8264B.
 		 */
 		SWITCH_PORT_SDS(0, 1, 2, 0, usxgmii)
 		SWITCH_PORT_SDS(8, 2, 3, 0, usxgmii)
@@ -229,40 +232,16 @@
 };
 
 /*
- * PoE: the PSE MCU in front of the two RTL8239-VB.
+ * PoE: two RTL8239-VB on uart1, with no PSE MCU in front of them. The stock
+ * firmware talks to the chips themselves ("find RTL8239-VB" once per chip at
+ * boot) and carries RTL8239 firmware images that it sends to them over this
+ * UART. OpenWrt's realtek-pse-mcu driver expects an MCU and times out here
+ * ("failed to read MCU info"), so no PSE node is declared.
  *
- * UNVERIFIED: uart1 at 115200 baud, as on the Zyxel XMG1915-10EP. If the
- * MCU does not answer, the driver logs an error and does nothing else;
- * check with: dmesg | grep -i pse. The PI order (which MCU port powers
- * which front port) is also UNVERIFIED: plug a PoE device into port 1 and
- * check that `ethtool --show-pse lan1` reports it.
+ * uart1 stays enabled, muxed as the stock firmware uses it, so that
+ * /dev/ttyS1 is there for a future loader. Whether the RTL8239s power
+ * devices on their own without the stock firmware is UNVERIFIED.
  */
 &uart1 {
 	status = "okay";
-
-	pse: ethernet-pse {
-		compatible = "mokerlink,poe-10g07110gsm-pse", "realtek,pse-mcu-gen2";
-		current-speed = <115200>;
-
-		pse-pis {
-			#address-cells = <1>;
-			#size-cells = <0>;
-
-			PSE_PI(0)
-			PSE_PI(1)
-			PSE_PI(2)
-			PSE_PI(3)
-			PSE_PI(4)
-			PSE_PI(5)
-			PSE_PI(6)
-		};
-	};
 };
-
-&phy0 { pses = <&pse_pi0>; };
-&phy8 { pses = <&pse_pi1>; };
-&phy16 { pses = <&pse_pi2>; };
-&phy20 { pses = <&pse_pi3>; };
-&phy24 { pses = <&pse_pi4>; };
-&phy25 { pses = <&pse_pi5>; };
-&phy26 { pses = <&pse_pi6>; };
