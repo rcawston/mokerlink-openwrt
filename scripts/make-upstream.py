@@ -41,6 +41,7 @@ ones this repository builds. Standard library only.
 """
 
 import argparse
+import email.utils
 import os
 import re
 import subprocess
@@ -219,7 +220,16 @@ def openwrt_patch_text(args, series, i, n):
     if hookpatch:
         diff += openwrt_hunks(hookpatch)
     number = f' {i + 1}/{n}' if n > 1 else ''
-    return subject, (f'From: {args.author}\nSubject: [PATCH{number}] {subject}\n\n'
+    # The header of git format-patch, which OpenWrt's checks ask of pending
+    # patches; dated by the last change to the commit message, so that the
+    # patch only changes when it does
+    msgpath = os.path.join(UPSTREAM, 'linux', series, msgfile)
+    r = subprocess.run(['git', '-C', REPO, 'log', '-1', '--format=%aD', '--', msgpath],
+                       capture_output=True, text=True)
+    date = r.stdout.strip() or email.utils.formatdate(localtime=True)
+    return subject, (f'From {"0" * 40} Mon Sep 17 00:00:00 2001\n'
+                     f'From: {args.author}\nDate: {date}\n'
+                     f'Subject: [PATCH{number}] {subject}\n\n'
                      f'{with_trailers(body, args)}\n---\n{diff}')
 
 
