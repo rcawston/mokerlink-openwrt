@@ -1,27 +1,33 @@
 #!/bin/sh
 # mokerlink-hw-test [OUTPUT_FILE]
 #
-# Guided test of the fan control, the link change reporting and the PoE
-# power budget. Records everything in one report:
+# Guided test of the PoE firmware, the port LEDs, the PoE power budget,
+# the fan control and the link change reporting. Records everything in one
+# report:
 #
-#   0. the fans in the ADT7476's automatic mode: 50 % now, and full speed
-#      while the start temperature is lowered below the current one for a
-#      moment
-#   1. link changes on port 2 with a device that is already up: one "Link
-#      is Up" when plugged in and one "Link is Down" when unplugged
-#   2. PoE with the budget: a PD on port 1 gets power once its class fits,
-#      the budget follows it through switching the port off and on and
-#      unplugging it, and port priorities can be set
-#   3. optionally, an 802.3bt PD (class 5-8) on port 5: the class the chip
+#   1. the PoE firmware: installed, kept by sysupgrade, loaded by the driver
+#   2. the port LEDs: the LED controller registers, the link LED of the PC's
+#      port, and all PoE LEDs switched on and off by hand
+#   3. PoE with the budget: a PD on port 1 gets power once its class fits
+#      and its PoE LED lights, the budget follows it through switching the
+#      port off and on and unplugging it, and port priorities can be set
+#   4. optionally, an 802.3bt PD (class 5-8) on port 5: the class the chip
 #      reports before and after powering it
+#   5. optionally, the fans in the ADT7476's automatic mode: 50 % now, and
+#      full speed while the start temperature is lowered for a moment
+#   6. optionally, link changes on port 2 with a device that is already up:
+#      one "Link is Up" when plugged in and one "Link is Down" when unplugged
 #
-# Prepare: boot the image from RAM, copy the PoE firmware
-# (scp -O rtl8239-bt.bin root@<switch>:/tmp/), have a PoE device and a cable
-# from another switch or router. Power-cycle the switch when it is done.
+# Prepare: boot the image, from flash or RAM. If the PoE firmware is not
+# installed yet, copy it to /tmp (scp -O rtl8239-bt.bin root@<switch>:/tmp/)
+# and this installs it. Have a PoE device, and connect the PC to a port other
+# than 1, 2 and 5.
 
 OUT=${1:-/tmp/mokerlink-hw-test-$(date +%Y%m%d-%H%M%S).txt}
 FW_SRC=/tmp/rtl8239-bt.bin
 FW_DST=/lib/firmware/realtek/rtl8239-bt.bin
+LED_REG=0x1b00cc00        # RTL930x port LED controller: LED_GLB_CTRL ...
+LED_REG_END=0x1b00cccc    # ... to the software LED control of port 27
 
 say() { echo "$*" | tee -a "$OUT"; }
 section() { printf '\n========== %s ==========\n' "$*" | tee -a "$OUT"; }
@@ -127,63 +133,90 @@ fan_state() {
 	say "  pwm $(cat "$FAN"/pwm[123] | tr '\n' ' ')/ fans $(cat "$FAN"/fan[12]_input | tr '\n' ' ')rpm / temps $(cat "$FAN"/temp[123]_input | tr '\n' ' ')"
 }
 
+led_regs() { # the port LED controller's registers
+	local a=$((LED_REG))
+	if ! command -v devmem >/dev/null || [ ! -e /dev/mem ]; then
+		say "  devmem not available"
+		return
+	fi
+	while [ "$a" -le $((LED_REG_END)) ]; do
+		printf '  %08x: %s\n' "$a" "$(devmem "$a" 32)" >>"$OUT"
+		a=$((a + 4))
+	done
+}
+
+trigger_of() { sed -n 's/.*\[\([^]]*\)\].*/\1/p' "$1/trigger"; }
+
+led_state() { # [LED...]: brightness and trigger of the PoE LEDs, all by default
+	local l
+	# shellcheck disable=SC2086  # a list of sysfs paths
+	[ $# -gt 0 ] || set -- $PSE_LEDS
+	for l in "$@"; do
+		[ -d "$l" ] || continue
+		say "  ${l##*/}: brightness $(cat "$l/brightness"), trigger $(trigger_of "$l")"
+	done
+}
+
+leds_restore() { # give the PoE LEDs their triggers back
+	local e
+	for e in $LED_TRIGGERS; do
+		echo "${e#*=}" >"${e%%=*}/trigger"
+	done
+}
+
 : >"$OUT"
 section "system"
 run cat /etc/openwrt_release
 run uname -a
 run sh -c "uci show network | grep -E 'pse|name='"
 BUS=$(poe_bus) || say "PoE I2C bus not found"
+PSE_LEDS=$(ls -d /sys/class/leds/*:poe-* 2>/dev/null)
+LED_TRIGGERS=""
+for l in $PSE_LEDS; do
+	LED_TRIGGERS="$LED_TRIGGERS $l=$(trigger_of "$l")"
+done
 
-section "0: fans"
-run mokerlink-fan
-run sh -c "logread | grep -i hwmon_fancontrol"
-if FAN=$(adt7476); then
-	say "pwm1-3 mode $(cat "$FAN"/pwm[123]_enable | tr '\n' ' ')(2 2 2 expected, automatic)"
-	fan_state
-	hot=$(cat "$FAN"/temp[123]_input | sort -n | tail -n 1)
-	start=$(((hot / 1000 - 10) * 1000))
-	[ "$start" -lt 0 ] && start=0
-	trap 'fan_points 64000' EXIT INT TERM
-	say "start temperature $((start / 1000)) C for 15 s (hottest sensor $((hot / 1000)) C)"
-	fan_points "$start"
-	sleep 15
-	fan_state
-	note "Did the fans speed up to full speed? (y/n)"
-	fan_points 64000
-	trap - EXIT INT TERM
-	say "start temperature back to 64 C"
-	sleep 20
-	fan_state
-	note "Are the fans back to the normal speed? (y/n)"
-	run sh -c "grep . $FAN/temp[123]_auto_point[12]_temp"
-else
-	say "no ADT7476 found"
-fi
-
-section "1: link changes on port 2"
-if ask "Have a cable from another switch or router (already running) ready; press Enter, then plug it into port 2"; then
-	since=$(uptime_s)
-	sleep 15
-	run sh -c "cat /sys/class/net/lan2/carrier /sys/class/net/lan2/speed"
-	if ask "Unplug it from port 2, wait 5 s"; then
-		sleep 2
-		link_msgs lan2 "$since" | tee -a "$OUT"
-		say "lan2: $(link_msgs lan2 "$since" | grep -c 'Link is Up') up, $(link_msgs lan2 "$since" | grep -c 'Link is Down') down (1 and 1 expected)"
-	fi
-fi
-
-section "2: PoE with the budget, port 1"
+section "1: PoE firmware"
 if [ ! -f "$FW_DST" ] && [ -f "$FW_SRC" ]; then
 	mkdir -p "${FW_DST%/*}"
 	cp "$FW_SRC" "$FW_DST"
-	say "waiting up to 90 s for the driver to load the firmware"
+	say "installed $FW_DST, waiting up to 90 s for the driver to load it"
 	t=0
 	while [ "$(dmesg | grep -c 'rtl8239.*firmware running')" -lt 2 ] && [ $t -lt 90 ]; do
 		sleep 5
 		t=$((t + 5))
 	done
 fi
+if [ -f "$FW_DST" ]; then
+	say "installed: $(ls -l "$FW_DST")"
+else
+	say "NOT installed: copy rtl8239-bt.bin to /tmp on the switch and run this again"
+fi
+say "kept by sysupgrade: $(sysupgrade -l 2>/dev/null | grep -c rtl8239) (1 expected)"
 run sh -c "dmesg | grep -iE 'rtl8239|pse|poe'"
+
+section "2: port LEDs"
+run sh -c "dmesg | grep -iE 'led_set|leds|rtl9300-port'"
+led_regs
+led_state
+note "The port your PC is plugged into: is its link LED lit, and in which colour? (orange below 10 Gbit/s, green at 10 Gbit/s; also say if any other LED is lit)"
+if [ -n "$PSE_LEDS" ]; then
+	trap 'leds_restore' EXIT INT TERM
+	for l in $PSE_LEDS; do
+		echo none >"$l/trigger"
+		echo 1 >"$l/brightness"
+	done
+	note "All seven green PoE LEDs (one per RJ45 port) are switched on now. Are they lit? (y / n / which ones)"
+	for l in $PSE_LEDS; do
+		echo 0 >"$l/brightness"
+	done
+	note "And now switched off. Are they all dark? (y / n / which ones are lit)"
+	leds_restore
+	trap - EXIT INT TERM
+	led_state
+fi
+
+section "3: PoE with the budget, port 1"
 for p in lan1 lan2 lan3 lan4 lan5 lan6 lan7; do
 	say "$p: $(pse $p)"
 done
@@ -195,7 +228,9 @@ if ask "Plug the PoE device into port 1"; then
 	run ethtool --show-pse lan1
 	budget "class 1: 4000, 2: 7000, 3: 15400, 4: 30000 mW"
 	regs 0x22
-	note "Did the PoE device power up, and does its green PoE LED light? (y/n)"
+	led_state "$(ls -d /sys/class/leds/*:poe-1 2>/dev/null)"
+	note "Did the PoE device power up? (y/n)"
+	note "Is port 1's green PoE LED lit? (y/n)"
 
 	say "switching port 1 off"
 	run ethtool --set-pse lan1 c33-pse-admin-control disable
@@ -205,6 +240,8 @@ if ask "Plug the PoE device into port 1"; then
 	sleep 5
 	run ethtool --show-pse lan1
 	say "  (still disabled expected)"
+	led_state "$(ls -d /sys/class/leds/*:poe-1 2>/dev/null)"
+	note "Is port 1's PoE LED dark now? (y/n)"
 	say "switching port 1 on"
 	run ethtool --set-pse lan1 c33-pse-admin-control enable
 	wait_status lan1 delivering 30
@@ -226,14 +263,14 @@ if ask "Plug the PoE device into port 1"; then
 		if ask "Plug it back into port 1"; then
 			wait_status lan1 delivering 30
 			budget "the same as before"
-			note "Did it power up again? (y/n)"
+			note "Did it power up again, with the PoE LED? (y/n)"
 		fi
 		ask "Unplug it from port 1" || true
 		budget "0 mW"
 	fi
 fi
 
-section "3: 802.3bt PD on port 5 (optional)"
+section "4: 802.3bt PD on port 5 (optional)"
 if ask "If you have an 802.3bt PD (class 5-8, for example the T750SE): plug it into port 5 (s to skip)"; then
 	t=0
 	while [ $t -lt 30 ]; do
@@ -245,11 +282,48 @@ if ask "If you have an 802.3bt PD (class 5-8, for example the T750SE): plug it i
 	done
 	sleep 10
 	run ethtool --show-pse lan5
-	budget
+	budget "class 5: 45000, 6: 60000, 7: 75000, 8: 90000 mW"
 	regs 0x20
 	run sh -c "dmesg | grep -i rtl8239 | tail -5"
-	note "Did it power up and start? (y/n)"
+	note "Did it power up and start, with port 5's PoE LED lit? (y/n)"
 	ask "Unplug it from port 5" || true
+	budget "0 mW"
+fi
+
+section "5: fans (optional)"
+run mokerlink-fan
+if FAN=$(adt7476) && ask "Test the fans (s to skip)"; then
+	run sh -c "logread | grep -i hwmon_fancontrol"
+	say "pwm1-3 mode $(cat "$FAN"/pwm[123]_enable | tr '\n' ' ')(2 2 2 expected, automatic)"
+	fan_state
+	hot=$(cat "$FAN"/temp[123]_input | sort -n | tail -n 1)
+	start=$(((hot / 1000 - 10) * 1000))
+	[ "$start" -lt 0 ] && start=0
+	trap 'fan_points 64000' EXIT INT TERM
+	say "start temperature $((start / 1000)) C for 15 s (hottest sensor $((hot / 1000)) C)"
+	fan_points "$start"
+	sleep 15
+	fan_state
+	note "Did the fans speed up to full speed? (y/n)"
+	fan_points 64000
+	trap - EXIT INT TERM
+	say "start temperature back to 64 C"
+	sleep 20
+	fan_state
+	note "Are the fans back to the normal speed? (y/n)"
+fi
+
+section "6: link changes on port 2 (optional)"
+if ask "Have a cable from another switch or router (already running) ready; press Enter, then plug it into port 2 (s to skip)"; then
+	since=$(uptime_s)
+	sleep 15
+	run sh -c "cat /sys/class/net/lan2/carrier /sys/class/net/lan2/speed"
+	note "Is port 2's link LED lit, and in which colour? (orange below 10 Gbit/s, green at 10 Gbit/s)"
+	if ask "Unplug it from port 2, wait 5 s"; then
+		sleep 2
+		link_msgs lan2 "$since" | tee -a "$OUT"
+		say "lan2: $(link_msgs lan2 "$since" | grep -c 'Link is Up') up, $(link_msgs lan2 "$since" | grep -c 'Link is Down') down (1 and 1 expected)"
+	fi
 fi
 
 section "kernel log"
@@ -258,4 +332,3 @@ run dmesg
 echo
 echo "Report: $OUT"
 echo "Copy it off the switch with: scp -O root@<switch-ip>:$OUT ."
-echo "Then power-cycle the switch."

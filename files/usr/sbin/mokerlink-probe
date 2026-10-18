@@ -16,6 +16,8 @@ OUT=${1:-/tmp/mokerlink-probe-$(date +%Y%m%d-%H%M%S).txt}
 
 GPIO_DIR_REG=0x18003308   # RTL930x GPIO direction register (1 = output)
 GPIO_DATA_REG=0x1800330c  # RTL930x GPIO data register, bit n = GPIO n
+LED_REG_FIRST=0x1b00cc00  # RTL930x port LED controller: LED_GLB_CTRL ...
+LED_REG_LAST=0x1b00cccc   # ... to the last port's software LED control
 
 section() { printf '\n========== %s ==========\n' "$*"; }
 run() { printf '\n$ %s\n' "$*"; "$@" 2>&1; }
@@ -162,7 +164,19 @@ gpio_bits() { # value -> list of set bit numbers
 	done
 	run sh -c "dmesg | grep -iE 'rtl8239|pse|rtl9300-port'"
 	run ls -l /lib/firmware/realtek/
+	run sh -c "sysupgrade -l | grep -i rtl8239 || echo 'not kept by sysupgrade'"
 	run sh -c "grep -H . /sys/class/leds/*:poe-*/brightness"
+
+	section "port LED controller"
+	if have devmem && [ -e /dev/mem ]; then
+		a=0
+		while [ $a -le $((LED_REG_LAST - LED_REG_FIRST)) ]; do
+			printf '%08x: %s\n' $((LED_REG_FIRST + a)) "$(devmem $((LED_REG_FIRST + a)) 32)"
+			a=$((a + 4))
+		done
+	else
+		echo "devmem or /dev/mem not available"
+	fi
 
 	section "GPIO"
 	if have devmem && [ -e /dev/mem ]; then
