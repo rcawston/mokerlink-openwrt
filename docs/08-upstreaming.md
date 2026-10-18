@@ -14,8 +14,8 @@ this repository; the commit messages are in `upstream/`.
 | RTL9300 port LEDs: binding, switch binding, driver | `realtek: add RTL9300 port LED driver` (`832-*`, `kmod-leds-rtl9300-port`) | `leds` series: leds tree, linux-leds (the switch binding patch also to netdev) |
 | PSE LED trigger names in `leds/common.yaml` | not needed | `pse-led-triggers`: with the PSE LED trigger series |
 | the device | `realtek: rtl930x: add support for MokerLink POE-10G07110GSM` | none |
-| PSE core fix: a PI disabled with software power control is not enabled again by the retry of its power domain | `835-*`; in OpenWrt it belongs in `target/linux/generic/pending-6.18`, as a separate pull request | `pse-fix`: net tree as a fix (`Fixes: ffef61d6d273`), netdev; made against mainline |
-| link change fix in the switch driver | `realtek: dsa: let phylib read the PHY on a port link change` (`patches/0003-*`, a patch to OpenWrt's own driver, ready to send as it is) | none |
+| PSE core fix: a PI disabled with software power control is not enabled again by the retry of its power domain | `generic: pse-pd: don't enable a PI again while disabling it`: this repository's `835-*` as `generic/pending-6.18/898-*`, a separate pull request (`openwrt TREE pse-fix`) | `pse-fix`: net tree as a fix (`Fixes: ffef61d6d273`), netdev; made against mainline |
+| link change fix in the switch driver | `realtek: dsa: let phylib read the PHY on a port link change` (`patches/0003-*`, a patch to OpenWrt's own driver), a separate pull request (`openwrt TREE dsa-fix`) | none |
 
 Not submitted: the `mokerlink-*` tools and the first-boot defaults in
 `files/`.
@@ -56,7 +56,8 @@ OpenWrt.
   the PSE LED triggers. Both come from Carlo Szelinsky's PSE series that
   OpenWrt carries as `target/linux/generic/pending-6.18/897-*`. Upstream,
   the `pse` series has to wait for it or go on top of it. OpenWrt already
-  has it.
+  has it. In October 2026 it was not in net-next: v5 ("net: pse-pd: add
+  poll path and LED trigger support", April 2026) was the last version.
 - The `pse-led-triggers` binding patch belongs with that series' LED
   trigger patches. Expect the device tree maintainers to object to trigger
   names that contain a Linux I²C bus number (`pse-1-0022:...`), and to ask
@@ -66,72 +67,115 @@ OpenWrt.
 
 ## Building the submissions
 
-You review the patches, you sign them off, and you send them: an AI
-assistant must not add a `Signed-off-by`, only you can certify the
-[Developer's Certificate of Origin](https://www.kernel.org/doc/html/latest/process/submitting-patches.html#sign-your-work-the-developer-s-certificate-of-origin).
-The kernel asks for an `Assisted-by: LLM [TOOL1] [TOOL2]` tag on code
-written with an AI assistant, and for the changelog to say so when a tool
-found the problem
-([coding-assistants](https://docs.kernel.org/process/coding-assistants.html),
-[generated-content](https://docs.kernel.org/process/generated-content.html));
-OpenWrt has a proposal to follow the kernel's rules. The script requires
-the tag's value and adds your sign-off only with `--signoff`. Author and
-maintainer default to your `git config` identity.
+You review the patches, you sign them off, and you send them: only you
+can certify the
+[Developer's Certificate of Origin](https://www.kernel.org/doc/html/latest/process/submitting-patches.html#sign-your-work-the-developer-s-certificate-of-origin),
+so the script adds your `Signed-off-by` only with `--signoff`, and
+[coding-assistants](https://docs.kernel.org/process/coding-assistants.html)
+still says that an AI agent must not add one. The kernel dropped its
+`Assisted-by` tag in October 2026 ("docs: remove Assisted-by references",
+applied to docs-next on 14 October), so the script adds none unless you
+pass `--assisted-by`.
+[generated-content](https://docs.kernel.org/process/generated-content.html)
+still asks for the changelog to say when a tool found a problem, as the PSE
+core fix's does.
 
-OpenWrt, on a branch of a clean `openwrt.git` main checkout:
+Author and maintainer default to your `git config` identity. Pass
+`--author "Name <email>"` if that is a GitHub noreply address: the kernel
+needs an address that receives mail, and OpenWrt's formalities check
+rejects noreply addresses.
 
-```sh
-git -C ~/openwrt checkout -b mokerlink-poe-10g07110gsm origin/main
-scripts/make-upstream.py openwrt ~/openwrt --signoff \
-	--assisted-by "<LLM>"
-# four commits on the branch, and the patches in build/upstream/openwrt
-```
+### The trees
 
-Open the pull request on GitHub from that branch, after a test build of
-it. If main moved since the pinned commit, the device commit may need a
-rebase (the image recipe and `02_network` lists change often).
-
-Linux, one series at a time, each on a branch of its subsystem tree:
+An `openwrt.git` checkout, and a Linux checkout with the subsystem trees
+as remotes. The Linux history has to reach back to v6.18 (the Kconfig and
+Makefile hunks merge against it) and to the commit in the fix's `Fixes:`
+tag:
 
 ```sh
-git -C ~/linux checkout -b rtl8239 net-next/main
-scripts/make-upstream.py linux ~/linux pse --signoff \
-	--assisted-by "<LLM>"
-# commits on the branch, the series with a cover letter in build/upstream/linux/pse
-```
-
-The Kconfig and Makefile hunks are made against v6.18 and applied with a
-three-way merge; the MAINTAINERS entry is added in alphabetical order with
-you as maintainer. Then, in the kernel tree:
-
-```sh
-./scripts/checkpatch.pl --strict -g net-next/main..HEAD
-make dt_binding_check DT_SCHEMA_FILES=net/pse-pd/realtek,rtl8239.yaml
-./scripts/get_maintainer.pl build/upstream/linux/pse/*.patch
-git send-email --to=netdev@vger.kernel.org --cc=... build/upstream/linux/pse/*.patch
-```
-
-The script puts the tree in the subject prefix (`[PATCH net-next]` for
-`pse`); send net-next series only while net-next is open. Older checkpatch
-versions don't know `Assisted-by` and report it as a non-standard
-signature.
-
-The PSE core fix goes to the net tree on its own, as `[PATCH net]`. It is
-made against mainline (it touches the same functions as in OpenWrt's
-kernel, without OpenWrt's pending PSE patches around them), was tested on
-the switch in OpenWrt and build-tested on mainline, and is a regular bug
-for the kernel's threat model (it needs an admin action or an unplug), so
-it goes to the list, not to the security team:
-
-```sh
-git -C ~/linux fetch https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net.git main
-git -C ~/linux checkout -b pse-fix FETCH_HEAD
-scripts/make-upstream.py linux ~/linux pse-fix --signoff --assisted-by "<LLM>"
+git clone https://github.com/openwrt/openwrt.git ~/openwrt
+git clone --shallow-since=2025-01-01 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git ~/linux
 cd ~/linux
-./scripts/checkpatch.pl --strict -g HEAD~1..HEAD
-./scripts/get_maintainer.pl ~/mokerlink/build/upstream/linux/pse-fix/*.patch
+K=https://git.kernel.org/pub/scm/linux/kernel/git
+git remote add -t main net $K/netdev/net.git
+git remote add -t main net-next $K/netdev/net-next.git
+git remote add -t for-leds-next leds $K/lee/leds.git
+git fetch --shallow-since=2025-01-01 --multiple net net-next leds
+```
+
+On Windows (Git Bash), clone both with `-c core.autocrlf=false`. Linux has
+file names that differ only in case, so check out only what the series
+need:
+
+```sh
+git -C ~/linux sparse-checkout set --cone Documentation/devicetree/bindings \
+	drivers/i2c drivers/leds drivers/net/pse-pd include/linux include/dt-bindings \
+	scripts LICENSES
+mkdir -p ~/linux/{arch,fs,init,ipc,kernel,lib}   # checkpatch looks for them
+```
+
+checkpatch's license check runs `scripts/spdxcheck.py`, which needs a
+`python3` with `ply` and `GitPython`; `yamllint` and `dt-doc-validate` (from
+`dtschema`) check the bindings' schemas. The full `make dt_binding_check`
+and test builds need Linux, such as WSL2.
+
+### OpenWrt
+
+One pull request per branch, each from main:
+
+```sh
+for pr in dsa-fix pse-fix board; do
+	git -C ~/openwrt checkout -B mokerlink-$pr origin/main
+	scripts/make-upstream.py openwrt ~/openwrt $pr --signoff
+done
+# the commits on the branches, the patches in build/upstream/openwrt/PR
+```
+
+The board and the switch driver fix change OpenWrt's own files. Their
+patches are made against the pinned commit and applied with a three-way
+merge, so they follow main unless someone changed the same lines. The PSE
+core fix becomes `898-*`, after the PSE series it applies on top of; once
+it is on netdev, make its branch again with `--link
+https://lore.kernel.org/...` so that the pending patch links to it. Push
+the branches to your fork of openwrt/openwrt and open the pull requests on
+GitHub. With `build realtek/rtl930x/mokerlink_poe-10g07110gsm` in its
+description, OpenWrt's CI builds the board pull request's images and
+comments with the result. The commit author's address should be one of
+your GitHub account's, which OpenWrt's formalities check warns about
+otherwise.
+
+### Linux
+
+One series at a time, each on its tree:
+
+| Series | Base | Subject prefix |
+|---|---|---|
+| `pse-fix` | `net/main` | `[PATCH net]` |
+| `i2c` | Andi Shyti's `i2c/i2c-host`, or `origin/master` while it is behind mainline (it was in October 2026) | `[PATCH]` |
+| `leds` | `leds/for-leds-next` | `[PATCH]` |
+| `pse` | `net-next/main`, once the PSE series it needs is in it | `[PATCH net-next]` |
+
+```sh
+git -C ~/linux checkout -B mokerlink-pse-fix net/main
+scripts/make-upstream.py linux ~/linux pse-fix --signoff
+cd ~/linux
+./scripts/checkpatch.pl --strict -g net/main..HEAD
+./scripts/get_maintainer.pl ~/mokerlink/build/upstream/linux/pse-fix/0*.patch
 git send-email --to=netdev@vger.kernel.org --cc=... ~/mokerlink/build/upstream/linux/pse-fix/*.patch
 ```
+
+For a series with bindings, also run `make dt_binding_check
+DT_SCHEMA_FILES=<binding>`. checkpatch warns that the binding patches may
+need a MAINTAINERS update: the entry comes with the driver patch, in
+alphabetical order with you as maintainer. Send net-next series only while
+net-next is open.
+
+The PSE core fix goes to the net tree on its own. It is made against
+mainline (it touches the same functions as in OpenWrt's kernel, without
+OpenWrt's pending PSE patches around them), was tested on the switch in
+OpenWrt and build-tested on mainline, and is a regular bug for the
+kernel's threat model (it needs an admin action or an unplug), so it goes
+to the list, not to the security team.
 
 `scripts/make-upstream.py patches` writes the kernel patches as OpenWrt
 carries them to `build/upstream/patches`, for a quick review without a

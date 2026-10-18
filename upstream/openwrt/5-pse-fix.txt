@@ -1,0 +1,15 @@
+generic: pse-pd: don't enable a PI again while disabling it
+
+With software power control, disabling a PSE PI retries the power
+delivery of the PIs waiting for power in its power domain, and the PI
+being disabled is still one of them, so it is enabled again right away.
+An admin disable of a port with a PD keeps the port powered, and every
+disable and every unplug leaks budget in the power domain. This affects
+the PSE drivers with the static budget strategy, such as the TPS23881.
+
+Add the fix sent to netdev as a pending patch, after the PSE poll helper
+and LED trigger series that it applies on top of.
+
+Tested on a MokerLink POE-10G07110GSM, with two Realtek RTL8239 PSE
+controllers: a disabled port stays off, and the allocated budget is back
+to 0 after a disable and after an unplug.

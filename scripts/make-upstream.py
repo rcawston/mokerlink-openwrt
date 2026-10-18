@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Build the upstream submissions from this repository.
 
-    make-upstream.py openwrt TREE   [options]
+    make-upstream.py openwrt TREE [board|dsa-fix|pse-fix] [options]
     make-upstream.py linux TREE SERIES [options]
     make-upstream.py patches [-o DIR] [options]
 
-openwrt  adds the board as four commits to TREE, an openwrt.git checkout
-         (the drivers as pending kernel patches with their kmods, then the
-         device), and writes them with git format-patch to
-         build/upstream/openwrt.
+openwrt  adds one pull request's commits to TREE, an openwrt.git checkout,
+         and writes them with git format-patch to build/upstream/openwrt/PR:
+         board    (the default) the board as four commits: the drivers as
+                  pending kernel patches with their kmods, then the device
+         dsa-fix  the link change fix in the realtek switch driver
+         pse-fix  the PSE core fix as a generic pending kernel patch; with
+                  --link, the patch links to its submission to netdev
 linux    adds one series (i2c, pse, leds, pse-led-triggers or pse-fix) as
          commits to TREE, a Linux checkout of the subsystem tree it goes
          to, with MAINTAINERS entries, and writes it with a cover letter and
@@ -24,11 +27,10 @@ Options:
   --signoff                 add your Signed-off-by. Only you can certify the
                             Developer's Certificate of Origin, so it is never
                             added without this option
-  --assisted-by VALUE       the value of the Assisted-by tag the kernel
-                            asks for on code written with an AI assistant,
-                            "LLM [TOOL1] [TOOL2]"
-                            (Documentation/process/coding-assistants.rst);
-                            required
+  --assisted-by VALUE       add an Assisted-by tag with VALUE. The kernel
+                            dropped the tag in October 2026 (docs: remove
+                            Assisted-by references), so it is off by default
+  --link URL                openwrt pse-fix: the netdev submission of the fix
 
 Commit messages live in upstream/; the drivers, bindings and patches are the
 ones this repository builds. Standard library only.
@@ -46,6 +48,8 @@ OWRT_PATCHES = os.path.join(REPO, 'openwrt/target/linux/realtek/patches-6.18')
 UPSTREAM = os.path.join(REPO, 'upstream')
 BOARD_PATCH = os.path.join(REPO, 'patches/0001-realtek-rtl930x-add-MokerLink-POE-10G07110GSM.patch')
 KMOD_PATCH = os.path.join(REPO, 'patches/0002-realtek-add-shared-SCL-I2C-RTL8239-PSE-and-port-LED-packages.patch')
+DSA_PATCH = os.path.join(REPO, 'patches/0003-realtek-dsa-let-phylib-read-the-PHY-on-a-port-link-change.patch')
+PSE_FIX_NUMBER = '898'
 DTS = 'target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts'
 
 I2C_YAML = 'Documentation/devicetree/bindings/i2c/i2c-gpio-shared-scl.yaml'
@@ -120,22 +124,25 @@ def die(msg):
     sys.exit(f'make-upstream: {msg}')
 
 
+# UTF-8 and LF line endings also on Windows, where text files and pipes
+# default to the ANSI code page and CRLF
 def git(tree, *args, input=None):
-    r = subprocess.run(['git', '-C', tree, *args], input=input, text=True,
-                       capture_output=True)
+    r = subprocess.run(['git', '-C', tree, *args], capture_output=True,
+                       input=None if input is None else input.encode('utf-8'))
     if r.returncode:
-        die(f'git {" ".join(args)} in {tree} failed:\n{r.stderr.strip()}')
-    return r.stdout
+        die(f'git {" ".join(args)} in {tree} failed:\n'
+            f'{r.stderr.decode("utf-8", "replace").strip()}')
+    return r.stdout.decode('utf-8')
 
 
 def read(path):
-    with open(path) as f:
+    with open(path, encoding='utf-8') as f:
         return f.read()
 
 
-def write(path, text):
+def write(path, text, mode='w'):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w') as f:
+    with open(path, mode, encoding='utf-8', newline='\n') as f:
         f.write(text)
 
 
@@ -162,7 +169,9 @@ def openwrt_hunks(name):
 
 
 def trailers(args):
-    t = [f'Assisted-by: {args.assisted_by}']
+    t = []
+    if args.assisted_by:
+        t.append(f'Assisted-by: {args.assisted_by}')
     if args.signoff:
         t.append(f'Signed-off-by: {args.author}')
     return '\n'.join(t)
@@ -170,9 +179,12 @@ def trailers(args):
 
 def with_trailers(body, args):
     """BODY and the trailers, in one block with the tags that end BODY"""
+    t = trailers(args)
+    if not t:
+        return body
     last = body.rsplit('\n\n', 1)[-1].splitlines()
     sep = '\n' if all(TAG.match(line) for line in last) else '\n\n'
-    return f'{body}{sep}{trailers(args)}'
+    return f'{body}{sep}{t}'
 
 
 def kmod_block(name):
@@ -205,6 +217,8 @@ def openwrt_patch_text(args, series, i, n):
     """one kernel patch of SERIES, with OpenWrt's kernel context"""
     msgfile, files, hookpatch, _ = SERIES[series]['patches'][i]
     subject, body = message(os.path.join(UPSTREAM, 'linux', series, msgfile))
+    if series == 'pse-fix' and args.link:
+        body += f'\nLink: {args.link}'   # after the Fixes tag that ends it
     diff = ''.join(new_file_diff(p) for p in files)
     if hookpatch:
         diff += openwrt_hunks(hookpatch)
@@ -224,10 +238,27 @@ def cmd_patches(args):
             print(os.path.join(out, name))
 
 
-def cmd_openwrt(args):
-    tree = os.path.abspath(args.tree)
-    check_clean(tree)
-    base = git(tree, 'rev-parse', 'HEAD').strip()
+def pinned_openwrt():
+    m = re.search(r'^OPENWRT_COMMIT=(\w+)', read(os.path.join(REPO, 'config/openwrt.env')), re.M)
+    return m.group(1)
+
+
+def apply_3way(tree, diff):
+    """apply one of this repository's OpenWrt patches, made against the
+    pinned commit, with a three-way merge when OpenWrt has moved on; the
+    paths it changes"""
+    paths = re.findall(r'^\+\+\+ b/(\S+)', diff, re.M)
+    # The index lines only abbreviate the original blobs, which a partial
+    # clone cannot fetch; fetch them by path from the pinned commit
+    pinned = pinned_openwrt()
+    for p in paths:
+        subprocess.run(['git', '-C', tree, 'cat-file', 'blob', f'{pinned}:{p}'],
+                       capture_output=True)
+    git(tree, 'apply', '--3way', '-', input=diff)
+    return paths
+
+
+def openwrt_board(tree, args):
     patchdir = 'target/linux/realtek/patches-6.18'
     modules = os.path.join(tree, 'target/linux/realtek/modules.mk')
     for series, s in SERIES.items():
@@ -241,21 +272,53 @@ def cmd_openwrt(args):
             name = f'{number}-{i + 1:02d}-{slug(subject)}.patch'
             write(os.path.join(tree, patchdir, name), text)
             paths.append(f'{patchdir}/{name}')
-        with open(modules, 'a') as f:
-            f.write('\n' + kmod_block(kmod))
+        write(modules, '\n' + kmod_block(kmod), mode='a')
         subject, body = message(os.path.join(UPSTREAM, 'openwrt', msgfile))
         commit(tree, args, subject, body, paths)
 
-    # The device: image recipe and network setup, then the device tree
-    git(tree, 'apply', BOARD_PATCH)
+    # The device: image recipe, network setup and fan control, then the
+    # device tree
+    paths = apply_3way(tree, read(BOARD_PATCH))
     dts = os.path.join(tree, DTS)
     write(dts, read(os.path.join(REPO, 'openwrt', DTS)))
     subject, body = message(os.path.join(UPSTREAM, 'openwrt', '4-board.txt'))
-    commit(tree, args, subject, body,
-           ['target/linux/realtek/base-files/etc/board.d/02_network',
-            'target/linux/realtek/image/rtl930x.mk', DTS])
+    commit(tree, args, subject, body, paths + [DTS])
 
-    out = args.output or os.path.join(REPO, 'build/upstream/openwrt')
+
+def openwrt_dsa_fix(tree, args):
+    """the switch driver fix, a patch to OpenWrt's own files"""
+    text = read(DSA_PATCH)
+    m = re.match(r'Subject: \[PATCH\] (.+?)\n\n(.*?)\n---\n(.*)', text, re.S)
+    if not m:
+        die(f'no Subject, message and diff in {DSA_PATCH}')
+    subject, body, diff = m.groups()
+    commit(tree, args, subject, body.strip('\n'), apply_3way(tree, diff))
+
+
+def openwrt_pse_fix(tree, args):
+    """the PSE core fix as a generic pending patch, after the PSE series
+    (897-*) whose changes it applies on top of"""
+    subject, text = openwrt_patch_text(args, 'pse-fix', 0, 1)
+    path = f'target/linux/generic/pending-6.18/{PSE_FIX_NUMBER}-{slug(subject)}.patch'
+    write(os.path.join(tree, path), text)
+    subject, body = message(os.path.join(UPSTREAM, 'openwrt', '5-pse-fix.txt'))
+    commit(tree, args, subject, body, [path])
+
+
+OPENWRT_PRS = {'board': openwrt_board, 'dsa-fix': openwrt_dsa_fix,
+               'pse-fix': openwrt_pse_fix}
+
+
+def cmd_openwrt(args):
+    tree = os.path.abspath(args.tree)
+    pr = args.series or 'board'
+    if pr not in OPENWRT_PRS:
+        die(f'unknown OpenWrt pull request {pr}; one of {", ".join(OPENWRT_PRS)}')
+    check_clean(tree)
+    base = git(tree, 'rev-parse', 'HEAD').strip()
+    OPENWRT_PRS[pr](tree, args)
+
+    out = args.output or os.path.join(REPO, 'build/upstream/openwrt', pr)
     os.makedirs(out, exist_ok=True)
     print(git(tree, '-c', f'user.name={args.name}', '-c', f'user.email={args.email}',
               'format-patch', '-o', out, f'{base}..HEAD'), end='')
@@ -338,7 +401,8 @@ def main():
     p.add_argument('-o', '--output')
     p.add_argument('--author')
     p.add_argument('--signoff', action='store_true')
-    p.add_argument('--assisted-by', required=True)
+    p.add_argument('--assisted-by')
+    p.add_argument('--link')
     args = p.parse_args()
 
     if not args.author:

@@ -33,7 +33,7 @@ jobs:
         run: scripts/check-dts.sh
 
       - name: Upstream patches build
-        run: python3 scripts/make-upstream.py patches --author "CI <ci@example.org>" --assisted-by "CI:check" -o "$RUNNER_TEMP/upstream"
+        run: python3 scripts/make-upstream.py patches --author "CI <ci@example.org>" -o "$RUNNER_TEMP/upstream"
 
   firmware:
     needs: check
