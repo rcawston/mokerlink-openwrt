@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Fast checks that do not need a full OpenWrt build (about 1 minute):
 #
-#   - the board patch applies to the pinned OpenWrt commit
+#   - the board patch applies to the pinned OpenWrt commit, and the patches
+#     to OpenWrt's netifd package to the netifd that the commit pins
 #   - the device tree compiles against the pinned OpenWrt + kernel headers
 #   - the image recipe and the device tree agree on uImage magic and
 #     firmware partition size, and the flash partitions cover the chip
@@ -32,8 +33,9 @@ sparse_clone() { # dir repo rev paths...
 	if [ ! -d "$dir/.git" ]; then
 		git init -q "$dir"
 		git -C "$dir" remote add origin "$repo"
-		git -C "$dir" sparse-checkout set --no-cone "$@"
 	fi
+	# Also in a cached checkout, which may have fewer paths
+	git -C "$dir" sparse-checkout set --no-cone "$@"
 	if ! git -C "$dir" rev-parse -q --verify "$rev^{commit}" >/dev/null; then
 		git -C "$dir" fetch -q --depth 1 --filter=blob:none origin "$rev"
 	fi
@@ -44,7 +46,8 @@ sparse_clone() { # dir repo rev paths...
 echo "==> Fetching pinned sources (sparse)"
 mkdir -p "$CACHE"
 sparse_clone "$OWRT" "$OPENWRT_REPO" "$OPENWRT_COMMIT" \
-	/target/linux/realtek/ /target/linux/generic/
+	/target/linux/realtek/ /target/linux/generic/ \
+	/package/base-files/files/lib/functions/ /package/network/config/netifd/
 sparse_clone "$LINUX" "$LINUX_REPO" "$LINUX_TAG" \
 	/include/dt-bindings/ /include/uapi/linux/
 
@@ -52,6 +55,14 @@ echo "==> Board patch applies to OpenWrt $OPENWRT_COMMIT"
 for p in "$REPO_ROOT"/patches/*.patch; do
 	git -C "$OWRT" apply --check "$p"
 	git -C "$OWRT" apply "$p"
+	echo "  ok: $(basename "$p")"
+done
+
+NETIFD_VERSION=$(sed -n 's/^PKG_SOURCE_VERSION:=//p' "$OWRT/package/network/config/netifd/Makefile")
+echo "==> netifd patches apply to netifd $NETIFD_VERSION"
+sparse_clone "$CACHE/netifd" https://github.com/openwrt/netifd.git "$NETIFD_VERSION" "/*"
+for p in "$REPO_ROOT"/openwrt/package/network/config/netifd/patches/*.patch; do
+	git -C "$CACHE/netifd" apply --check "$p"
 	echo "  ok: $(basename "$p")"
 done
 
