@@ -44,7 +44,7 @@ The repository is private, so log in to GitHub once (follow the prompts,
 
 ```sh
 gh auth login
-gh repo clone rcawston/mokerlink ~/mokerlink
+gh repo clone rcawston/mokerlink-openwrt ~/mokerlink
 ```
 
 Keep it in your Ubuntu home folder (`~`), not under `/mnt/c`: the Windows
