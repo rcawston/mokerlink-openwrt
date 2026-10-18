@@ -50,7 +50,7 @@ poe_bus() { # i2c bus number of the PoE controllers (SDA GPIO 10)
 	local a
 	for a in /sys/bus/i2c/devices/i2c-*; do
 		case "$(cat "$a/name" 2>/dev/null)" in
-		*i2c-gpio-shared*SDA1) echo "${a##*-}"; return 0 ;;
+		*i2c-poe*) echo "${a##*-}"; return 0 ;;
 		esac
 	done
 	return 1

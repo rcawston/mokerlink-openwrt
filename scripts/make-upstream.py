@@ -8,7 +8,7 @@
 
 openwrt  adds one pull request's commits to TREE, an openwrt.git checkout,
          and writes them with git format-patch to build/upstream/openwrt/PR:
-         board    (the default) the board as five commits: the drivers as
+         board    (the default) the board as four commits: the drivers as
                   pending kernel patches with their kmods, the base-files
                   function for the PoE default, then the device
          dsa-fix  the link change fix in the realtek switch driver
@@ -16,7 +16,7 @@ openwrt  adds one pull request's commits to TREE, an openwrt.git checkout,
                   --link, the patch links to its submission to netdev
 netifd   adds the board.json default for the pse option to TREE, a
          netifd.git checkout, and writes it to build/upstream/netifd
-linux    adds one series (i2c, pse, leds, pse-led-triggers or pse-fix) as
+linux    adds one series (pse, leds, pse-led-triggers or pse-fix) as
          commits to TREE, a Linux checkout of the subsystem tree it goes
          to, with MAINTAINERS entries, and writes it with a cover letter and
          the subject prefix of that tree to build/upstream/linux/SERIES.
@@ -51,7 +51,7 @@ FILES = os.path.join(REPO, 'openwrt/target/linux/realtek/files-6.18')
 OWRT_PATCHES = os.path.join(REPO, 'openwrt/target/linux/realtek/patches-6.18')
 UPSTREAM = os.path.join(REPO, 'upstream')
 BOARD_PATCH = os.path.join(REPO, 'patches/0001-realtek-rtl930x-add-MokerLink-POE-10G07110GSM.patch')
-KMOD_PATCH = os.path.join(REPO, 'patches/0002-realtek-add-shared-SCL-I2C-RTL8239-PSE-and-port-LED-packages.patch')
+KMOD_PATCH = os.path.join(REPO, 'patches/0002-realtek-add-RTL8239-PSE-and-port-LED-packages.patch')
 DSA_PATCH = os.path.join(REPO, 'patches/0003-realtek-dsa-let-phylib-read-the-PHY-on-a-port-link-change.patch')
 BASE_FILES_PATCH = os.path.join(REPO, 'patches/0004-base-files-add-a-uci-defaults-function-for-the-PSE-default.patch')
 NETIFD_PATCH = os.path.join(REPO, 'openwrt/package/network/config/netifd/patches/'
@@ -59,8 +59,6 @@ NETIFD_PATCH = os.path.join(REPO, 'openwrt/package/network/config/netifd/patches
 PSE_FIX_NUMBER = '898'
 DTS = 'target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts'
 
-I2C_YAML = 'Documentation/devicetree/bindings/i2c/i2c-gpio-shared-scl.yaml'
-I2C_C = 'drivers/i2c/busses/i2c-gpio-shared-scl.c'
 PSE_YAML = 'Documentation/devicetree/bindings/net/pse-pd/realtek,rtl8239.yaml'
 PSE_C = 'drivers/net/pse-pd/realtek-rtl8239.c'
 LEDS_YAML = 'Documentation/devicetree/bindings/leds/realtek,rtl9301-port-leds.yaml'
@@ -70,15 +68,6 @@ LEDS_C = 'drivers/leds/leds-rtl9300-port.c'
 # Linux context with blob ids). An OpenWrt number and kmod per series, and
 # the subject prefix of the tree it goes to.
 SERIES = {
-    'i2c': {
-        'openwrt': ('830', 'i2c-gpio-shared-scl', '1-i2c.txt'),
-        'list': 'linux-i2c@vger.kernel.org',
-        'maintainers': ('I2C GPIO BUSES SHARING SCL DRIVER', [I2C_YAML, I2C_C]),
-        'patches': [
-            ('1-binding.txt', [I2C_YAML], None, None),
-            ('2-driver.txt', [I2C_C], '830-i2c-add-gpio-shared-scl.patch', 'hooks.diff'),
-        ],
-    },
     'pse': {
         'openwrt': ('831', 'pse-realtek-rtl8239', '2-pse.txt'),
         'list': 'netdev@vger.kernel.org',

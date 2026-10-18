@@ -1,6 +1,0 @@
-dt-bindings: i2c: add GPIO buses sharing one SCL line
-
-Add a binding for several bit-banged I2C buses that share one SCL GPIO
-and have one SDA GPIO each, as on some Realtek RTL930x switches. Each
-child node is a bus with its own SDA line; the parent holds the shared
-SCL line and the i2c-gpio style timing properties.

@@ -1,9 +1,0 @@
-realtek: add driver for GPIO I2C buses sharing one SCL line
-
-Some RTL930x switches bit-bang several I2C buses on SoC GPIOs with one
-common SCL line and one SDA line per bus, which i2c-gpio cannot
-describe. The MokerLink POE-10G07110GSM has its fan controller, PoE
-controllers and SFP+ cage on such buses.
-
-Add the driver and its binding as a pending patch, and package it as
-kmod-i2c-gpio-shared-scl.

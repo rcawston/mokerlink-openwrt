@@ -1,15 +1,21 @@
 # Upstreaming
 
-The board support and the three new kernel drivers are written to be
+The board support and the two new kernel drivers are written to be
 submitted: the board and the drivers to OpenWrt, the drivers and their
 bindings to Linux. `scripts/make-upstream.py` builds the submissions from
 this repository; the commit messages are in `upstream/`.
+
+The three I²C buses use `i2c-gpio`, which has handled buses that share one
+SCL line since Linux 7.3 (`645c3d7d07fa`, "i2c: i2c-gpio: Enhance driver for
+buses with shared SCL"), and which OpenWrt carries as
+`target/linux/realtek/patches-6.18/033-02-v7.3-*`. An earlier
+`i2c-gpio-shared-scl` driver of this repository did the same; its series
+to Linux was withdrawn after a review pointed that out.
 
 ## What goes where
 
 | Part | OpenWrt | Linux (subsystem tree, list) |
 |---|---|---|
-| shared-SCL I²C buses: binding, driver | `realtek: add driver for GPIO I2C buses sharing one SCL line` (pending patches `830-*`, `kmod-i2c-gpio-shared-scl`) | `i2c` series: i2c tree, linux-i2c |
 | RTL8239 PSE: binding, driver | `realtek: add Realtek RTL8239 PSE driver` (`831-*`, `kmod-pse-realtek-rtl8239`) | `pse` series: net-next, netdev |
 | RTL9300 port LEDs: binding, switch binding, driver | `realtek: add RTL9300 port LED driver` (`832-*`, `kmod-leds-rtl9300-port`) | `leds` series: leds tree, linux-leds (the switch binding patch also to netdev) |
 | PSE LED trigger names in `leds/common.yaml` | not needed | `pse-led-triggers`: with the PSE LED trigger series |
@@ -86,7 +92,8 @@ OpenWrt.
   names that contain a Linux I²C bus number (`pse-1-0022:...`), and to ask
   for `trigger-sources = <&pse_port1>` instead. That needs the trigger
   series to match LEDs by `trigger-sources`, so raise it with its author.
-- The device commit needs the three driver commits before it.
+- The device commit needs the two driver commits and the base-files
+  commit before it.
 
 ## Building the submissions
 
@@ -132,7 +139,7 @@ need:
 
 ```sh
 git -C ~/linux sparse-checkout set --cone Documentation/devicetree/bindings \
-	drivers/i2c drivers/leds drivers/net/pse-pd include/linux include/dt-bindings \
+	drivers/leds drivers/net/pse-pd include/linux include/dt-bindings \
 	scripts LICENSES
 mkdir -p ~/linux/{arch,fs,init,ipc,kernel,lib}   # checkpatch looks for them
 ```
@@ -191,7 +198,6 @@ One series at a time, each on its tree:
 | Series | Base | Subject prefix |
 |---|---|---|
 | `pse-fix` | `net/main` | `[PATCH net]` |
-| `i2c` | Andi Shyti's `i2c/i2c-host`, or `origin/master` while it is behind mainline (it was in October 2026) | `[PATCH]` |
 | `leds` | `leds/for-leds-next` | `[PATCH]` |
 | `pse` | `net-next/main`, once the PSE series it needs is in it | `[PATCH net-next]` |
 
@@ -233,11 +239,10 @@ tree.
   mode a port is switched on by putting it in auto mode rather than with
   the power-on register, so that the chip handles the disconnection as
   it does in the stock firmware.
-- **Shared-SCL buses:** reviewers may suggest i2c-gpio plus a mux, or the
-  SoC's I²C master. A mux can't switch SDA lines without hardware for it,
-  and the master is ruled out by the PoE firmware download (one 25 KiB
-  write; the chips NAK a split one). Both are explained in the cover
-  letter.
+- **The I²C buses:** reviewers may ask why the board doesn't use the
+  SoC's I²C master on the same pins. The PoE firmware download rules it
+  out: it is one 25 KiB write, the master moves at most 16 bytes per
+  transfer, and the chips NAK a split one.
 - **Port LEDs:** whether the switch's DSA driver should own the port LEDs
   instead (there is no upstream RTL9300 DSA driver yet; the switch's other
   children are separate drivers on its syscon).

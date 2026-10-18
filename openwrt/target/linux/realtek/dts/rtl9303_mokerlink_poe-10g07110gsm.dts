@@ -127,169 +127,169 @@
 	 * Three I2C buses that the stock firmware bit-bangs on SoC GPIOs, with
 	 * one common SCL line (SDK interface 2, "software I2C"): the fan
 	 * controller (SDA GPIO 9), the two RTL8239 PoE controllers (SDA GPIO
-	 * 10) and the SFP+ cage (SDA GPIO 11). The pins are those of the
-	 * RTL9303 I2C master 1, but the RTL8239s take their 25460-byte firmware
-	 * only as one write, far beyond the 16 bytes per transfer of the
-	 * master: sent in 16-byte writes, they NAK the second one.
+	 * 10) and the SFP+ cage (SDA GPIO 11). i2c-gpio requests the shared SCL
+	 * once and serializes the transfers of the three buses. The pins are
+	 * those of the RTL9303 I2C master 1, but the RTL8239s take their
+	 * 25460-byte firmware only as one write, far beyond the 16 bytes per
+	 * transfer of the master: sent in 16-byte writes, they NAK the second
+	 * one.
 	 */
-	i2c-gpio-shared {
-		compatible = "i2c-gpio-shared-scl";
+	i2c_fan: i2c-fan {
+		compatible = "i2c-gpio";
+		sda-gpios = <&gpio0 9 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
 		scl-gpios = <&gpio0 8 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
 		i2c-gpio,delay-us = <5>;
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		i2c_fan: i2c@0 {
-			reg = <0>;
-			sda-gpios = <&gpio0 9 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
-			#address-cells = <1>;
-			#size-cells = <0>;
-
-			/*
-			 * Runs the fans at full speed from power-on until
-			 * userspace programs it; the stock firmware sets 50 %.
-			 * Its three temperature sensors are what the stock
-			 * firmware follows. Pin 14 as GPIO, as the stock
-			 * firmware sets it (register 0x7d = 0x03), so it acts
-			 * neither as TACH4 nor as a THERM input.
-			 */
-			fan-controller@2e {
-				compatible = "adi,adt7476";
-				reg = <0x2e>;
-				adi,pin14-function = "gpio";
-			};
+		/*
+		 * Runs the fans at full speed from power-on until
+		 * userspace programs it; the stock firmware sets 50 %.
+		 * Its three temperature sensors are what the stock
+		 * firmware follows. Pin 14 as GPIO, as the stock
+		 * firmware sets it (register 0x7d = 0x03), so it acts
+		 * neither as TACH4 nor as a THERM input.
+		 */
+		fan-controller@2e {
+			compatible = "adi,adt7476";
+			reg = <0x2e>;
+			adi,pin14-function = "gpio";
 		};
+	};
 
-		i2c_poe: i2c@1 {
-			reg = <1>;
-			sda-gpios = <&gpio0 10 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
-			#address-cells = <1>;
-			#size-cells = <0>;
+	i2c_poe: i2c-poe {
+		compatible = "i2c-gpio";
+		sda-gpios = <&gpio0 10 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		scl-gpios = <&gpio0 8 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		i2c-gpio,delay-us = <5>;
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-			/*
-			 * Two RTL8239-VB, each answering on two addresses
-			 * (channels 0-3 and 4-7). Port to channel mapping from
-			 * the stock firmware (poePortConf_9303M7XC1XF_BT): every
-			 * port is 4-pair on two consecutive channels; channels
-			 * 6 and 7 of the second chip are not wired.
-			 */
-			pse_a: ethernet-pse@20 {
-				compatible = "realtek,rtl8239";
-				reg = <0x20>;
+		/*
+		 * Two RTL8239-VB, each answering on two addresses
+		 * (channels 0-3 and 4-7). Port to channel mapping from
+		 * the stock firmware (poePortConf_9303M7XC1XF_BT): every
+		 * port is 4-pair on two consecutive channels; channels
+		 * 6 and 7 of the second chip are not wired.
+		 */
+		pse_a: ethernet-pse@20 {
+			compatible = "realtek,rtl8239";
+			reg = <0x20>;
 
-				channels {
-					#address-cells = <1>;
-					#size-cells = <0>;
+			channels {
+				#address-cells = <1>;
+				#size-cells = <0>;
 
-					pse_a_ch0: channel@0 { reg = <0>; };
-					pse_a_ch1: channel@1 { reg = <1>; };
-					pse_a_ch2: channel@2 { reg = <2>; };
-					pse_a_ch3: channel@3 { reg = <3>; };
-					pse_a_ch4: channel@4 { reg = <4>; };
-					pse_a_ch5: channel@5 { reg = <5>; };
-					pse_a_ch6: channel@6 { reg = <6>; };
-					pse_a_ch7: channel@7 { reg = <7>; };
-				};
-
-				pse-pis {
-					#address-cells = <1>;
-					#size-cells = <0>;
-
-					/* front port 4 */
-					pse_port4: pse-pi@0 {
-						reg = <0>;
-						#pse-cells = <0>;
-						pairset-names = "alternative-a", "alternative-b";
-						pairsets = <&pse_a_ch0>, <&pse_a_ch1>;
-						vpwr-supply = <&poe_supply>;
-					};
-
-					/* front port 5 */
-					pse_port5: pse-pi@1 {
-						reg = <1>;
-						#pse-cells = <0>;
-						pairset-names = "alternative-a", "alternative-b";
-						pairsets = <&pse_a_ch2>, <&pse_a_ch3>;
-						vpwr-supply = <&poe_supply>;
-					};
-
-					/* front port 6 */
-					pse_port6: pse-pi@2 {
-						reg = <2>;
-						#pse-cells = <0>;
-						pairset-names = "alternative-a", "alternative-b";
-						pairsets = <&pse_a_ch4>, <&pse_a_ch5>;
-						vpwr-supply = <&poe_supply>;
-					};
-
-					/* front port 7 */
-					pse_port7: pse-pi@3 {
-						reg = <3>;
-						#pse-cells = <0>;
-						pairset-names = "alternative-a", "alternative-b";
-						pairsets = <&pse_a_ch6>, <&pse_a_ch7>;
-						vpwr-supply = <&poe_supply>;
-					};
-				};
+				pse_a_ch0: channel@0 { reg = <0>; };
+				pse_a_ch1: channel@1 { reg = <1>; };
+				pse_a_ch2: channel@2 { reg = <2>; };
+				pse_a_ch3: channel@3 { reg = <3>; };
+				pse_a_ch4: channel@4 { reg = <4>; };
+				pse_a_ch5: channel@5 { reg = <5>; };
+				pse_a_ch6: channel@6 { reg = <6>; };
+				pse_a_ch7: channel@7 { reg = <7>; };
 			};
 
-			pse_b: ethernet-pse@22 {
-				compatible = "realtek,rtl8239";
-				reg = <0x22>;
+			pse-pis {
+				#address-cells = <1>;
+				#size-cells = <0>;
 
-				channels {
-					#address-cells = <1>;
-					#size-cells = <0>;
-
-					pse_b_ch0: channel@0 { reg = <0>; };
-					pse_b_ch1: channel@1 { reg = <1>; };
-					pse_b_ch2: channel@2 { reg = <2>; };
-					pse_b_ch3: channel@3 { reg = <3>; };
-					pse_b_ch4: channel@4 { reg = <4>; };
-					pse_b_ch5: channel@5 { reg = <5>; };
+				/* front port 4 */
+				pse_port4: pse-pi@0 {
+					reg = <0>;
+					#pse-cells = <0>;
+					pairset-names = "alternative-a", "alternative-b";
+					pairsets = <&pse_a_ch0>, <&pse_a_ch1>;
+					vpwr-supply = <&poe_supply>;
 				};
 
-				pse-pis {
-					#address-cells = <1>;
-					#size-cells = <0>;
+				/* front port 5 */
+				pse_port5: pse-pi@1 {
+					reg = <1>;
+					#pse-cells = <0>;
+					pairset-names = "alternative-a", "alternative-b";
+					pairsets = <&pse_a_ch2>, <&pse_a_ch3>;
+					vpwr-supply = <&poe_supply>;
+				};
 
-					/* front port 1 */
-					pse_port1: pse-pi@0 {
-						reg = <0>;
-						#pse-cells = <0>;
-						pairset-names = "alternative-a", "alternative-b";
-						pairsets = <&pse_b_ch0>, <&pse_b_ch1>;
-						vpwr-supply = <&poe_supply>;
-					};
+				/* front port 6 */
+				pse_port6: pse-pi@2 {
+					reg = <2>;
+					#pse-cells = <0>;
+					pairset-names = "alternative-a", "alternative-b";
+					pairsets = <&pse_a_ch4>, <&pse_a_ch5>;
+					vpwr-supply = <&poe_supply>;
+				};
 
-					/* front port 2 */
-					pse_port2: pse-pi@1 {
-						reg = <1>;
-						#pse-cells = <0>;
-						pairset-names = "alternative-a", "alternative-b";
-						pairsets = <&pse_b_ch2>, <&pse_b_ch3>;
-						vpwr-supply = <&poe_supply>;
-					};
-
-					/* front port 3 */
-					pse_port3: pse-pi@2 {
-						reg = <2>;
-						#pse-cells = <0>;
-						pairset-names = "alternative-a", "alternative-b";
-						pairsets = <&pse_b_ch4>, <&pse_b_ch5>;
-						vpwr-supply = <&poe_supply>;
-					};
+				/* front port 7 */
+				pse_port7: pse-pi@3 {
+					reg = <3>;
+					#pse-cells = <0>;
+					pairset-names = "alternative-a", "alternative-b";
+					pairsets = <&pse_a_ch6>, <&pse_a_ch7>;
+					vpwr-supply = <&poe_supply>;
 				};
 			};
 		};
 
-		/* SFP+ module EEPROM and diagnostics (0x50, 0x51), for sfp0 */
-		i2c_sfp: i2c@2 {
-			reg = <2>;
-			sda-gpios = <&gpio0 11 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
-			#address-cells = <1>;
-			#size-cells = <0>;
+		pse_b: ethernet-pse@22 {
+			compatible = "realtek,rtl8239";
+			reg = <0x22>;
+
+			channels {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				pse_b_ch0: channel@0 { reg = <0>; };
+				pse_b_ch1: channel@1 { reg = <1>; };
+				pse_b_ch2: channel@2 { reg = <2>; };
+				pse_b_ch3: channel@3 { reg = <3>; };
+				pse_b_ch4: channel@4 { reg = <4>; };
+				pse_b_ch5: channel@5 { reg = <5>; };
+			};
+
+			pse-pis {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				/* front port 1 */
+				pse_port1: pse-pi@0 {
+					reg = <0>;
+					#pse-cells = <0>;
+					pairset-names = "alternative-a", "alternative-b";
+					pairsets = <&pse_b_ch0>, <&pse_b_ch1>;
+					vpwr-supply = <&poe_supply>;
+				};
+
+				/* front port 2 */
+				pse_port2: pse-pi@1 {
+					reg = <1>;
+					#pse-cells = <0>;
+					pairset-names = "alternative-a", "alternative-b";
+					pairsets = <&pse_b_ch2>, <&pse_b_ch3>;
+					vpwr-supply = <&poe_supply>;
+				};
+
+				/* front port 3 */
+				pse_port3: pse-pi@2 {
+					reg = <2>;
+					#pse-cells = <0>;
+					pairset-names = "alternative-a", "alternative-b";
+					pairsets = <&pse_b_ch4>, <&pse_b_ch5>;
+					vpwr-supply = <&poe_supply>;
+				};
+			};
 		};
+	};
+
+	/* SFP+ module EEPROM and diagnostics (0x50, 0x51), for sfp0 */
+	i2c_sfp: i2c-sfp {
+		compatible = "i2c-gpio";
+		sda-gpios = <&gpio0 11 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		scl-gpios = <&gpio0 8 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		i2c-gpio,delay-us = <5>;
+		#address-cells = <1>;
+		#size-cells = <0>;
 	};
 };
 

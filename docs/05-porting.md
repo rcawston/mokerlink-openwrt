@@ -245,7 +245,10 @@ master does reach the ADT7476 and the RTL8239s. But it moves at most 16
 bytes per transfer, and the RTL8239s take their firmware only as one
 write: sent in 16-byte writes, they accept the first and NAK the second.
 So the PoE bus is bit-banged, and since the three buses share SCL, the fan
-and SFP+ buses are on the same `i2c-gpio-shared-scl` driver.
+and SFP+ buses are too: three `i2c-gpio` buses with the same SCL GPIO,
+which `i2c-gpio` has handled since Linux 7.3 (OpenWrt's
+`patches-6.18/033-02-v7.3-*`). It requests SCL once and serializes the
+transfers of the three buses.
 
 **In OpenWrt** the `realtek-rtl8239` driver runs the chips through the
 Linux PSE framework, with a power budget:

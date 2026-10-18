@@ -43,7 +43,7 @@ poe_bus() { # i2c bus number of the PoE controllers (SDA GPIO 10)
 	local a
 	for a in /sys/bus/i2c/devices/i2c-*; do
 		case "$(cat "$a/name" 2>/dev/null)" in
-		*i2c-gpio-shared*SDA1) echo "${a##*-}"; return 0 ;;
+		*i2c-poe*) echo "${a##*-}"; return 0 ;;
 		esac
 	done
 	return 1
@@ -211,7 +211,7 @@ run i2cdetect -l
 run sh -c "lsmod | grep -E 'rtl8239|pse|leds|i2c|adt'"
 run sh -c "ls -l /lib/firmware/realtek/ 2>&1"
 run sh -c "ls -l /sys/class/leds/"
-run sh -c "dmesg | grep -iE 'rtl8239|pse|leds|i2c-gpio-shared|adt7'"
+run sh -c "dmesg | grep -iE 'rtl8239|pse|leds|i2c-gpio|adt7'"
 BUS=$(poe_bus) || { say "PoE I2C bus not found"; exit 1; }
 
 if [ ! -f "$FW_SRC" ]; then

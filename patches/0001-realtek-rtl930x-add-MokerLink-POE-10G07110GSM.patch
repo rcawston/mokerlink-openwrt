@@ -76,10 +76,10 @@ index cec1e8723b..3378987e2f 100755
  	esac
  }
 diff --git a/target/linux/realtek/image/rtl930x.mk b/target/linux/realtek/image/rtl930x.mk
-index dd86aded84..be7e31bd4d 100644
+index dd86aded84..e7d2c16201 100644
 --- a/target/linux/realtek/image/rtl930x.mk
 +++ b/target/linux/realtek/image/rtl930x.mk
-@@ -232,6 +232,29 @@ define Device/mokerlink_2g080gm
+@@ -232,6 +232,28 @@ define Device/mokerlink_2g080gm
  endef
  TARGET_DEVICES += mokerlink_2g080gm
  
@@ -90,7 +90,6 @@ index dd86aded84..be7e31bd4d 100644
 +  DEVICE_MODEL := POE-10G07110GSM
 +  DEVICE_PACKAGES := \
 +	kmod-hwmon-adt7475 \
-+	kmod-i2c-gpio-shared-scl \
 +	kmod-leds-rtl9300-port \
 +	kmod-pse-realtek-rtl8239 \
 +	rtl826x-firmware
