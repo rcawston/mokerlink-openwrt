@@ -192,7 +192,11 @@ settings area. Then:
    scp -O rtl8239-bt.bin root@<address>:/lib/firmware/realtek/
    ```
    The driver picks it up within 30 s, no reboot needed. Later
-   `sysupgrade` runs keep it.
+   `sysupgrade` runs keep it. Check that the file is there with
+   `ls -l /lib/firmware/realtek/`: the PoE chips keep running their
+   firmware through a reboot, so PoE still working after `reboot` doesn't
+   prove it is installed; only a power cycle does
+   ([05-porting.md](05-porting.md#the-rtl8239-firmware)).
 4. Read [06-using.md](06-using.md).
 
 ## Flashing from the stock web UI

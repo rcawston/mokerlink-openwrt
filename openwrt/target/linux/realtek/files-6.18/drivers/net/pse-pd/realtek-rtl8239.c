@@ -971,6 +971,10 @@ static int rtl8239_probe(struct i2c_client *client)
 	dev_info(dev, "rev %lu, type %u, firmware status 0x%02x, %d C\n",
 		 FIELD_GET(RTL8239_ID_REV, id), priv->chip_type, ret,
 		 temp < 0 ? temp : temp * 652 / 1000 - 20);
+	/* A warm reboot keeps the chip powered and running its firmware */
+	if (!priv->fw && ret > 0 && (ret & RTL8239_FW_RUNNING))
+		dev_warn(dev, "firmware still running from before the reboot: install %s, or PoE stops at the next power cycle\n",
+			 rtl8239_fw_name(priv));
 
 	priv->budget = rtl8239_has_supply(dev);
 	ret = rtl8239_enable_channels(priv);

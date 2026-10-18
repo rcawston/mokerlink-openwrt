@@ -295,6 +295,18 @@ Once OpenWrt runs from flash it stays in the overlay across reboots, and
 `sysupgrade` keeps it (`/lib/upgrade/keep.d/mokerlink-poe`), but a
 `sysupgrade -n` or a factory reset removes it.
 
+The chips stay powered through a reboot and keep running the firmware they
+were given, so after a `reboot` or a `sysupgrade` PoE works even when the
+file is missing; only a power cycle stops them. The driver warns at boot
+when it finds a chip running a firmware without the file installed
+(`firmware still running from before the reboot: install ...`). To check:
+
+```sh
+ls -l /lib/firmware/realtek/rtl8239-bt.bin
+sysupgrade -l | grep rtl8239      # kept by the next sysupgrade
+dmesg | grep rtl8239              # "firmware running" once per chip at boot
+```
+
 ### Checking PoE
 
 With a PoE device, optionally a device without PoE (a laptop), and the
