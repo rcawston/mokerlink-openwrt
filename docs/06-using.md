@@ -7,7 +7,7 @@
 | Ports | lan1-lan7 copper, lan8 SFP+; all in VLAN 1, untagged | *Network → Interfaces → Devices → switch* |
 | Management address | DHCP client on VLAN 1 | *Network → Interfaces → lan* |
 | Fallback address | `192.168.2.1/24`, only if no DHCP lease after 60 s | interface `mgmt`; delay in `/etc/config/mokerlink` |
-| Port MTU | 9216 (jumbo frames forwarded) | *Network → Interfaces → Devices → lanN* |
+| Port MTU | 9200 (jumbo frames forwarded) | *Network → Interfaces → Devices → lanN* |
 | Management MTU | 1500 | interface `lan` |
 | EEE (802.3az) | off | `/etc/config/mokerlink`, then `service mokerlink reload` |
 | Fans | 50 %, full speed from 66 °C (hottest fan controller sensor), run by the fan controller itself | `/etc/init.d/hwmon_fancontrol` |
@@ -31,9 +31,20 @@ These are the usual causes on a 10G switch, roughly in order of likelihood:
    VoIP), add them: *Network → Interfaces → Devices → switch → Configure →
    Bridge VLAN filtering*. Add each VLAN ID and mark it tagged (`t`) on
    trunk ports and untagged (`u`, plus `*` for the PVID) on access ports.
-2. **Jumbo frames.** Ports accept frames up to MTU 9216, so jumbo traffic
-   between hosts passes. If you lowered the port MTU, frames larger than it
-   are dropped silently. Test with `ping -M do -s 8972 <host>`.
+2. **Jumbo frames.** Ports accept frames up to MTU 9200, so jumbo traffic
+   between hosts at MTU 9000 passes. If you lowered the port MTU, frames
+   larger than it are dropped silently. Test with `ping -M do -s 8972 <host>`.
+   Switches first set up with an older firmware have MTU 9216 on their
+   ports, which LuCI's device settings don't accept (they allow up to 9200),
+   so a port's settings can't be saved there until its MTU is lowered. To
+   lower all of them:
+
+   ```sh
+   for s in $(uci show network | sed -n "s/^network\.\([^.]*\)\.mtu='9216'$/\1/p"); do
+   	uci set network.$s.mtu=9200
+   done
+   uci commit network; service network reload
+   ```
 3. **A port with link but no traffic** means wrong SerDes lane polarity in
    the device tree. Run `mokerlink-polarity-scan` (see
    [05-porting.md](05-porting.md#serdes-lane-polarity)).

@@ -37,8 +37,8 @@ reviewable board description on top of it is the most reliable option.
 
 - All 8 ports bridged in hardware (VLAN 1, untagged), like an unmanaged
   switch, with VLANs configurable in the web UI
-- Jumbo frames up to 9216 bytes on every port, EEE off, no DHCP server and
-  no routing
+- Jumbo frames (MTU 9200) on every port, EEE off, no DHCP server and no
+  routing
 - Management address by DHCP, with a fallback of `192.168.2.1/24` when no
   DHCP server answers within 60 seconds
 - Web UI (LuCI, layer-2 edition) and SSH

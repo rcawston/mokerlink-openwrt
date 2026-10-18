@@ -36,7 +36,8 @@ uci set network.mgmt.auto='0'
 # Allow jumbo frames on every switch port. Hosts with MTU 9000 are common on
 # 10G networks, and a 1500-byte port limit drops their frames silently. This
 # only raises the largest frame the switch forwards; hosts using 1500 are not
-# affected.
+# affected. The switch takes up to MTU 12258, but 9200 is the most LuCI's
+# device settings accept, and it leaves room for hosts at 9000.
 port_device_section() {
 	local port="$1" sec
 
@@ -58,7 +59,7 @@ json_select ..
 json_select ..
 
 for port in $ports; do
-	uci set "network.$(port_device_section "$port").mtu=9216"
+	uci set "network.$(port_device_section "$port").mtu=9200"
 done
 
 uci set mokerlink.switch.defaults='1'
