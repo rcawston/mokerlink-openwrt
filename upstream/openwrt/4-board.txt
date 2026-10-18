@@ -22,13 +22,12 @@ it out of the vendor firmware and install it as
 supply as a power budget, with port priorities, and wait switched off
 until netifd switches them on: board.json switches PoE on for lan1-lan7
 by default (netifd's pse option, with netifd's board.json default for
-it). The port LEDs are set up as the
-vendor SDK does (bi-colour scan mode, three LEDs per port) instead of
-relying on the vendor U-Boot, which sets them up as part of "rtk network
-on"; the PoE LEDs (LED 2 of each port) follow the PSE LED triggers. At
-boot, hwmon_fancontrol puts the ADT7476 into its automatic mode with the
-vendor firmware's settings: 50 %, and full speed when the hottest of its
-sensors reaches 66 C.
+it). The port LEDs are set up as the vendor SDK does (bi-colour scan
+mode, three LEDs per port) instead of relying on the vendor U-Boot,
+which sets them up as part of "rtk network on"; the PoE LEDs (LED 2 of
+each port) follow the PSE LED triggers. At boot, hwmon_fancontrol puts
+the ADT7476 into its automatic mode with the vendor firmware's settings:
+50 %, and full speed when the hottest of its sensors reaches 66 C.
 
 Installation from the vendor web UI:
 Upload the factory image (*-squashfs-factory.bix) on the firmware

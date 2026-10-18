@@ -23,8 +23,8 @@ As of 18 October 2026:
 | switch link change fix | OpenWrt | [openwrt/openwrt#25995](https://github.com/openwrt/openwrt/pull/25995) |
 | RTL9300 port LEDs (`leds`) | linux-leds | [sent](https://lore.kernel.org/all/20261018194339.132-1-ross@r-sc.ca/) |
 | shared-SCL I²C (`i2c`) | linux-i2c | [sent and withdrawn](https://lore.kernel.org/all/20261018194315.945-1-ross@r-sc.ca/): `i2c-gpio` does it |
-| board.json PoE default | netifd | not opened yet |
-| the board | OpenWrt | not opened yet; waits for the netifd pull request |
+| board.json PoE default | netifd | [openwrt/netifd#97](https://github.com/openwrt/netifd/pull/97) |
+| the board | OpenWrt | ready on [rcawston/openwrt `mokerlink-board`](https://github.com/rcawston/openwrt/tree/mokerlink-board), not opened yet; depends on openwrt/netifd#97 |
 | PSE priority choices in the web UI | LuCI | not opened yet |
 | RTL8239 PSE (`pse`), PSE LED trigger names (`pse-led-triggers`) | netdev, linux-leds | not sent; wait for the PSE series they depend on ([Dependencies](#dependencies)) |
 
