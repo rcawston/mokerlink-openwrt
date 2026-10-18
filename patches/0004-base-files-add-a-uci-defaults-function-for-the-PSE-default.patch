@@ -1,0 +1,28 @@
+Subject: [PATCH] base-files: add a uci-defaults function for the PSE default
+
+Add ucidef_set_network_device_pse, which gives netifd's pse option of a
+port a default in board.json: whether netifd switches PSE (PoE) on for
+the port. netifd reads it as a JSON boolean, unlike the strings that the
+other network_device functions write.
+
+---
+diff --git a/package/base-files/files/lib/functions/uci-defaults.sh b/package/base-files/files/lib/functions/uci-defaults.sh
+index 34005fe0fa..7fd53cfc8e 100644
+--- a/package/base-files/files/lib/functions/uci-defaults.sh
++++ b/package/base-files/files/lib/functions/uci-defaults.sh
+@@ -135,6 +135,15 @@ ucidef_set_network_device_conduit() {
+ 	_ucidef_set_network_device_common $1 conduit $2
+ }
+ 
++# netifd reads the default as a JSON boolean
++ucidef_set_network_device_pse() {
++	json_select_object "network_device"
++	json_select_object "${1}"
++	json_add_boolean pse "${2}"
++	json_select ..
++	json_select ..
++}
++
+ _ucidef_add_switch_port() {
+ 	# inherited: $num $device $need_tag $want_untag $role $index $prev_role
+ 	# inherited: $n_cpu $n_ports $n_vlan $cpu0 $cpu1 $cpu2 $cpu3 $cpu4 $cpu5

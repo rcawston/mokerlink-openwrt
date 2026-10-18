@@ -263,7 +263,9 @@ Linux PSE framework, with a power budget:
   the power when it goes away, as in the stock firmware. A port that
   loses power goes back to waiting
 - the ports start switched off; netifd switches them on with the `pse`
-  device option, which the firmware's defaults set for lan1-lan7
+  device option. board.json gives that option a default of on for
+  lan1-lan7, which netifd reads with this repository's patch to it
+  (`openwrt/package/network/config/netifd/patches/`)
 - `ethtool --show-pse lanN` shows the state, class, voltage, power and
   priority, `ethtool --set-pse lanN c33-pse-admin-control disable|enable`
   switches a port and `ethtool --set-pse lanN prio N` sets its priority
@@ -313,8 +315,9 @@ It writes `rtl8239-bt.bin` only if the image is byte-identical to the known
 one (SHA-256). Install it on the switch as
 `/lib/firmware/realtek/rtl8239-bt.bin`; the driver loads it within 30 s.
 Once OpenWrt runs from flash it stays in the overlay across reboots, and
-`sysupgrade` keeps it (`/lib/upgrade/keep.d/mokerlink-poe`), but a
-`sysupgrade -n` or a factory reset removes it.
+`sysupgrade` keeps it (`/lib/upgrade/keep.d/pse-realtek-rtl8239`, from
+the driver's package), but a `sysupgrade -n` or a factory reset removes
+it.
 
 The chips stay powered through a reboot and keep running the firmware they
 were given, so after a `reboot` or a `sysupgrade` PoE works even when the

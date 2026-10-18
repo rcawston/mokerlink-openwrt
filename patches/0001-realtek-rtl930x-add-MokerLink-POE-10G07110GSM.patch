@@ -1,5 +1,5 @@
 diff --git a/target/linux/realtek/base-files/etc/board.d/02_network b/target/linux/realtek/base-files/etc/board.d/02_network
-index b090ff2..55ae20b 100644
+index b090ff269c..17307405c6 100644
 --- a/target/linux/realtek/base-files/etc/board.d/02_network
 +++ b/target/linux/realtek/base-files/etc/board.d/02_network
 @@ -124,6 +124,7 @@ realtek_setup_macs()
@@ -10,8 +10,22 @@ index b090ff2..55ae20b 100644
  	tplink,tl-st1008f-v2|\
  	zyxel,xgs1010-12-a1|\
  	zyxel,xgs1010-12-b1)
+@@ -241,6 +242,13 @@ realtek_setup_poe()
+ 				lan22 lan21 lan20 lan19 lan18 lan17 lan32 lan31 lan30 lan29 lan28 lan27 lan26 lan25 lan40 lan39 lan38 lan37
+ 				lan36 lan35 lan34 lan33 lan48 lan47 lan46 lan45 lan44 lan43 lan42 lan41"
+ 		;;
++	mokerlink,poe-10g07110gsm)
++		# The PSE driver keeps a power budget, and its ports wait
++		# switched off until netifd switches them on
++		for port in lan1 lan2 lan3 lan4 lan5 lan6 lan7; do
++			ucidef_set_network_device_pse "$port" 1
++		done
++		;;
+ 	netgear,gs110tup-v1)
+ 		ucidef_set_poe 240 "$(filter_port_list "$lan_list" "lan9 lan10")"
+ 		;;
 diff --git a/target/linux/realtek/base-files/etc/init.d/hwmon_fancontrol b/target/linux/realtek/base-files/etc/init.d/hwmon_fancontrol
-index cec1e87..3378987 100755
+index cec1e8723b..3378987e2f 100755
 --- a/target/linux/realtek/base-files/etc/init.d/hwmon_fancontrol
 +++ b/target/linux/realtek/base-files/etc/init.d/hwmon_fancontrol
 @@ -121,6 +121,37 @@ linksys_lgs328mpc_v2() {
@@ -62,7 +76,7 @@ index cec1e87..3378987 100755
  	esac
  }
 diff --git a/target/linux/realtek/image/rtl930x.mk b/target/linux/realtek/image/rtl930x.mk
-index dd86ade..be7e31b 100644
+index dd86aded84..be7e31bd4d 100644
 --- a/target/linux/realtek/image/rtl930x.mk
 +++ b/target/linux/realtek/image/rtl930x.mk
 @@ -232,6 +232,29 @@ define Device/mokerlink_2g080gm
