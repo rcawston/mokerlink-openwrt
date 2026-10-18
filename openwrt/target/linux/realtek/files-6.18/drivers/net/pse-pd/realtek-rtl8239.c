@@ -11,8 +11,16 @@
  * - The chip runs Realtek firmware that the host sends at every power-up,
  *   in one write to a broadcast address shared by all RTL8239s on the bus.
  * - A port is switched on by putting its channels in auto mode and off by
- *   switching them off. Detection, classification, 4-pair operation and the
- *   power allocation are left to the firmware.
+ *   switching them off. Detection, classification and 4-pair operation are
+ *   left to the firmware.
+ *
+ * When the PSE PIs have a power supply (vpwr-supply), the PSE core keeps a
+ * power budget for it: the channels then wait in semi-automatic mode, where
+ * the chip detects and classifies a PD but does not power it, and a port is
+ * put in auto mode only once the core has allotted the power its class
+ * requests. Without a supply, every port is in auto mode from the start, as
+ * the vendor firmware runs them, and the chips power any valid PD without
+ * the host.
  *
  * This follows the vendor firmware of the MokerLink POE-10G07110GSM, which
  * has no RTL8239 datasheet behind it; the meaning of the Realtek-specific
@@ -38,7 +46,10 @@
 
 #define RTL8239_REG_PW_STATUS		0x10	/* PE 3:0, PG 7:4 */
 #define RTL8239_REG_OP_MODE		0x12	/* 2 bits per channel */
+#define   RTL8239_OP_MODE_OFF		0x0
+#define   RTL8239_OP_MODE_SEMIAUTO	0x2
 #define   RTL8239_OP_MODE_AUTO		0x3
+#define   RTL8239_OP_MODE_MASK		0x3
 #define RTL8239_REG_RESET		0x1a
 #define   RTL8239_RESET_INIT		0x20
 #define   RTL8239_RESET_DOWNLOAD	0x3f
@@ -46,9 +57,11 @@
 #define   RTL8239_ID_MFR		GENMASK(7, 3)
 #define   RTL8239_ID_MFR_REALTEK	7
 #define   RTL8239_ID_REV		GENMASK(2, 0)
-#define RTL8239_REG_DET_CLASS		0x0c	/* + channel; class 7:4 */
+#define RTL8239_REG_DET_CLASS		0x0c	/* + channel */
 #define   RTL8239_CLASS			GENMASK(7, 4)
 #define   RTL8239_CLASS_0		0xc
+#define   RTL8239_DETECT		GENMASK(3, 0)
+#define   RTL8239_DETECT_VALID		0x4
 #define RTL8239_REG_TEMP		0x2c
 #define RTL8239_REG_CHAN_CURRENT	0x30	/* + 4 * channel, 16 bit LE */
 #define RTL8239_REG_CHAN_VOLTAGE	0x32	/* + 4 * channel, 15 bit LE */
@@ -69,6 +82,10 @@
 #define RTL8239_FW_TRIES		3
 #define RTL8239_FW_CHECK_INTERVAL	(30 * HZ)
 
+/* Budget mode: how long a port switched on may take to deliver power */
+#define RTL8239_POWER_ON_TIMEOUT	(5 * HZ)
+#define RTL8239_POWER_OFF_TIMEOUT_MS	500
+
 /* 30.52 uA per LSB, 1.953 mV per LSB, as the vendor firmware scales them */
 #define RTL8239_UA_PER_LSB_X4096	125000
 #define RTL8239_UV_PER_LSB_X512		1000000
@@ -86,6 +103,13 @@ struct rtl8239_priv {
 	unsigned long next_fw_check;
 	unsigned long delivering;	/* PIs delivering at the last poll */
 	u8 chip_type;
+
+	/* Budget mode, see the top of the file */
+	bool budget;
+	unsigned long pd_found;		/* PIs with a PD reported to the core */
+	unsigned long switched_on;	/* PIs in auto mode */
+	unsigned long powered;		/* ... that delivered power since */
+	unsigned long on_since[RTL8239_MAX_CHANS];
 };
 
 static struct rtl8239_priv *to_rtl8239(struct pse_controller_dev *pcdev)
@@ -120,13 +144,14 @@ static void rtl8239_pi_mode_mask(struct rtl8239_priv *priv, int id, u8 mask[2])
 		u8 chan = pi->chan[i];
 
 		mask[chan / RTL8239_QUAD_CHANS] |=
-			RTL8239_OP_MODE_AUTO << (2 * (chan % RTL8239_QUAD_CHANS));
+			RTL8239_OP_MODE_MASK << (2 * (chan % RTL8239_QUAD_CHANS));
 	}
 }
 
-static int rtl8239_pi_set_mode(struct rtl8239_priv *priv, int id, bool on)
+/* Put the PI's channels in one of the RTL8239_OP_MODE_* modes */
+static int rtl8239_pi_set_mode(struct rtl8239_priv *priv, int id, u8 mode)
 {
-	u8 mask[2];
+	u8 mask[2], val;
 	int quad, ret;
 
 	rtl8239_pi_mode_mask(priv, id, mask);
@@ -138,8 +163,9 @@ static int rtl8239_pi_set_mode(struct rtl8239_priv *priv, int id, bool on)
 		if (ret < 0)
 			return ret;
 
-		ret = rtl8239_write(priv, quad, RTL8239_REG_OP_MODE,
-				    on ? ret | mask[quad] : ret & ~mask[quad]);
+		/* The 2-bit mode repeated for all four channels, masked */
+		val = (ret & ~mask[quad]) | (mode * 0x55 & mask[quad]);
+		ret = rtl8239_write(priv, quad, RTL8239_REG_OP_MODE, val);
 		if (ret)
 			return ret;
 	}
@@ -147,14 +173,79 @@ static int rtl8239_pi_set_mode(struct rtl8239_priv *priv, int id, bool on)
 	return 0;
 }
 
+/* Power enable and power good of the PI's channels, any channel */
+static int rtl8239_pi_power(struct rtl8239_priv *priv, int id, bool *enabled,
+			    bool *delivering)
+{
+	struct rtl8239_pi *pi = &priv->pi[id];
+	int i, ret;
+
+	*enabled = false;
+	*delivering = false;
+	for (i = 0; i < (pi->is_4p ? 2 : 1); i++) {
+		u8 ch = pi->chan[i] % RTL8239_QUAD_CHANS;
+
+		ret = i2c_smbus_read_byte_data(rtl8239_quad(priv, pi->chan[i]),
+					       RTL8239_REG_PW_STATUS);
+		if (ret < 0)
+			return ret;
+		if (ret & BIT(ch)) {
+			*enabled = true;
+			if (ret & BIT(ch + 4))
+				*delivering = true;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * Budget mode: switch the port off and back to detecting, once the chip has
+ * dropped the power, so that semi-automatic mode does not keep it on.
+ */
+static int rtl8239_pi_switch_off(struct rtl8239_priv *priv, int id)
+{
+	bool enabled, delivering;
+	int ret, err;
+
+	__clear_bit(id, &priv->switched_on);
+	ret = rtl8239_pi_set_mode(priv, id, RTL8239_OP_MODE_OFF);
+	if (ret)
+		return ret;
+
+	ret = read_poll_timeout(rtl8239_pi_power, err, err || !enabled,
+				10 * USEC_PER_MSEC,
+				RTL8239_POWER_OFF_TIMEOUT_MS * USEC_PER_MSEC,
+				false, priv, id, &enabled, &delivering);
+	if (ret || err)
+		return ret ?: err;
+
+	return rtl8239_pi_set_mode(priv, id, RTL8239_OP_MODE_SEMIAUTO);
+}
+
 static int rtl8239_pi_enable(struct pse_controller_dev *pcdev, int id)
 {
-	return rtl8239_pi_set_mode(to_rtl8239(pcdev), id, true);
+	struct rtl8239_priv *priv = to_rtl8239(pcdev);
+	int ret;
+
+	ret = rtl8239_pi_set_mode(priv, id, RTL8239_OP_MODE_AUTO);
+	if (ret || !priv->budget)
+		return ret;
+
+	__set_bit(id, &priv->switched_on);
+	__clear_bit(id, &priv->powered);
+	priv->on_since[id] = jiffies;
+	return 0;
 }
 
 static int rtl8239_pi_disable(struct pse_controller_dev *pcdev, int id)
 {
-	return rtl8239_pi_set_mode(to_rtl8239(pcdev), id, false);
+	struct rtl8239_priv *priv = to_rtl8239(pcdev);
+
+	if (priv->budget)
+		return rtl8239_pi_switch_off(priv, id);
+
+	return rtl8239_pi_set_mode(priv, id, RTL8239_OP_MODE_OFF);
 }
 
 static int rtl8239_pi_is_enabled(struct rtl8239_priv *priv, int id)
@@ -177,26 +268,6 @@ static int rtl8239_pi_is_enabled(struct rtl8239_priv *priv, int id)
 	return 1;
 }
 
-/* Whether any channel of the PI delivers power (power enable and good) */
-static int rtl8239_pi_is_delivering(struct rtl8239_priv *priv, int id)
-{
-	struct rtl8239_pi *pi = &priv->pi[id];
-	int i, ret;
-
-	for (i = 0; i < (pi->is_4p ? 2 : 1); i++) {
-		u8 ch = pi->chan[i] % RTL8239_QUAD_CHANS;
-
-		ret = i2c_smbus_read_byte_data(rtl8239_quad(priv, pi->chan[i]),
-					       RTL8239_REG_PW_STATUS);
-		if (ret < 0)
-			return ret;
-		if ((ret & BIT(ch)) && (ret & BIT(ch + 4)))
-			return 1;
-	}
-
-	return 0;
-}
-
 static int rtl8239_pi_get_admin_state(struct pse_controller_dev *pcdev, int id,
 				      struct pse_admin_state *admin_state)
 {
@@ -214,17 +285,22 @@ static int rtl8239_pi_get_pw_status(struct pse_controller_dev *pcdev, int id,
 				    struct pse_pw_status *pw_status)
 {
 	struct rtl8239_priv *priv = to_rtl8239(pcdev);
+	bool enabled, delivering;
 	int ret;
 
-	ret = rtl8239_pi_is_delivering(priv, id);
-	if (ret < 0)
+	ret = rtl8239_pi_power(priv, id, &enabled, &delivering);
+	if (ret)
 		return ret;
-	if (ret) {
+	if (delivering) {
 		pw_status->c33_pw_status = ETHTOOL_C33_PSE_PW_D_STATUS_DELIVERING;
 		return 0;
 	}
 
-	ret = rtl8239_pi_is_enabled(priv, id);
+	/* In budget mode the core keeps the admin state */
+	if (priv->budget)
+		ret = pcdev->pi[id].admin_state_enabled;
+	else
+		ret = rtl8239_pi_is_enabled(priv, id);
 	if (ret < 0)
 		return ret;
 
@@ -233,20 +309,38 @@ static int rtl8239_pi_get_pw_status(struct pse_controller_dev *pcdev, int id,
 	return 0;
 }
 
+/* Detection and class result of the PI's first channel */
+static int rtl8239_pi_det_class(struct rtl8239_priv *priv, int id)
+{
+	u8 chan = priv->pi[id].chan[0];
+
+	return i2c_smbus_read_byte_data(rtl8239_quad(priv, chan),
+					RTL8239_REG_DET_CLASS + chan % RTL8239_QUAD_CHANS);
+}
+
 /* Class of the PD on the PI's first channel; 0 when none was found */
 static int rtl8239_pi_get_pw_class(struct pse_controller_dev *pcdev, int id)
 {
-	struct rtl8239_priv *priv = to_rtl8239(pcdev);
-	u8 chan = priv->pi[id].chan[0];
 	int ret, class;
 
-	ret = i2c_smbus_read_byte_data(rtl8239_quad(priv, chan),
-				       RTL8239_REG_DET_CLASS + chan % RTL8239_QUAD_CHANS);
+	ret = rtl8239_pi_det_class(to_rtl8239(pcdev), id);
 	if (ret < 0)
 		return ret;
 
 	class = FIELD_GET(RTL8239_CLASS, ret);
 	return class >= 1 && class <= 8 ? class : 0;
+}
+
+/* Power in mW a PSE allots to a PD of each class, IEEE 802.3 table 145-16 */
+static const int rtl8239_class_power[] = {
+	15400, 4000, 7000, 15400, 30000, 45000, 60000, 75000, 90000,
+};
+
+static int rtl8239_pi_get_pw_req(struct pse_controller_dev *pcdev, int id)
+{
+	int class = rtl8239_pi_get_pw_class(pcdev, id);
+
+	return class < 0 ? class : rtl8239_class_power[class];
 }
 
 static int rtl8239_read_word(struct i2c_client *client, u8 reg)
@@ -475,7 +569,7 @@ static bool rtl8239_get_fw(struct rtl8239_priv *priv)
 /*
  * Every RTL8239_FW_CHECK_INTERVAL: load the firmware once it has been
  * installed, or reload it if the chip stopped running it, then restore the
- * PIs, which the reload switched off.
+ * PIs, which the reload switched off. In budget mode the polling does that.
  */
 static void rtl8239_fw_watchdog(struct rtl8239_priv *priv)
 {
@@ -497,19 +591,114 @@ static void rtl8239_fw_watchdog(struct rtl8239_priv *priv)
 		dev_warn(pcdev->dev, "firmware stopped (status 0x%02x), reloading\n", ret);
 	}
 
-	if (rtl8239_fw_load(priv))
+	if (rtl8239_fw_load(priv) || priv->budget)
 		return;
 
 	for (i = 0; i < pcdev->nr_lines; i++)
 		if (pcdev->pi[i].admin_state_enabled)
-			rtl8239_pi_set_mode(priv, i, true);
+			rtl8239_pi_set_mode(priv, i, RTL8239_OP_MODE_AUTO);
 }
 
-/* Polled: report PIs that started or stopped delivering power */
+/* Operating mode of the PI's first channel */
+static int rtl8239_pi_get_mode(struct rtl8239_priv *priv, int id)
+{
+	u8 chan = priv->pi[id].chan[0];
+	int ret;
+
+	ret = i2c_smbus_read_byte_data(rtl8239_quad(priv, chan), RTL8239_REG_OP_MODE);
+	if (ret < 0)
+		return ret;
+
+	return ret >> (2 * (chan % RTL8239_QUAD_CHANS)) & RTL8239_OP_MODE_MASK;
+}
+
+/* Budget mode: whether the chip found and classified a PD on the PI */
+static int rtl8239_pi_pd_found(struct rtl8239_priv *priv, int id)
+{
+	int ret, class;
+
+	ret = rtl8239_pi_det_class(priv, id);
+	if (ret < 0)
+		return ret;
+
+	class = FIELD_GET(RTL8239_CLASS, ret);
+	return FIELD_GET(RTL8239_DETECT, ret) == RTL8239_DETECT_VALID &&
+	       ((class >= 1 && class <= 8) || class == RTL8239_CLASS_0);
+}
+
+/*
+ * Budget mode: report a PD found on a port that waits in semi-automatic mode
+ * (classification), so that the core powers it if the budget allows, and a
+ * PD gone (disconnection). A port the core switched on that stops being
+ * powered, because the PD went away or the chip switched it off, or that is
+ * not powered in time, goes back to waiting and is reported as disconnected;
+ * a PD still there is then found again.
+ */
+static int rtl8239_pi_budget_event(struct rtl8239_priv *priv, int id,
+				   bool enabled, bool delivering,
+				   unsigned long *event)
+{
+	struct device *dev = priv->pcdev.dev;
+	int ret;
+
+	if (test_bit(id, &priv->switched_on)) {
+		if (enabled) {
+			if (delivering)
+				__set_bit(id, &priv->powered);
+			return 0;
+		}
+
+		if (!test_bit(id, &priv->powered)) {
+			if (time_before(jiffies, priv->on_since[id] +
+					RTL8239_POWER_ON_TIMEOUT))
+				return 0;
+			dev_warn_ratelimited(dev, "PI %d: no power after %d s\n", id,
+					     RTL8239_POWER_ON_TIMEOUT / HZ);
+		}
+
+		ret = rtl8239_pi_switch_off(priv, id);
+		if (ret)
+			return ret;
+		__clear_bit(id, &priv->pd_found);
+		*event = ETHTOOL_C33_PSE_EVENT_DISCONNECTION;
+		return 0;
+	}
+
+	/* Back to waiting after a firmware reload or a failed switch-off */
+	ret = rtl8239_pi_get_mode(priv, id);
+	if (ret < 0)
+		return ret;
+	if (ret == RTL8239_OP_MODE_AUTO)
+		ret = rtl8239_pi_switch_off(priv, id);
+	else if (ret != RTL8239_OP_MODE_SEMIAUTO && !enabled)
+		ret = rtl8239_pi_set_mode(priv, id, RTL8239_OP_MODE_SEMIAUTO);
+	else
+		ret = 0;
+	if (ret)
+		return ret;
+
+	ret = rtl8239_pi_pd_found(priv, id);
+	if (ret < 0)
+		return ret;
+	if (ret == test_bit(id, &priv->pd_found))
+		return 0;
+
+	__assign_bit(id, &priv->pd_found, ret);
+	*event = ret ? ETHTOOL_C33_PSE_EVENT_CLASSIFICATION :
+		       ETHTOOL_C33_PSE_EVENT_DISCONNECTION;
+	return 0;
+}
+
+/*
+ * Polled: report PIs that started or stopped delivering power, which also
+ * updates the LED triggers, and the budget mode events
+ */
 static int rtl8239_map_event(int irq, struct pse_controller_dev *pcdev,
 			     unsigned long *notifs, unsigned long *notifs_mask)
 {
 	struct rtl8239_priv *priv = to_rtl8239(pcdev);
+	bool enabled, delivering;
+	unsigned long event;
 	int i, ret;
 
 	rtl8239_fw_watchdog(priv);
@@ -518,16 +707,35 @@ static int rtl8239_map_event(int irq, struct pse_controller_dev *pcdev,
 		if (!pcdev->pi[i].np)
 			continue;
 
-		ret = rtl8239_pi_is_delivering(priv, i);
-		if (ret < 0)
+		ret = rtl8239_pi_power(priv, i, &enabled, &delivering);
+		if (ret)
 			return ret;
-		if (!!ret == test_bit(i, &priv->delivering))
-			continue;
 
-		__assign_bit(i, &priv->delivering, ret);
-		__set_bit(i, notifs_mask);
-		notifs[i] = ret ? ETHTOOL_C33_PSE_EVENT_DETECTION :
-				  ETHTOOL_C33_PSE_EVENT_DISCONNECTION;
+		event = 0;
+		if (priv->budget) {
+			ret = rtl8239_pi_budget_event(priv, i, enabled,
+						      delivering, &event);
+			if (ret)
+				return ret;
+		}
+
+		if (delivering != test_bit(i, &priv->delivering)) {
+			__assign_bit(i, &priv->delivering, delivering);
+			/*
+			 * In budget mode a disconnection makes the core switch
+			 * the port off, so a port the core switched off itself
+			 * is reported as detected: the PD is still there.
+			 */
+			if (!event)
+				event = delivering || priv->budget ?
+					ETHTOOL_C33_PSE_EVENT_DETECTION :
+					ETHTOOL_C33_PSE_EVENT_DISCONNECTION;
+		}
+
+		if (event) {
+			__set_bit(i, notifs_mask);
+			notifs[i] = event;
+		}
 	}
 
 	return 0;
@@ -585,6 +793,7 @@ static const struct pse_controller_ops rtl8239_ops = {
 	.pi_get_pw_class = rtl8239_pi_get_pw_class,
 	.pi_get_actual_pw = rtl8239_pi_get_actual_pw,
 	.pi_get_voltage = rtl8239_pi_get_voltage,
+	.pi_get_pw_req = rtl8239_pi_get_pw_req,
 };
 
 static const struct pse_irq_desc rtl8239_poll_desc = {
@@ -605,13 +814,16 @@ static void rtl8239_unregister(void *data)
 }
 
 /*
- * Switch on every channel the device tree lists, before the controller is
- * registered: consumers read the initial admin state from the hardware.
- * Like an unmanaged PoE switch, the chip then powers only valid PDs; ports
- * can be switched off with ethtool.
+ * Set every channel the device tree lists to its starting mode, before the
+ * controller is registered: consumers read the initial admin state from the
+ * hardware. Without a budget that is auto mode, and like an unmanaged PoE
+ * switch the chip powers any valid PD; ports can be switched off with
+ * ethtool. In budget mode the channels wait in semi-automatic mode and the
+ * ports start switched off, until the core switches them on.
  */
 static int rtl8239_enable_channels(struct rtl8239_priv *priv)
 {
+	u8 mode = priv->budget ? RTL8239_OP_MODE_SEMIAUTO : RTL8239_OP_MODE_AUTO;
 	struct device_node *channels;
 	u8 mask[2] = { 0, 0 };
 	int quad, ret;
@@ -625,7 +837,7 @@ static int rtl8239_enable_channels(struct rtl8239_priv *priv)
 		if (of_property_read_u32(np, "reg", &reg) || reg >= RTL8239_MAX_CHANS)
 			continue;
 		mask[reg / RTL8239_QUAD_CHANS] |=
-			RTL8239_OP_MODE_AUTO << (2 * (reg % RTL8239_QUAD_CHANS));
+			RTL8239_OP_MODE_MASK << (2 * (reg % RTL8239_QUAD_CHANS));
 	}
 	of_node_put(channels);
 
@@ -637,12 +849,34 @@ static int rtl8239_enable_channels(struct rtl8239_priv *priv)
 		if (ret < 0)
 			return ret;
 
-		ret = rtl8239_write(priv, quad, RTL8239_REG_OP_MODE, ret | mask[quad]);
+		ret = rtl8239_write(priv, quad, RTL8239_REG_OP_MODE,
+				    (ret & ~mask[quad]) | (mode * 0x55 & mask[quad]));
 		if (ret)
 			return ret;
 	}
 
 	return 0;
+}
+
+/* Budget mode when the PSE PIs have a power supply to keep a budget for */
+static bool rtl8239_has_supply(struct device *dev)
+{
+	struct device_node *pis;
+	bool found = false;
+
+	pis = of_get_child_by_name(dev->of_node, "pse-pis");
+	if (!pis)
+		return false;
+
+	for_each_child_of_node_scoped(pis, np) {
+		if (of_property_present(np, "vpwr-supply")) {
+			found = true;
+			break;
+		}
+	}
+	of_node_put(pis);
+
+	return found;
 }
 
 static int rtl8239_probe(struct i2c_client *client)
@@ -706,6 +940,7 @@ static int rtl8239_probe(struct i2c_client *client)
 		 FIELD_GET(RTL8239_ID_REV, id), priv->chip_type, ret,
 		 temp < 0 ? temp : temp * 652 / 1000 - 20);
 
+	priv->budget = rtl8239_has_supply(dev);
 	ret = rtl8239_enable_channels(priv);
 	if (ret)
 		return dev_err_probe(dev, ret, "cannot enable the ports\n");
@@ -714,6 +949,8 @@ static int rtl8239_probe(struct i2c_client *client)
 	priv->pcdev.ops = &rtl8239_ops;
 	priv->pcdev.types = ETHTOOL_PSE_C33;
 	priv->pcdev.nr_lines = RTL8239_MAX_CHANS;
+	if (priv->budget)
+		priv->pcdev.supp_budget_eval_strategies = PSE_BUDGET_EVAL_STRAT_STATIC;
 
 	ret = devm_pse_poll_helper(&priv->pcdev, &rtl8239_poll_desc);
 	if (ret)

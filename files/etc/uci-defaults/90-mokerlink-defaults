@@ -8,6 +8,10 @@
 
 [ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = "mokerlink,poe-10g07110gsm" ] || exit 0
 
+# Only once: a sysupgrade that keeps the settings runs this again, and must
+# not reset what was changed since
+[ "$(uci -q get mokerlink.switch.defaults)" = 1 ] && exit 0
+
 uci set system.@system[0].hostname='mokerlink-switch'
 
 # Management address from DHCP, like any other host on the network. The
@@ -57,5 +61,6 @@ for port in $ports; do
 	uci set "network.$(port_device_section "$port").mtu=9216"
 done
 
+uci set mokerlink.switch.defaults='1'
 uci commit
 exit 0

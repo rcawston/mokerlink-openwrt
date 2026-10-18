@@ -11,7 +11,7 @@
 | Management MTU | 1500 | interface `lan` |
 | EEE (802.3az) | off | `/etc/config/mokerlink`, then `service mokerlink reload` |
 | Fans | 50 %, full speed above 65 °C (fan controller sensors) or 95 °C (PHYs) | `/etc/config/mokerlink`, section `fan` |
-| PoE | all ports on; only valid PoE devices get power; green PoE LED per port. Needs the RTL8239 firmware in `/lib/firmware/realtek/` (kept by `sysupgrade`, removed by a factory reset; [05-porting.md](05-porting.md#poe)) | `ethtool --set-pse lanN c33-pse-admin-control disable` |
+| PoE | all ports on; only valid PoE devices get power, within a 260 W budget by class; green PoE LED per port. Needs the RTL8239 firmware in `/lib/firmware/realtek/` (kept by `sysupgrade`, removed by a factory reset; [05-porting.md](05-porting.md#poe)) | device options `pse` and `pse_priority` in `/etc/config/network` ([below](#poe)) |
 | Spanning tree | off | *Devices → switch → Bridge options* |
 | DHCP server, routing, firewall | not installed | |
 | Web UI | `http://<address>/` (LuCI) | |
@@ -59,6 +59,19 @@ bridge fdb show              # learned MAC addresses
 bridge vlan show             # VLAN membership per port
 logread -f                   # system log
 ```
+
+## PoE
+
+Each RJ45 port has a `config device` section in `/etc/config/network` with
+`option name 'lanN'`. Its `pse` option switches PoE on (`1`, the default)
+or off (`0`), and `pse_priority` sets the port's priority, `0` (the
+default) being the highest. Apply changes with `service network reload`.
+
+The ports share a 260 W budget. A PD gets the power its class asks for
+(up to 90 W for class 8) if that still fits. If it doesn't, ports with a
+lower priority on the same chip (ports 1-3 or ports 4-7) are switched off
+to make room; otherwise the new PD waits. `ethtool --show-pse lanN` shows
+a port's state, class and power.
 
 ## Configuration backup
 

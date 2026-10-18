@@ -11,12 +11,13 @@ switch and tools to bring up the hardware safely.
 > **Status.** Tested on a real unit booted from RAM: all seven copper
 > ports forward traffic, with links tested at 100 Mbit/s and 1, 2.5 and
 > 10 Gbit/s; the SFP+ cage works at 10 Gbit/s with a 10G module; the fans
-> run at 50 % like stock; and PoE powers 802.3at and 802.3bt devices with
-> the green PoE LEDs lit. PoE needs the RTL8239 firmware copied out of your
-> stock image
+> run at 50 % like stock; PoE powers 802.3at and 802.3bt devices with the
+> green PoE LEDs lit; SFP+ modules can be swapped, 1G ones included; and
+> the reset button works. PoE needs the RTL8239 firmware copied out of
+> your stock image
 > ([docs/05-porting.md](docs/05-porting.md#the-rtl8239-firmware)).
-> Not yet tested: the reset button, SFP+ module detection and 1G modules,
-> and running from flash. Open points are listed in
+> Not yet tested: the PoE power budget, the fix for doubled link-down
+> messages, and running from flash. Open points are listed in
 > [docs/05-porting.md](docs/05-porting.md#open-points).
 
 ## Why OpenWrt and not firmware from scratch
@@ -41,9 +42,9 @@ reviewable board description on top of it is the most reliable option.
 - Web UI (LuCI, layer-2 edition) and SSH
 - Hardware watchdog: a hung system reboots itself
 - Fan control like the stock firmware: 50 % normally, full speed when hot
-- PoE (802.3af/at/bt) on ports 1-7, all on by default, per port with
-  `ethtool`, with the PoE LEDs; needs the RTL8239 firmware from your
-  stock image
+- PoE (802.3af/at/bt) on ports 1-7, all on by default, with the PoE LEDs
+  and a 260 W power budget with port priorities; needs the RTL8239
+  firmware from your stock image
 - SFP+ with module EEPROM and diagnostics (`ethtool -m`), 1G modules,
   and the reset button (short press reboots, 5 s resets to defaults)
 - Tools on the switch: `mokerlink-probe`, `mokerlink-backup`,
@@ -93,7 +94,7 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 | Path | Contents |
 |---|---|
 | `openwrt/target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts` | Board description (device tree) |
-| `patches/` | OpenWrt changes: image recipe, MAC address source, kernel packages |
+| `patches/` | OpenWrt changes: image recipe, MAC address source, kernel packages, a fix for the switch driver's link change reporting |
 | `openwrt/target/linux/realtek/files-6.18`, `patches-6.18/83x-*` | New kernel drivers with their bindings: RTL8239 PoE (`realtek-rtl8239`), the shared-SCL I²C buses (`i2c-gpio-shared-scl`) and the PoE LEDs (`leds-rtl9300-port`), plus two binding patches for upstream (`833`, `834`) |
 | `files/` | Files added to the firmware: switch defaults and bring-up tools |
 | `config/` | Pinned OpenWrt and feed revisions, package selection |

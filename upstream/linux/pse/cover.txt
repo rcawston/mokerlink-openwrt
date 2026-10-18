@@ -15,9 +15,21 @@ driver loads it with the firmware loader if it is installed, and looks
 for it again periodically otherwise. Everything here follows the vendor
 firmware of the MokerLink POE-10G07110GSM.
 
+With a vpwr-supply on the PSE PIs, the driver supports the static
+budget evaluation strategy: the chip detects and classifies a PD in
+semi-automatic mode, and the core switches the port on once the power
+of its class fits the budget. Without one, the chips run in auto mode
+and power any valid PD on their own, as the vendor firmware runs them.
+
 Tested on that switch with an 802.3bt access point (class 7) and an
 802.3at camera (class 4) on both chips: detection, classification,
 power, measurements, admin state and the PSE LED triggers.
+
+One question for the budget: the two RTL8239s of that switch share one
+54 V supply, so their PIs share one power domain, but the core only
+sheds or retries PIs of the controller that reported the event. Should
+the core walk all controllers of a power domain there, or should such a
+board describe one supply per chip?
 
 The driver uses devm_pse_poll_helper(), as the board does not wire the
 chips' interrupt line, so this series depends on the PSE poll helper

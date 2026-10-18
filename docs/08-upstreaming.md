@@ -14,8 +14,21 @@ this repository; the commit messages are in `upstream/`.
 | RTL9300 port LEDs: binding, switch binding, driver | `realtek: add RTL9300 port LED driver` (`832-*`, `kmod-leds-rtl9300-port`) | `leds` series: leds tree, linux-leds (the switch binding patch also to netdev) |
 | PSE LED trigger names in `leds/common.yaml` | not needed | `pse-led-triggers`: with the PSE LED trigger series |
 | the device | `realtek: rtl930x: add support for MokerLink POE-10G07110GSM` | none |
+| link change fix in the switch driver | `realtek: dsa: let phylib read the PHY on a port link change` (`patches/0003-*`, a patch to OpenWrt's own driver, ready to send as it is) | none |
 
-Not submitted: the `mokerlink-*` tools and the `mokerlink-fan` service.
+Not submitted: the `mokerlink-*` tools, the `mokerlink-fan` service and
+the first-boot defaults in `files/`.
+
+## PoE budget defaults
+
+With the PoE supply in the device tree, the ports start switched off until
+netifd's `pse` device option switches them on; this repository's
+first-boot defaults set it for lan1-lan7. OpenWrt has no board default
+for that option yet (`ucidef_set_poe` belongs to the `realtek-poe`
+package). For the device commit that means either adding such a default
+to `board.d`, or leaving the supply out of the device tree upstream, so
+that the ports run in auto mode, on and without a budget, as in the stock
+firmware.
 
 ## Fan control
 
@@ -124,8 +137,12 @@ tree.
   firmware. The firmware is not redistributable, so it is not in
   linux-firmware and the driver works without it until it is installed.
   Expect questions about the broadcast download (each chip's instance
-  sends the image to the shared address; the other chip ignores it) and
-  about the second address as an ancillary device.
+  sends the image to the shared address; the other chip ignores it),
+  about the second address as an ancillary device, and about the two
+  modes: auto without a supply, the static budget with one. In budget
+  mode a port is switched on by putting it in auto mode rather than with
+  the power-on register, so that the chip handles the disconnection as
+  it does in the stock firmware.
 - **Shared-SCL buses:** reviewers may suggest i2c-gpio plus a mux, or the
   SoC's I²C master. A mux can't switch SDA lines without hardware for it,
   and the master is ruled out by the PoE firmware download (one 25 KiB

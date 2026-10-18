@@ -47,9 +47,9 @@ properties:
 
   channels:
     description: |
-      The delivery channels wired to ports. The driver switches all of them
-      on at probe. PSE PIs reference them through "pairsets"; a 4-pair PI
-      uses two consecutive channels, 0+1, 2+3, 4+5 or 6+7.
+      The delivery channels wired to ports. PSE PIs reference them through
+      "pairsets"; a 4-pair PI uses two consecutive channels, 0+1, 2+3, 4+5
+      or 6+7.
     type: object
     additionalProperties: false
 
@@ -114,6 +114,7 @@ examples:
             #pse-cells = <0>;
             pairset-names = "alternative-a", "alternative-b";
             pairsets = <&chan0>, <&chan1>;
+            vpwr-supply = <&poe_supply>;
           };
         };
       };

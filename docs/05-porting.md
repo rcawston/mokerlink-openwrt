@@ -97,6 +97,23 @@ line to use, e.g. `&phy8 { rx-polarity = <PHY_POL_INVERT>; };`. A
 mismatch on a differential lane can be corrected at either end, so this
 works whichever side the board needs it on. "Normal" needs no line.
 
+## Link changes
+
+The switch raises an interrupt when a port's MAC link changes. For a
+port with a PHY, OpenWrt's switch driver used to pass that to phylink,
+which took the link down and straight back up from the PHY state of the
+last poll (the PHYs are polled once a second), so every link loss was
+logged as down, up 14 ms later, and down again within a second.
+`patches/0003-*.patch` makes the driver let phylib read the PHY instead,
+which also reports a new link without waiting for the poll.
+
+With that out of the way, a cable plugged in from a device that is
+already up gives one clean link-up: the PHY completes autonegotiation,
+then reports link, and the kernel follows. Devices that start up when
+plugged in, PoE devices in particular, take their own link down and up
+while they boot (a boot loader that links with flow control, then the
+operating system that links again); that is the device, not the port.
+
 ## SFP+ cage
 
 `lan8` (MAC port 27, SerDes 9) has an `sff,sfp` node: the module EEPROM is
@@ -111,8 +128,12 @@ as the stock firmware registers them for this board (`board_gpio_init` in
 | transmitter disable | `TX_DIS_FX_0` | 14 | high = off |
 
 There is no transmitter fault line. With the cage described, phylink reads
-the module, switches SerDes 9 between 10GBASE-R and 1000BASE-X to match it,
-and `ethtool -m lan8` shows the module EEPROM and diagnostics.
+the module and switches SerDes 9 to match it: 10GBASE-R for a 10G module,
+SGMII with in-band status for a 1G copper module (whose PHY, a Marvell
+88E1111 on the tested one, it drives over the module's I²C), 1000BASE-X
+for a 1G fibre module. Modules can be swapped while the switch runs, and
+`ethtool -m lan8` shows the module EEPROM, with diagnostics for modules
+that have them.
 
 ## Reset button
 
@@ -122,8 +143,7 @@ uses). The device tree declares it as `KEY_RESTART`, so OpenWrt's button
 handler applies: a press shorter than 1 s reboots, one longer than 5 s
 resets to defaults. The stock firmware factory-resets on a press of 5 s or
 longer too, and ignores the button if it reads pressed at boot.
-`mokerlink-gpio-watch` shows the GPIO level live; `mokerlink-hw-test`
-checks the button with the reset action switched off.
+`mokerlink-gpio-watch` shows the GPIO level live.
 
 ## LEDs
 
@@ -173,11 +193,17 @@ operation and power limits are left to the chip firmware. Every 30 s it
 checks bit 5 of `0xec` (firmware running) and reloads the image if it
 dropped.
 
+The operating mode has two bits per channel in `0x12`: `00` off, `10`
+semi-automatic, `11` auto. The stock firmware uses only off and auto. In
+semi-automatic mode the chip detects and classifies a PD but doesn't power
+it until the host writes `0x19` (bits 3:0 power a channel on, bits 7:4
+switch it off), exactly as on the TPS2388x.
+
 Status registers:
 
 - `0x10`: power enable and power good per channel
 - `0x0c` + channel: class in bits 7:4, 1-8 for classes 1-8 and `0xc` for
-  class 0
+  class 0; detection result in bits 3:0, `4` for a valid PD
 - `0x30`/`0x32` + 4 × channel: current (125/4096 mA per step) and voltage
   (1/512 V per step)
 - `0x2c`: temperature; `0x2e`/`0x2f`: the 54 V supply
@@ -187,10 +213,10 @@ Status registers:
 With it, each chip loads the image in about 3 s, and a valid PD gets power
 within seconds of plug-in. Both pairsets are powered even for a class 4
 device (an 802.3at camera drew about 64 + 54 mA at 52.7 V). A device
-without PoE is not powered and links normally. Some PDs take their own
-link down and up repeatedly while they boot (an 802.3bt access point went
-down for about 25 s at a time, over and over); that is the PD, not the
-port.
+without PoE is not powered and links normally. PDs take their own link
+down and up while they boot (see [Link changes](#link-changes)); an 802.3bt
+access point went down for about 25 s at a time, over and over, while it
+started.
 
 **Why the PoE bus is bit-banged.** The three buses' pins are also the
 RTL9303's I²C master 1 (SCL GPIO 8, SDA0-SDA2 on GPIOs 9-11), and the
@@ -200,17 +226,35 @@ write: sent in 16-byte writes, they accept the first and NAK the second.
 So the PoE bus is bit-banged, and since the three buses share SCL, the fan
 and SFP+ buses are on the same `i2c-gpio-shared-scl` driver.
 
-**In OpenWrt** the `realtek-rtl8239` driver does what the stock firmware
-does, through the Linux PSE framework:
+**In OpenWrt** the `realtek-rtl8239` driver runs the chips through the
+Linux PSE framework, with a power budget:
 
-- all ports are on at boot, like the stock firmware's default; the chips
-  power only valid PoE devices
-- `ethtool --show-pse lanN` shows the state, class, voltage and power,
-  `ethtool --set-pse lanN c33-pse-admin-control disable|enable` switches a
-  port
+- the device tree gives the PoE ports a supply of 260 W, the datasheet's
+  total, and the PSE core keeps that budget with the static strategy: it
+  allots each PD the power of its class (4 W for class 1 up to 90 W for
+  class 8, 15.4 W for class 0) and powers a port only while that fits.
+  When a PD doesn't fit, ports of lower priority (higher number) on the
+  same chip are switched off for it. A port left waiting is powered when
+  a port on the same chip frees power, or when it is switched on again
+- for that the channels wait in semi-automatic mode. When the chip has
+  classified a PD, the driver reports it, and the core switches the port
+  on by putting it in auto mode, where the chip powers the PD and removes
+  the power when it goes away, as in the stock firmware. A port that
+  loses power goes back to waiting
+- the ports start switched off; netifd switches them on with the `pse`
+  device option, which the firmware's defaults set for lan1-lan7
+- `ethtool --show-pse lanN` shows the state, class, voltage, power and
+  priority, `ethtool --set-pse lanN c33-pse-admin-control disable|enable`
+  switches a port and `ethtool --set-pse lanN prio N` sets its priority
+  (0 is the highest); `/sys/class/regulator/regulator.N/power_requested_milliwatt`
+  of the `poe` regulator is the power allotted
 - the firmware image is loaded at probe if it is installed, and looked for
   again every 30 s otherwise; the driver also reloads it if a chip stops
   running it
+
+Without the supply in the device tree, the driver runs the chips as the
+stock firmware does: all ports in auto mode from probe, and the chips
+power any valid PD without a budget.
 
 ### PoE LEDs
 
@@ -315,20 +359,13 @@ isn't built yet.
 
 ## Open points
 
-- **Not yet tested on hardware:** the reset button, SFP+ module detection
-  and hot-plug, 1G modules, and running from flash. `mokerlink-hw-test`
-  goes through the button and the SFP+ cage.
-- **Link drops after plug-in:** a newly plugged device's link goes down and
-  up 2-4 times within about 10 s before it stays up, on both PHY types and
-  with or without PoE; the first link-up reports flow control off. It
-  settles by itself. It looks like the RTL826x PHYs reporting link before
-  autonegotiation has finished; `mokerlink-hw-test` records the PHY status
-  registers during plug-in.
-- **PoE power budget:** ports are powered whatever their class, within the
-  chips' own limits, as in the stock firmware. A budget with port
-  priorities in the PSE framework needs the chips to detect and classify
-  but wait for the host before powering a port (semi-auto mode);
-  `mokerlink-hw-test` checks whether they do.
+- **Not yet tested on hardware:** the PoE budget, the link change fix, and
+  running from flash. `mokerlink-hw-test` goes through the first two.
+- **PoE budget across the two chips:** both chips share the 260 W, but the
+  PSE core sheds and retries only ports of the chip that has the event
+  (front ports 1-3 on one, 4-7 on the other). A port of one chip doesn't
+  get power freed on the other until something changes on its own chip.
+  Fixing that is a PSE core change, asked about upstream.
 - **PoE pairsets:** which channel of a port is alternative A and which B.
 - **Factory image:** see [Images](#images).
 - **Fan control upstream:** see

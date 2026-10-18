@@ -17,10 +17,18 @@ with three differences that this driver handles:
   switching them off; detection, classification and 4-pair operation
   are left to the firmware
 
-All channels listed in the device tree are switched on at probe, before
-the controller is registered, as the vendor firmware does. Events come
-from the PSE poll helper. Power status, class, voltage and power are
-reported as the vendor firmware scales them.
+Without a power supply on the PSE PIs, all channels listed in the
+device tree are put in auto mode at probe, before the controller is
+registered, as the vendor firmware does, and the chips power any valid
+PD on their own. With a vpwr-supply, the driver uses the static budget
+evaluation strategy: the channels wait in semi-automatic mode, where
+the chip detects and classifies a PD without powering it, the driver
+reports a classified PD to the core, and the core switches the port on
+(auto mode) once the power of its class fits the budget. A port that
+loses power, or is not powered in time, goes back to waiting and is
+reported as disconnected. Events come from the PSE poll helper. Power
+status, class, voltage and power are reported as the vendor firmware
+scales them.
 
 There is no datasheet; the Realtek-specific registers (chip type,
 firmware status and download) follow the vendor firmware of the

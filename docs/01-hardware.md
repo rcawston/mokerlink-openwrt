@@ -33,10 +33,10 @@ From the MokerLink datasheet and manual:
 | PHY map | RTL8261BE on MAC 0/8/16 (SMI bus 1/2/3, address 0); RTL8264B on MAC 20/24/25/26 (bus 0, addresses 0-3) | U-Boot SMI registers |
 | Lane polarity | RTL8261BE links normal; each RTL8264B link inverted once on the PHY and once on the SerDes (alternating tx/rx) | U-Boot PHY and SerDes registers, RAM boot |
 | Front port order | front ports 1-7 are `lan1`-`lan7` (MAC ports 0, 8, 16, 20, 24, 25, 26), all pass traffic | port test in a RAM boot |
-| Link speeds | copper links at 100 Mbit/s, 1, 2.5 and 10 Gbit/s; the SFP+ cage (`lan8`, MAC port 27 on SerDes 9) at 10 Gbit/s with a 10G module | owner's tests in a RAM boot |
+| Link speeds | copper links at 100 Mbit/s, 1, 2.5 and 10 Gbit/s; the SFP+ cage (`lan8`, MAC port 27 on SerDes 9) at 10 Gbit/s with a 10G SR module and at 1 Gbit/s with a 1G copper module | owner's tests in a RAM boot |
 | Fan controller | **ADT7476** at I²C address `0x2e`, on a bit-banged bus: SCL GPIO 8, SDA GPIO 9. Runs the fans at full speed from power-on until programmed; the stock firmware sets 50 %, and full speed above 65 °C. Two fans, on tach inputs 1 and 2 (about 4500-4800 rpm at 50 %); all three temperature sensors (local and two remote diodes) connected | stock firmware (`board_conf.ko` board table `9303M7XC1XF`, `ski.ko`), RAM boot |
-| Reset button | SoC GPIO 5, active low (reads 1 while released) | stock firmware (`resetGpio5` in `board_conf.ko`); presses not yet tested |
-| SFP+ cage signals | module present GPIO 13 (low = in), LOS GPIO 12 (high = no signal), TX disable GPIO 14 (high = off); no TX fault line | stock firmware (`board_gpio_init` in `board_conf.ko`); idle levels match, module detection not yet tested |
+| Reset button | SoC GPIO 5, active low (reads 1 while released) | stock firmware (`resetGpio5` in `board_conf.ko`), RAM boot |
+| SFP+ cage signals | module present GPIO 13 (low = in), LOS GPIO 12 (high = no signal), TX disable GPIO 14 (high = off); no TX fault line | stock firmware (`board_gpio_init` in `board_conf.ko`), module removal and insertion in a RAM boot |
 | Stock firmware | "KT-NOS" 1.1.1.34 | boot log |
 
 ## Flash layout

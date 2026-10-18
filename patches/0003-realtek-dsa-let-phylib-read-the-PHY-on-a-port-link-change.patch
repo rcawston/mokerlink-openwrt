@@ -1,0 +1,58 @@
+Subject: [PATCH] realtek: dsa: let phylib read the PHY on a port link change
+
+When the switch reports a link change on a port with a PHY, the
+interrupt handler passes it to phylink as a MAC link change. phylink
+then takes the link down and, since a PHY port takes its link state
+from phylib, resolves it again from the PHY state of the last poll,
+which still says up. The port is reported up again 14 ms later and
+only goes down for good at the next PHY poll, up to a second later.
+Every link loss shows up as down, up, down:
+
+  lan2: Link is Down
+  lan2: Link is Up - 2.5Gbps/Full - flow control off
+  lan2: Link is Down
+
+For ports with a PHY, trigger the PHY state machine instead, so phylib
+reads the PHY right away and reports the change once. This also
+reports a new link without waiting for the next poll. Ports without a
+PHY, and PHYs on SFP modules, keep the MAC link change.
+
+---
+diff --git a/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/common.c b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/common.c
+index 03ed0a3..eded8c8 100644
+--- a/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/common.c
++++ b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/common.c
+@@ -243,6 +243,24 @@ int rtl83xx_port_is_under(const struct net_device *dev, struct rtl838x_switch_pr
+ 	return -EINVAL;
+ }
+ 
++/*
++ * A port with a PHY takes its link state from phylib, which polls the PHY
++ * once a second. Reporting a MAC link loss to phylink would make it take the
++ * link down and then straight back up from the PHY state of the last poll,
++ * until the next poll reads the link as down. Let phylib read the PHY now
++ * instead, which also reports a new link without waiting for the poll.
++ */
++static void rtldsa_port_link_change(struct dsa_switch *ds, int port, bool up)
++{
++	struct dsa_port *dp = dsa_to_port(ds, port);
++	struct phy_device *phydev = dp->user ? dp->user->phydev : NULL;
++
++	if (phydev && !phydev->is_on_sfp_module)
++		phy_mac_interrupt(phydev);
++	else
++		dsa_port_phylink_mac_change(ds, port, up);
++}
++
+ static irqreturn_t rtldsa_switch_irq(int irq, void *dev_id)
+ {
+ 	struct rtl838x_switch_priv *priv;
+@@ -259,7 +277,7 @@ static irqreturn_t rtldsa_switch_irq(int irq, void *dev_id)
+ 
+ 	for (int port = 0; port < priv->r->cpu_port; port++)
+ 		if (ports & BIT_ULL(port))
+-			dsa_port_phylink_mac_change(ds, port, link & BIT_ULL(port));
++			rtldsa_port_link_change(ds, port, link & BIT_ULL(port));
+ 
+ 	return IRQ_HANDLED;
+ }

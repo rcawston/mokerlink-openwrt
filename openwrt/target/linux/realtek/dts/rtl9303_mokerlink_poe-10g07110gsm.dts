@@ -85,6 +85,20 @@
 	};
 
 	/*
+	 * The supply of the PoE ports, 260 W in total by the datasheet. The
+	 * PSE core keeps this budget across both RTL8239s: a port gets power
+	 * only while the power its PD's class asks for still fits.
+	 */
+	poe_supply: regulator-poe {
+		compatible = "regulator-fixed";
+		regulator-name = "poe";
+		regulator-min-microvolt = <54000000>;
+		regulator-max-microvolt = <54000000>;
+		regulator-always-on;
+		regulator-power-budget-milliwatt = <260000>;
+	};
+
+	/*
 	 * 128 MiB RAM ("DRAM: 128 MB") and the 115200 baud console of the
 	 * vendor U-Boot are both the rtl930x.dtsi defaults.
 	 */
@@ -167,6 +181,7 @@
 						#pse-cells = <0>;
 						pairset-names = "alternative-a", "alternative-b";
 						pairsets = <&pse_a_ch0>, <&pse_a_ch1>;
+						vpwr-supply = <&poe_supply>;
 					};
 
 					/* front port 5 */
@@ -175,6 +190,7 @@
 						#pse-cells = <0>;
 						pairset-names = "alternative-a", "alternative-b";
 						pairsets = <&pse_a_ch2>, <&pse_a_ch3>;
+						vpwr-supply = <&poe_supply>;
 					};
 
 					/* front port 6 */
@@ -183,6 +199,7 @@
 						#pse-cells = <0>;
 						pairset-names = "alternative-a", "alternative-b";
 						pairsets = <&pse_a_ch4>, <&pse_a_ch5>;
+						vpwr-supply = <&poe_supply>;
 					};
 
 					/* front port 7 */
@@ -191,6 +208,7 @@
 						#pse-cells = <0>;
 						pairset-names = "alternative-a", "alternative-b";
 						pairsets = <&pse_a_ch6>, <&pse_a_ch7>;
+						vpwr-supply = <&poe_supply>;
 					};
 				};
 			};
@@ -221,6 +239,7 @@
 						#pse-cells = <0>;
 						pairset-names = "alternative-a", "alternative-b";
 						pairsets = <&pse_b_ch0>, <&pse_b_ch1>;
+						vpwr-supply = <&poe_supply>;
 					};
 
 					/* front port 2 */
@@ -229,6 +248,7 @@
 						#pse-cells = <0>;
 						pairset-names = "alternative-a", "alternative-b";
 						pairsets = <&pse_b_ch2>, <&pse_b_ch3>;
+						vpwr-supply = <&poe_supply>;
 					};
 
 					/* front port 3 */
@@ -237,6 +257,7 @@
 						#pse-cells = <0>;
 						pairset-names = "alternative-a", "alternative-b";
 						pairsets = <&pse_b_ch4>, <&pse_b_ch5>;
+						vpwr-supply = <&poe_supply>;
 					};
 				};
 			};

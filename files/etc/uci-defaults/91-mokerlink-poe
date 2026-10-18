@@ -1,0 +1,20 @@
+#!/bin/sh
+# PoE on by default on the RJ45 ports, lan1-lan7. The RTL8239 driver keeps
+# a power budget, so the ports wait switched off until netifd switches them
+# on with the "pse" device option. Ports with a "pse" option already set,
+# such as a port switched off on purpose, keep it; this runs again after
+# each sysupgrade that keeps the settings.
+
+[ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = "mokerlink,poe-10g07110gsm" ] || exit 0
+
+for port in lan1 lan2 lan3 lan4 lan5 lan6 lan7; do
+	sec=$(uci -X show network | sed -n "s/^network\.\([^.]*\)\.name='$port'$/\1/p" | head -n 1)
+	if [ -z "$sec" ]; then
+		sec=$(uci add network device)
+		uci set "network.$sec.name=$port"
+	fi
+	[ -n "$(uci -q get "network.$sec.pse")" ] || uci set "network.$sec.pse=1"
+done
+
+uci commit network
+exit 0
