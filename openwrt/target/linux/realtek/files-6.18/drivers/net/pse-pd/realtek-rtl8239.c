@@ -26,7 +26,7 @@
  * has no RTL8239 datasheet behind it; the meaning of the Realtek-specific
  * registers (0xe8, 0xec, 0xf4) is inferred from that firmware.
  *
- * Copyright (C) 2026 The OpenWrt contributors
+ * Copyright (C) 2026 Ross Cawston <ross@r-sc.ca>
  */
 
 #include <linux/bitfield.h>

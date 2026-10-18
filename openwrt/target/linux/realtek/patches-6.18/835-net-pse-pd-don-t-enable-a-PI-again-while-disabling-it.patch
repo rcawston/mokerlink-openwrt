@@ -1,4 +1,4 @@
-From: OpenWrt contributors
+From: Ross Cawston <ross@r-sc.ca>
 Subject: [PATCH] net: pse-pd: don't enable a PI again while disabling it
 
 With software power control, _pse_pi_disable() frees the power budget

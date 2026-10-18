@@ -1,4 +1,4 @@
-From: OpenWrt contributors
+From: Ross Cawston <ross@r-sc.ca>
 Subject: [PATCH] i2c: add bitbanged buses sharing one SCL line
 
 Some RTL930x switches, such as the MokerLink POE-10G07110GSM, bit-bang

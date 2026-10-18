@@ -1,4 +1,4 @@
-From: OpenWrt contributors
+From: Ross Cawston <ross@r-sc.ca>
 Subject: [PATCH] dt-bindings: net: realtek,rtl9301-switch: add port LED controller
 
 The switch drives the port LEDs, and some boards wire LEDs to it that

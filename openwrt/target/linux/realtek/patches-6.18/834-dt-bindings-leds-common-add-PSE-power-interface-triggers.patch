@@ -1,4 +1,4 @@
-From: OpenWrt contributors
+From: Ross Cawston <ross@r-sc.ca>
 Subject: [PATCH] dt-bindings: leds: common: add PSE power interface triggers
 
 The PSE core registers LED triggers for each power interface of a PSE

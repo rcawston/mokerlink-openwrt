@@ -10,7 +10,7 @@
  * SCL at a time; devices on the other buses see SCL toggle while their SDA
  * stays high, which is never a START condition, and ignore it.
  *
- * Copyright (C) 2026 The OpenWrt contributors
+ * Copyright (C) 2026 Ross Cawston <ross@r-sc.ca>
  */
 
 #include <linux/delay.h>

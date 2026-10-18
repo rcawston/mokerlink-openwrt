@@ -14,7 +14,7 @@
  * load them. Both media are set alike here. The registers are part of the
  * switch register block; the node's reg gives their offset in it.
  *
- * Copyright (C) 2026 The OpenWrt contributors
+ * Copyright (C) 2026 Ross Cawston <ross@r-sc.ca>
  */
 
 #include <linux/bits.h>

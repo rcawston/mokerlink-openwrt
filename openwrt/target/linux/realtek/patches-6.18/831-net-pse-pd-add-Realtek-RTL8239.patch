@@ -1,4 +1,4 @@
-From: OpenWrt contributors
+From: Ross Cawston <ross@r-sc.ca>
 Subject: [PATCH] net: pse-pd: add Realtek RTL8239 driver
 
 The RTL8239 is an 8-channel IEEE 802.3af/at/bt PSE controller. On boards

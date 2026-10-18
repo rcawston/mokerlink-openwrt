@@ -1,4 +1,4 @@
-From: OpenWrt contributors
+From: Ross Cawston <ross@r-sc.ca>
 Subject: [PATCH] leds: add Realtek RTL9300 port LED driver
 
 The RTL9300 switch drives the port LEDs over its serial LED interface,
