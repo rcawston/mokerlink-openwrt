@@ -408,7 +408,8 @@ partition. The build makes two images for it
 - **Not yet tested on hardware:** the factory image, and a class 5-8 PD
   under the budget. Tested: the fans in automatic mode, the link change
   fix, the port LEDs set up from the device tree when booted from flash,
-  and the PoE budget with the PSE core fix below (a PD gets the power of
+  the PoE firmware loaded from flash after a power cycle, and the PoE
+  budget with the PSE core fix below (a PD gets the power of
   its class; switching a port off holds; nothing stays allotted after
   switching off or unplugging; priorities).
 - **PSE core fix:** in the Linux PSE core, disabling a port (admin
