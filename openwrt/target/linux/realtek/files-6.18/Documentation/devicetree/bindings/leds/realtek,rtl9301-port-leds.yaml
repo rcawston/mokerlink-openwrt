@@ -7,7 +7,7 @@ $schema: http://devicetree.org/meta-schemas/core.yaml#
 title: Realtek RTL9300 switch port LEDs under software control
 
 maintainers:
-  - OpenWrt Developers <openwrt-devel@lists.openwrt.org>
+  - Ross Cawston <ross@r-sc.ca>
 
 description: |
   The RTL9300 switch drives up to four LEDs per port over its LED interface,
