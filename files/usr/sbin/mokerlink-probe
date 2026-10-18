@@ -153,8 +153,8 @@ gpio_bits() { # value -> list of set bit numbers
 	done
 
 	section "fans"
-	run mokerlink-fan status
-	run logread -e mokerlink-fan
+	run mokerlink-fan
+	run logread -e hwmon_fancontrol
 
 	section "PoE"
 	for p in $(ports); do

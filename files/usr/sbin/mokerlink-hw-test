@@ -1,9 +1,12 @@
 #!/bin/sh
 # mokerlink-hw-test [OUTPUT_FILE]
 #
-# Guided test of the link change reporting and the PoE power budget.
-# Records everything in one report:
+# Guided test of the fan control, the link change reporting and the PoE
+# power budget. Records everything in one report:
 #
+#   0. the fans in the ADT7476's automatic mode: 50 % now, and full speed
+#      while the start temperature is lowered below the current one for a
+#      moment
 #   1. link changes on port 2 with a device that is already up: one "Link
 #      is Up" when plugged in and one "Link is Down" when unplugged
 #   2. PoE with the budget: a PD on port 1 gets power once its class fits,
@@ -102,12 +105,59 @@ link_msgs() { # port since: kernel link messages of the port after uptime "since
 
 uptime_s() { cut -d. -f1 /proc/uptime; }
 
+adt7476() { # hwmon directory of the fan controller
+	local h
+	for h in /sys/class/hwmon/hwmon*; do
+		[ "$(cat "$h/name" 2>/dev/null)" = adt7476 ] && { echo "$h"; return 0; }
+	done
+	return 1
+}
+
+# fan_points START_mC: automatic mode from START to START + 2 C, all sensors
+fan_points() {
+	local i
+	for i in 1 2 3; do
+		echo "$1" >"$FAN/temp${i}_auto_point1_temp"
+		echo "$(($1 + 2000))" >"$FAN/temp${i}_auto_point2_temp"
+	done
+}
+
+fan_state() {
+	say "  pwm $(cat "$FAN"/pwm[123] | tr '\n' ' ')/ fans $(cat "$FAN"/fan[12]_input | tr '\n' ' ')rpm / temps $(cat "$FAN"/temp[123]_input | tr '\n' ' ')"
+}
+
 : >"$OUT"
 section "system"
 run cat /etc/openwrt_release
 run uname -a
 run sh -c "uci show network | grep -E 'pse|name='"
 BUS=$(poe_bus) || say "PoE I2C bus not found"
+
+section "0: fans"
+run mokerlink-fan
+run sh -c "logread | grep -i hwmon_fancontrol"
+if FAN=$(adt7476); then
+	say "pwm1-3 mode $(cat "$FAN"/pwm[123]_enable | tr '\n' ' ')(2 2 2 expected, automatic)"
+	fan_state
+	hot=$(cat "$FAN"/temp[123]_input | sort -n | tail -n 1)
+	start=$(((hot / 1000 - 10) * 1000))
+	[ "$start" -lt 0 ] && start=0
+	trap 'fan_points 64000' EXIT INT TERM
+	say "start temperature $((start / 1000)) C for 15 s (hottest sensor $((hot / 1000)) C)"
+	fan_points "$start"
+	sleep 15
+	fan_state
+	note "Did the fans speed up to full speed? (y/n)"
+	fan_points 64000
+	trap - EXIT INT TERM
+	say "start temperature back to 64 C"
+	sleep 20
+	fan_state
+	note "Are the fans back to the normal speed? (y/n)"
+	run sh -c "grep . $FAN/temp[123]_auto_point[12]_temp"
+else
+	say "no ADT7476 found"
+fi
 
 section "1: link changes on port 2"
 if ask "Have a cable from another switch or router (already running) ready; press Enter, then plug it into port 2"; then

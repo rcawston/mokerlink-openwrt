@@ -16,8 +16,8 @@ this repository; the commit messages are in `upstream/`.
 | the device | `realtek: rtl930x: add support for MokerLink POE-10G07110GSM` | none |
 | link change fix in the switch driver | `realtek: dsa: let phylib read the PHY on a port link change` (`patches/0003-*`, a patch to OpenWrt's own driver, ready to send as it is) | none |
 
-Not submitted: the `mokerlink-*` tools, the `mokerlink-fan` service and
-the first-boot defaults in `files/`.
+Not submitted: the `mokerlink-*` tools and the first-boot defaults in
+`files/`.
 
 ## PoE budget defaults
 
@@ -32,29 +32,15 @@ firmware.
 
 ## Fan control
 
-Without fan control the fans run at full speed, as the ADT7476 does from
-power-on. The device tree can't set a lower start duty: the adt7475
-binding allows that only in a deprecated form.
-
-OpenWrt's realtek target already has the way to do this:
-`target/linux/realtek/base-files/etc/init.d/hwmon_fancontrol` programs a
-board's fan controller once at boot. For the Plasma Cloud ESX28/PSX28 it
-puts the same ADT7476 into its automatic mode through the `adt7475`
-driver's sysfs files. The stock behaviour of this board maps onto that
-mode directly:
-
-- all three PWM outputs follow the hottest of the three sensors
-  (`pwmN_auto_channels_temp` = 7)
-- 50 % up to 64 °C (`pwmN_auto_point1_pwm` = 128,
-  `tempN_auto_point1_temp` = 64000)
-- full speed from 66 °C (`tempN_auto_point2_temp` = 66000, the chip's
-  smallest range of 2 °C)
-
-The chip then controls the fans by itself: no daemon, and it keeps
-working if userspace dies. Compared with `mokerlink-fan` it drops the PHY
-temperature rule (the stock firmware has none), and the 2 °C ramp takes
-the place of the 5 °C hysteresis. It belongs in the device commit as a
-`hwmon_fancontrol` case, once it has been tested on the switch.
+The fan control is part of the device commit: a case in the realtek
+target's `base-files/etc/init.d/hwmon_fancontrol` (in `patches/0001-*`),
+which programs a board's fan controller once at boot. The same file
+already puts the same ADT7476 into its automatic mode for the Plasma Cloud
+ESX28/PSX28; this board's case sets the stock behaviour (all outputs
+following the hottest sensor, 50 % up to 64 °C, full speed from 66 °C)
+and keeps the fans at 50 % below the start temperature rather than off.
+The device tree can't express any of this: the adt7475 binding allows a
+start duty only in a deprecated form.
 
 In Linux, the general solution would be thermal support in `adt7475`:
 registering its PWM outputs as cooling devices (`cooling-levels` from

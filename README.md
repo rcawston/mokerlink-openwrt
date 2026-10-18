@@ -17,7 +17,8 @@ switch and tools to bring up the hardware safely.
 > your stock image
 > ([docs/05-porting.md](docs/05-porting.md#the-rtl8239-firmware)).
 > Not yet tested: the PoE power budget, the fix for doubled link-down
-> messages, and running from flash. Open points are listed in
+> messages, the fans in the controller's automatic mode, and running from
+> flash. Open points are listed in
 > [docs/05-porting.md](docs/05-porting.md#open-points).
 
 ## Why OpenWrt and not firmware from scratch
@@ -41,7 +42,8 @@ reviewable board description on top of it is the most reliable option.
   DHCP server answers within 60 seconds
 - Web UI (LuCI, layer-2 edition) and SSH
 - Hardware watchdog: a hung system reboots itself
-- Fan control like the stock firmware: 50 % normally, full speed when hot
+- Fan control like the stock firmware, run by the fan controller itself:
+  50 % normally, full speed when hot
 - PoE (802.3af/at/bt) on ports 1-7, all on by default, with the PoE LEDs
   and a 260 W power budget with port priorities; needs the RTL8239
   firmware from your stock image
@@ -63,8 +65,8 @@ The full procedure is in [docs/03-install.md](docs/03-install.md).
    then check that every port passes traffic.
 4. **Flash:** write OpenWrt to flash with `sysupgrade`.
 
-The stock web UI also accepts the RAM image directly, without a serial
-console ([docs/03-install.md](docs/03-install.md#flashing-from-the-stock-web-ui)).
+Without a serial console, the stock web UI installs the factory image
+directly ([docs/03-install.md](docs/03-install.md#flashing-from-the-stock-web-ui)).
 
 Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 
@@ -87,7 +89,8 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
   |---|---|
   | `*-initramfs-kernel.bin` | RAM image for TFTP boot, MokerLink uImage magic `0x83800000` |
   | `*-initramfs-kernel-stdmagic.bin` | Same RAM image with the standard uImage magic |
-  | `*-squashfs-sysupgrade.bin` | Flash image, installed with `sysupgrade` from the RAM image |
+  | `*-squashfs-sysupgrade.bin` | Flash image, installed with `sysupgrade` from OpenWrt |
+  | `*-squashfs-factory.bix` | Flash image for the stock firmware's web upgrade page |
 
 ## Repository layout
 

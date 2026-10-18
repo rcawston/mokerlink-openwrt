@@ -19,16 +19,15 @@ bit-banged I2C clock line (GPIO 8), with SDA on GPIOs 9, 10 and 11. The
 PoE chips need Realtek firmware loaded at power-up, which cannot be
 shipped: copy it out of the vendor firmware and install it as
 /lib/firmware/realtek/rtl8239-bt.bin. The PoE LEDs (LED 2 of each port)
-follow the PSE LED triggers. The fans run at full speed until userspace
-programs the ADT7476; the vendor firmware sets 50 %.
+follow the PSE LED triggers. At boot, hwmon_fancontrol puts the ADT7476
+into its automatic mode with the vendor firmware's settings: 50 %, and
+full speed when the hottest of its sensors reaches 66 C.
 
 Installation from the vendor web UI:
-1. Upload the initramfs image on the firmware upgrade page. The vendor
-   firmware only checks the uImage magic (0x83800000) and the header and
-   data CRCs, and writes the image to its RUNTIME partition, which is
-   OpenWrt's "firmware" partition.
-2. In the initramfs image, install the sysupgrade image with
-   sysupgrade -n.
+Upload the factory image (*-squashfs-factory.bix) on the firmware
+upgrade page. The vendor firmware only checks the uImage magic
+(0x83800000) and the header and data CRCs, and writes the file to its
+RUNTIME partition, which is OpenWrt's "firmware" partition.
 
 Installation over the serial console:
 1. Stop U-Boot with Esc and boot the initramfs image over TFTP from

@@ -130,9 +130,10 @@ after a fix, rebuild and repeat from step 1 with the new RAM image.
 - [ ] **Soak test:** an hour of `iperf3` across several ports leaves no
       link flaps or errors in `dmesg`.
 - [ ] **Fans:** they run at full speed until OpenWrt has booted, then
-      slow down to about half speed. `mokerlink-fan status` shows the fan
-      controller's temperatures, the fan speeds (RPM) and `pwm1`-`pwm3` at
-      128 ([05-porting.md](05-porting.md#fans-and-temperature)).
+      slow down to about half speed. `mokerlink-fan` shows the fan
+      controller's temperatures, the fan speeds (RPM), `pwm1`-`pwm3` at
+      128 and `pwmN_enable` at 2, automatic
+      ([05-porting.md](05-porting.md#fans-and-temperature)).
 - [ ] **Heat:** the temperatures in `mokerlink-probe` stay below about
       100 °C under load.
 - [ ] **PoE:** extract the RTL8239 firmware from your stock image and
@@ -196,35 +197,30 @@ settings area. Then:
 
 ## Flashing from the stock web UI
 
-The stock firmware's own firmware-upgrade page will accept and install our
-image, with no serial console, no TFTP and no soldering. The stock
-firmware's web upgrade checks only that the uploaded file is a uImage with
-magic `0x83800000` and valid header and data CRC32s.
+The stock firmware's own firmware-upgrade page installs OpenWrt, with no
+serial console, no TFTP and no soldering. It checks only that the uploaded
+file is a uImage with magic `0x83800000` and valid header and data CRC32s.
 **There is no cryptographic signature and no model lock on the image.** The
-build already produces exactly that magic, so the stock web UI treats it as
-a normal upgrade: it writes the whole file to the 12 MiB RUNTIME partition
+build produces exactly that magic, so the stock web UI treats it as a
+normal upgrade: it writes the whole file to the 12 MiB RUNTIME partition
 and reboots. The configuration partitions are never touched.
 
-The stock image is itself a single uImage with its root filesystem embedded
-in the kernel, which is exactly the shape of the `*-initramfs-kernel.bin`.
-That makes the initramfs image the safest thing to upload first.
+In the stock web UI, open the firmware upgrade page (*Management →
+Upgrade*, "image" / local HTTP upload) and upload one of two images:
 
-1. **Upload the RAM image.** In the stock web UI, open the firmware upgrade
-   page (*Management → Upgrade*, "image" / local HTTP upload), choose
-   `...-initramfs-kernel.bin`, and upgrade. The switch reboots into OpenWrt
-   running from RAM (rootfs in the initramfs), booted from flash by `boota`.
-2. **Reach it.** Give the PC `192.168.2.254/24`, wait ~60 s, then open
-   `http://192.168.2.1` or `ssh root@192.168.2.1`. On your network instead,
-   look for DHCP hostname `mokerlink-switch`.
-3. **Verify the hardware** exactly as in [step 3](#3-verify-the-hardware)
-   above (`mokerlink-probe`, the port and PoE checks).
-4. **Make it persistent.** Once the ports check out, copy the sysupgrade
-   image over and install it, as in [step 4](#4-write-openwrt-to-flash):
-   ```sh
-   sysupgrade -n -v /tmp/openwrt-...-squashfs-sysupgrade.bin
-   ```
-   This replaces the RAM-only install with a normal flash install that keeps
-   its settings across reboots.
+- **`...-squashfs-factory.bix`** installs OpenWrt to flash in one step:
+  kernel and root filesystem, like the sysupgrade image. The switch reboots
+  into OpenWrt; the first boot takes a minute longer while it formats its
+  settings area. Continue with step 4's list after the first boot (find
+  the switch, set a password, install the PoE firmware).
+- **`...-initramfs-kernel.bin`** runs OpenWrt from RAM, booted from flash
+  by `boota`, to check the switch first: reach it as below, verify it as in
+  [step 3](#3-verify-the-hardware), then install the sysupgrade image as in
+  [step 4](#4-write-openwrt-to-flash) (`sysupgrade -n -v /tmp/...-squashfs-sysupgrade.bin`).
+
+To reach the switch, give the PC `192.168.2.254/24`, wait ~60 s, then open
+`http://192.168.2.1` or `ssh root@192.168.2.1`. On your network instead,
+look for DHCP hostname `mokerlink-switch`.
 
 The one catch: this path has **no boot-loader safety net**. If OpenWrt boots
 but the network never comes up (for example a different port map on
@@ -235,17 +231,19 @@ at the top of this page.
 
 **Back to stock the same way.** The stock image you have (the `...en.bin`
 uImage) can go straight back onto the RUNTIME partition, no serial needed,
-because it is a plain uImage that fits the partition. Do it from OpenWrt
-running from RAM (the initramfs image installed this way), not from a
-flash install, which would overwrite the filesystem it is running from:
+because it is a plain uImage that fits the partition. With the stock uImage
+in `/tmp`:
 
 ```sh
-# from the RAM-running OpenWrt, with the stock uImage in /tmp
+# from OpenWrt installed to flash; sysupgrade writes from a copy in RAM
+sysupgrade -F -n /tmp/stock.bin
+# from OpenWrt running from RAM (the initramfs image)
 mtd -r write /tmp/stock.bin firmware
 ```
 
-The switch reboots into stock with its original configuration intact
-(OpenWrt never wrote the stock config partitions). See
+`-F` is needed because the stock image carries no OpenWrt metadata. The
+switch reboots into stock with its original configuration intact (OpenWrt
+never wrote the stock config partitions). See
 [04-recovery.md](04-recovery.md) for the full-flash route if the boot loader
 or board data is ever damaged.
 

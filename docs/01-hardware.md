@@ -68,9 +68,9 @@ them.
 10GBASE-T PHYs run hot, typically 60-90 °C on the die at 10G. The fans are
 driven by an ADT7476 fan controller, which runs them at full speed from
 power-on until software programs it: in U-Boot, and in OpenWrt builds
-without fan control, they stay at full speed. The stock firmware, and
-OpenWrt's `mokerlink-fan` service, run them at 50 % and switch to full
-speed when it gets hot ([05-porting.md](05-porting.md#fans-and-temperature)).
-If the fans ever stop under OpenWrt, power off and report it.
-`mokerlink-probe` prints the PHY and SoC temperatures, and
-`mokerlink-fan status` the fan controller's.
+without fan control, they stay at full speed. The stock firmware runs them
+at 50 % and switches to full speed when it gets hot; OpenWrt sets up the
+fan controller's automatic mode to do the same
+([05-porting.md](05-porting.md#fans-and-temperature)). If the fans ever
+stop under OpenWrt, power off. `mokerlink-probe` prints the PHY and SoC
+temperatures, and `mokerlink-fan` the fan controller's.

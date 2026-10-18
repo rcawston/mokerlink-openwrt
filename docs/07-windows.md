@@ -93,10 +93,10 @@ Later builds after `git pull` only rebuild what changed and take minutes.
 4. **Console:** PuTTY on COM3, 115200, with *Session → Logging → All session
    output* to a file, and keep the log of the first boot.
 
-> **Shortcut without the serial console.** The stock web UI accepts our
-> image directly (no signature, just the uImage magic and CRC). You can skip
-> Parts 2-3 and upload `...-initramfs-kernel.bin` from the stock firmware's
-> own upgrade page instead — see
+> **Shortcut without the serial console.** The stock web UI accepts the
+> images directly (no signature, just the uImage magic and CRC). You can
+> skip Parts 2-4 and upload `...-squashfs-factory.bix` from the stock
+> firmware's own upgrade page instead — see
 > [03-install.md](03-install.md#flashing-from-the-stock-web-ui). You still
 > need the Part 1 build. On a unit that may differ from the documented one,
 > the serial route below is safer because it can always recover; the web UI

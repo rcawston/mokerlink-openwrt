@@ -110,11 +110,11 @@ cp "$BIN_DIR"/*.manifest "$OUT_DIR/" 2>/dev/null || true
 # The stock boot loader may expect either the MokerLink uImage magic
 # (0x83800000, what the image is built with) or the standard one. Provide
 # both RAM images so either can be booted without a rebuild; check which one
-# your boot loader wants with docs/03-install.md, step 2.
+# your boot loader wants with docs/03-install.md, step 1.
 initramfs=$(ls "$OUT_DIR"/*"$OPENWRT_DEVICE"-initramfs-kernel.bin)
 python3 "$REPO_ROOT/scripts/uimage-remagic.py" "$initramfs" 0x27051956 \
 	"${initramfs%.bin}-stdmagic.bin"
 
-(cd "$OUT_DIR" && sha256sum -- *.bin > sha256sums)
+(cd "$OUT_DIR" && sha256sum -- *.bin *.bix > sha256sums)
 log "Done"
 ls -l "$OUT_DIR"

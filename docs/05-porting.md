@@ -331,16 +331,26 @@ remote diodes) are connected. The stock firmware (board table
 3. from then on reads the three temperature sensors and takes the hottest:
    above 65 °C full speed (`0xff`), otherwise 50 %
 
-OpenWrt does the same. The device tree declares the bus and the chip
-(`adt7475` driver), and the `mokerlink-fan` service sets manual mode and
-switches between 50 % and full speed. It adds a 5 °C hysteresis, and full
-speed while any 10G PHY is above 95 °C. When the service stops or the
-switch reboots, the fans go back to full speed. The settings are in
-`/etc/config/mokerlink`, section `fan`.
+OpenWrt has the chip do this by itself. The device tree declares the bus
+and the chip (`adt7475` driver), and at boot the realtek target's
+`/etc/init.d/hwmon_fancontrol` puts the ADT7476 into its automatic mode,
+through the driver's sysfs files:
+
+- all three PWM outputs follow the hottest of the three sensors
+  (`pwmN_auto_channels_temp` = 7)
+- 50 % up to 64 °C (`pwmN_auto_point1_pwm` = 128,
+  `tempN_auto_point1_temp` = 64000), rising to full speed at 66 °C
+  (`tempN_auto_point2_temp` = 66000, the chip's smallest range of 2 °C)
+- 50 % rather than off below 64 °C (`pwmN_stall_disable` = 1; the chip's
+  default would stop the fans there)
+
+That is the stock behaviour, with a 2 °C ramp in place of the step at
+65 °C. No daemon is involved: the chip keeps controlling the fans if the
+software hangs, and across a reboot until it loses power. Without this
+setup the fans run at full speed.
 
 ```sh
-mokerlink-fan status     # temp1-3, fan RPM, pwm1-3 = 128 (50 %), pwmN_enable = 1
-logread -e mokerlink-fan # every speed change, with the temperatures
+mokerlink-fan    # temperatures, fan RPM, pwm1-3 (128 = 50 %), pwmN_enable = 2 (automatic)
 ```
 
 `no ADT7476 found` means the chip did not answer on the bus
@@ -349,26 +359,31 @@ logread -e mokerlink-fan # every speed change, with the temperatures
 ## Images
 
 The stock web upgrade accepts any uImage with magic `0x83800000` and valid
-CRCs, with no signature, so the `*-initramfs-kernel.bin` image installs
-from the stock web interface as it is
-([03-install.md](03-install.md#flashing-from-the-stock-web-ui)). The
-MokerLink 2G080GM in OpenWrt also builds a `factory.bix`, kernel and
-squashfs root filesystem in one file, for a direct flash install from its
-stock web UI. The same image for this board would skip the RAM step; it
-isn't built yet.
+CRCs, with no signature, and writes the whole file to the firmware
+partition. The build makes two images for it
+([03-install.md](03-install.md#flashing-from-the-stock-web-ui)):
+
+- `*-squashfs-factory.bix`: kernel and root filesystem in one file, the
+  same layout as the sysupgrade image, for a direct flash install. Other
+  switches with this stock firmware family build it the same way in
+  OpenWrt (MokerLink 2G080GM, GoodTop GT-SWTXG8FM)
+- `*-initramfs-kernel.bin`: OpenWrt running from RAM, booted from flash,
+  to try it before installing the sysupgrade image
 
 ## Open points
 
-- **Not yet tested on hardware:** the PoE budget, the link change fix, and
-  running from flash. `mokerlink-hw-test` goes through the first two.
+- **Not yet tested on hardware:** the PoE budget, the link change fix and
+  the fans in automatic mode, which `mokerlink-hw-test` goes through, and
+  running from flash, including the factory image.
 - **PoE budget across the two chips:** both chips share the 260 W, but the
   PSE core sheds and retries only ports of the chip that has the event
   (front ports 1-3 on one, 4-7 on the other). A port of one chip doesn't
   get power freed on the other until something changes on its own chip.
   Fixing that is a PSE core change, asked about upstream.
 - **PoE pairsets:** which channel of a port is alternative A and which B.
-- **Factory image:** see [Images](#images).
-- **Fan control upstream:** see
+- **Fans and the PHY temperatures:** the ADT7476 doesn't see the 10G
+  PHYs' own sensors, as in the stock firmware. Letting those drive the
+  fans needs thermal support in the `adt7475` driver; see
   [08-upstreaming.md](08-upstreaming.md#fan-control).
 
 ## Upstreaming

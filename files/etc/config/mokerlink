@@ -7,23 +7,3 @@ config switch 'switch'
 	# Seconds to wait for a DHCP lease on "lan" before the fallback
 	# address in network.mgmt (192.168.2.1/24) is brought up.
 	option fallback_delay '60'
-
-config fan 'fan'
-	# Fan speed control (/etc/init.d/mokerlink-fan). Without it the fans
-	# run at full speed. Like the stock firmware it runs them at low_pwm
-	# and at full speed while the hottest sensor of the ADT7476 fan
-	# controller is above high_temp.
-	option enabled '1'
-
-	# Normal fan speed, 77-255 (30-100 %). 128 (50 %) is the stock setting.
-	option low_pwm '128'
-
-	# Full speed above high_temp (degrees C, hottest ADT7476 sensor, stock:
-	# 65) or above phy_high_temp (hottest 10G PHY, not in the stock
-	# firmware). Back to low_pwm once both are hysteresis degrees lower.
-	option high_temp '65'
-	option phy_high_temp '95'
-	option hysteresis '5'
-
-	# Seconds between checks
-	option interval '10'

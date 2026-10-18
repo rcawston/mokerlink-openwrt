@@ -10,7 +10,7 @@
 | Port MTU | 9216 (jumbo frames forwarded) | *Network → Interfaces → Devices → lanN* |
 | Management MTU | 1500 | interface `lan` |
 | EEE (802.3az) | off | `/etc/config/mokerlink`, then `service mokerlink reload` |
-| Fans | 50 %, full speed above 65 °C (fan controller sensors) or 95 °C (PHYs) | `/etc/config/mokerlink`, section `fan` |
+| Fans | 50 %, full speed from 66 °C (hottest fan controller sensor), run by the fan controller itself | `/etc/init.d/hwmon_fancontrol` |
 | PoE | all ports on; only valid PoE devices get power, within a 260 W budget by class; green PoE LED per port. Needs the RTL8239 firmware in `/lib/firmware/realtek/` (kept by `sysupgrade`, removed by a factory reset; [05-porting.md](05-porting.md#poe)) | device options `pse` and `pse_priority` in `/etc/config/network` ([below](#poe)) |
 | Spanning tree | off | *Devices → switch → Bridge options* |
 | DHCP server, routing, firewall | not installed | |
@@ -51,7 +51,7 @@ These are the usual causes on a 10G switch, roughly in order of likelihood:
 
 ```sh
 mokerlink-probe              # port, PHY, link and temperature summary
-mokerlink-fan status         # fan controller temperatures, fan RPM, PWM
+mokerlink-fan                # fan controller temperatures, fan RPM, PWM
 ethtool --show-pse lan3      # PoE state, class, voltage and power
 ethtool lan3                 # link speed and duplex
 ethtool -S lan3              # per-port counters
