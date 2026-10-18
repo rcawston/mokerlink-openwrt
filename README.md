@@ -73,9 +73,9 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 
 ## Getting the images
 
-- **GitHub Actions:** every push that changes more than the documentation
-  builds the firmware. Download it from the run's *Artifacts* section under
-  the repository's *Actions* tab.
+- **Releases:** the
+  [latest release](https://github.com/rcawston/mokerlink-openwrt/releases/latest)
+  has the images and their `sha256sums`.
 - **Local build** on a Linux machine with the
   [OpenWrt build prerequisites](https://openwrt.org/docs/guide-developer/toolchain/install-buildsystem):
 
@@ -98,12 +98,13 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 | Path | Contents |
 |---|---|
 | `openwrt/target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts` | Board description (device tree) |
-| `patches/` | OpenWrt changes: image recipe, MAC address source, kernel packages, a fix for the switch driver's link change reporting |
+| `patches/` | OpenWrt changes: the board's image recipe, MAC address source, PoE default and fan control, kernel packages, a fix for the switch driver's link change reporting, and the uci-defaults function that the PoE default uses |
+| `openwrt/package/network/config/netifd/patches/` | netifd change that reads the PoE default from board.json |
 | `openwrt/target/linux/realtek/files-6.18`, `patches-6.18/83x-*` | New kernel drivers with their bindings: RTL8239 PoE (`realtek-rtl8239`) and the PoE LEDs (`leds-rtl9300-port`), plus two binding patches for upstream (`833`, `834`) |
 | `files/` | Files added to the firmware: switch defaults and bring-up tools |
 | `config/` | Pinned OpenWrt and feed revisions, package selection |
 | `upstream/` | Commit messages for the OpenWrt and Linux submissions ([docs/08-upstreaming.md](docs/08-upstreaming.md)) |
-| `scripts/` | `build.sh`, `check-dts.sh`, `make-upstream.py` (builds the OpenWrt and Linux submissions), `uimage-remagic.py`, `uboot-wiring.py` (reads the port wiring from U-Boot), `uboot-md2bin.py` (turns a U-Boot flash dump into a binary), `uboot-collect.py` (collects all U-Boot information and dumps the flash over the serial port, CRC-verified), `extract-poe-firmware.py` (copies the RTL8239 PoE firmware out of a stock image) |
+| `scripts/` | `build.sh`, `check-dts.sh`, `make-upstream.py` (builds the OpenWrt, netifd and Linux submissions), `uimage-remagic.py`, `uboot-wiring.py` (reads the port wiring from U-Boot), `uboot-md2bin.py` (turns a U-Boot flash dump into a binary), `uboot-collect.py` (collects all U-Boot information and dumps the flash over the serial port, CRC-verified), `extract-poe-firmware.py` (copies the RTL8239 PoE firmware out of a stock image) |
 | `tests/` | Tests for `uboot-wiring.py` and `uboot-collect.py` against a simulated U-Boot |
 | `docs/` | Hardware notes, console, install, recovery, porting, everyday use |
 
@@ -120,7 +121,7 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 7. [Build and install from Windows](docs/07-windows.md): WSL2 build, TFTP,
    RAM test and flashing, step by step
 8. [Upstreaming](docs/08-upstreaming.md): submitting the board to OpenWrt
-   and the drivers to Linux
+   and the drivers to Linux, and what has been submitted so far
 
 ## Risks
 

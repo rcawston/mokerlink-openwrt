@@ -12,6 +12,22 @@ buses with shared SCL"), and which OpenWrt carries as
 `i2c-gpio-shared-scl` driver of this repository did the same; its series
 to Linux was withdrawn after a review pointed that out.
 
+## Status
+
+As of 18 October 2026:
+
+| Submission | Where | State |
+|---|---|---|
+| PSE core fix | netdev, `[PATCH net]` | [sent](https://lore.kernel.org/netdev/20261018182005.1193-1-ross@r-sc.ca/) |
+| PSE core fix | OpenWrt, generic pending patch | [openwrt/openwrt#25994](https://github.com/openwrt/openwrt/pull/25994) |
+| switch link change fix | OpenWrt | [openwrt/openwrt#25995](https://github.com/openwrt/openwrt/pull/25995) |
+| RTL9300 port LEDs (`leds`) | linux-leds | [sent](https://lore.kernel.org/all/20261018194339.132-1-ross@r-sc.ca/) |
+| shared-SCL I²C (`i2c`) | linux-i2c | [sent and withdrawn](https://lore.kernel.org/all/20261018194315.945-1-ross@r-sc.ca/): `i2c-gpio` does it |
+| board.json PoE default | netifd | not opened yet |
+| the board | OpenWrt | not opened yet; waits for the netifd pull request |
+| PSE priority choices in the web UI | LuCI | not opened yet |
+| RTL8239 PSE (`pse`), PSE LED trigger names (`pse-led-triggers`) | netdev, linux-leds | not sent; wait for the PSE series they depend on ([Dependencies](#dependencies)) |
+
 ## What goes where
 
 | Part | OpenWrt | Linux (subsystem tree, list) |

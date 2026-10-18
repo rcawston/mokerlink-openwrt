@@ -20,7 +20,9 @@ firmware unchanged.
 - Optional: the port wiring read from U-Boot
   ([02-serial-console.md](02-serial-console.md#read-the-port-wiring)), to
   compare your unit with the documented one.
-- The images (see the README): `*-initramfs-kernel.bin`,
+- The images, from the
+  [latest release](https://github.com/rcawston/mokerlink-openwrt/releases/latest)
+  or your own build (see the README): `*-initramfs-kernel.bin`,
   `*-initramfs-kernel-stdmagic.bin` and `*-squashfs-sysupgrade.bin`.
 - A PC with a TFTP server serving the image directory: `tftpd-hpa` or
   `dnsmasq --enable-tftp --tftp-root=DIR --port=0` on Linux, Tftpd64 on
@@ -216,7 +218,8 @@ Upgrade*, "image" / local HTTP upload) and upload one of two images:
   kernel and root filesystem, like the sysupgrade image. The switch reboots
   into OpenWrt; the first boot takes a minute longer while it formats its
   settings area. Continue with step 4's list after the first boot (find
-  the switch, set a password, install the PoE firmware).
+  the switch, set a password, install the PoE firmware). This image has
+  not been tested on a switch yet.
 - **`...-initramfs-kernel.bin`** runs OpenWrt from RAM, booted from flash
   by `boota`, to check the switch first: reach it as below, verify it as in
   [step 3](#3-verify-the-hardware), then install the sysupgrade image as in

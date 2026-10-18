@@ -411,25 +411,31 @@ partition. The build makes two images for it
 
 ## Open points
 
-- **Not yet tested on hardware:** the factory image, and a class 5-8 PD
-  under the budget. Tested: the fans in automatic mode, the link change
-  fix, the port LEDs set up from the device tree when booted from flash,
-  the PoE firmware loaded from flash after a power cycle, and the PoE
-  budget with the PSE core fix below (a PD gets the power of
-  its class; switching a port off holds; nothing stays allotted after
-  switching off or unplugging; priorities).
+- **Not yet tested on hardware:** the factory image. Tested: an 802.3bt
+  class 7 PD and an 802.3at class 4 PD, the fans in automatic mode, the
+  link change fix, the port LEDs set up from the device tree when booted
+  from flash, the PoE firmware loaded from flash after a power cycle, the
+  three `i2c-gpio` buses sharing SCL (fan controller, PoE firmware
+  download after a power cycle, SFP+ module), the PoE default from
+  board.json (on without a `pse` option, off with `pse` 0, still on after
+  a change that restarts the port), the firmware kept by sysupgrade
+  through the driver package's keep.d entry, and the PoE budget with the
+  PSE core fix below (a PD gets the power of its class; switching a port
+  off holds; nothing stays allotted after switching off or unplugging;
+  priorities).
 - **PSE core fix:** in the Linux PSE core, disabling a port (admin
   disable, PD unplugged, or switched off for a port of higher priority)
   re-checked the waiting ports before the port's own state was cleared,
   so it enabled that same port again: switching off didn't hold, and the
   budget leaked with every unplug. `patches-6.18/835-*` clears the state
-  first, tested on the switch; it goes upstream as a fix
-  ([08-upstreaming.md](08-upstreaming.md#what-goes-where)).
+  first, tested on the switch. It has been sent to netdev and to OpenWrt
+  ([08-upstreaming.md](08-upstreaming.md#status)).
 - **PoE budget across the two chips:** both chips share the 260 W, but the
   PSE core sheds and retries only ports of the chip that has the event
   (front ports 1-3 on one, 4-7 on the other). A port of one chip doesn't
   get power freed on the other until something changes on its own chip.
-  Fixing that is a PSE core change, asked about upstream.
+  Fixing that is a PSE core change; the RTL8239 series' cover letter asks
+  about it, once that series is sent.
 - **PoE pairsets:** which channel of a port is alternative A and which B.
 - **Fans and the PHY temperatures:** the ADT7476 doesn't see the 10G
   PHYs' own sensors, as in the stock firmware. Letting those drive the
@@ -441,8 +447,9 @@ partition. The build makes two images for it
 See [08-upstreaming.md](08-upstreaming.md): the drivers go to OpenWrt as
 pending patches and to Linux, and the board to OpenWrt, all built by
 `scripts/make-upstream.py`. All bindings pass `make dt_binding_check` and
-all three drivers `checkpatch.pl --strict`. With patches 833 and 834, the
-board's PSE, I²C and LED nodes validate against the bindings. The switch
+both drivers `checkpatch.pl --strict`. With patches 833 and 834, the
+board's PSE and LED nodes validate against the bindings; the I²C buses use
+the standard `i2c-gpio` binding. The switch
 node itself still fails, but only because OpenWrt's `rtl930x.dtsi` differs
 from the upstream switch binding (`ethernet`, `pcs`, `thermal` and other
 children).

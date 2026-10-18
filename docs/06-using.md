@@ -74,9 +74,24 @@ logread -f                   # system log
 ## PoE
 
 Each RJ45 port has a `config device` section in `/etc/config/network` with
-`option name 'lanN'`. Its `pse` option switches PoE on (`1`, the default)
-or off (`0`), and `pse_priority` sets the port's priority, `0` (the
-default) being the highest. Apply changes with `service network reload`.
+`option name 'lanN'`. Its `pse` option switches PoE on (`1`) or off (`0`);
+without it the port is on, the board's default. `pse_priority` sets the
+port's priority, `0` being the highest. Apply changes with `service network
+reload`.
+
+In the web UI, the same options are on the *PoE / PSE options* tab of
+*Network → Interfaces → Devices → lanN → Configure*. Two things to know
+about its *Port priority*:
+
+- Its choices are labelled *Critical* (1), *High* (2) and *Low* (3), but a
+  port left at *Default* keeps priority 0, the highest. So *Critical* puts
+  a port **below** the ports you haven't touched. To favour one port, leave
+  it at *Default* and set the others on the same chip to *High* or *Low*,
+  or set `pse_priority` in `/etc/config/network` directly.
+- *Default* leaves the priority as it is: 0 after a boot, but a port
+  switched back to *Default* from another value keeps that value until the
+  next reboot. To make it the highest again right away, set `pse_priority`
+  to `0` in `/etc/config/network`, which the web UI doesn't offer.
 
 The ports share a 260 W budget. A PD gets the power its class asks for
 (up to 90 W for class 8) if that still fits. If it doesn't, ports with a

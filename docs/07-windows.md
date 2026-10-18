@@ -6,6 +6,13 @@ inside Windows), the install over the serial console (PuTTY) and Ethernet
 
 ## Part 1: Build the firmware (once, 1-3 hours)
 
+You can skip this part: the
+[latest release](https://github.com/rcawston/mokerlink-openwrt/releases/latest)
+has the images ready to use. Download them and `sha256sums` into a new
+folder `C:\tftp`, which Part 2's TFTP server serves, and continue with
+Part 2. Build them yourself only to change the firmware or to try changes
+that aren't released yet.
+
 ### 1.1 Install Ubuntu in WSL2
 
 In PowerShell **as administrator**:
@@ -34,17 +41,13 @@ In Ubuntu:
 sudo apt update
 sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
   gettext git libncurses-dev libssl-dev python3-setuptools python3-dev rsync swig unzip \
-  zlib1g-dev file wget device-tree-compiler gh
+  zlib1g-dev file wget device-tree-compiler
 ```
 
 ### 1.3 Get the repository
 
-The repository is private, so log in to GitHub once (follow the prompts,
-"Login with a web browser" is easiest):
-
 ```sh
-gh auth login
-gh repo clone rcawston/mokerlink-openwrt ~/mokerlink
+git clone https://github.com/rcawston/mokerlink-openwrt.git ~/mokerlink
 ```
 
 Keep it in your Ubuntu home folder (`~`), not under `/mnt/c`: the Windows
@@ -97,10 +100,10 @@ Later builds after `git pull` only rebuild what changed and take minutes.
 > images directly (no signature, just the uImage magic and CRC). You can
 > skip Parts 2-4 and upload `...-squashfs-factory.bix` from the stock
 > firmware's own upgrade page instead — see
-> [03-install.md](03-install.md#flashing-from-the-stock-web-ui). You still
-> need the Part 1 build. On a unit that may differ from the documented one,
-> the serial route below is safer because it can always recover; the web UI
-> cannot if the network does not come up.
+> [03-install.md](03-install.md#flashing-from-the-stock-web-ui). That image
+> hasn't been tested on a switch yet. On a unit that may differ from the
+> documented one, the serial route below is safer because it can always
+> recover; the web UI cannot if the network does not come up.
 
 ## Part 3: Test from RAM (nothing is written to flash)
 
@@ -154,7 +157,12 @@ Only after the RAM test passes on every port.
      `setenv bootcmd 'rtk network on; boota'`, `saveenv`, `reset`.
 4. Open `http://192.168.2.1` and set a root password (*System →
    Administration*).
-5. Connect the switch to your network. It takes an address from your
+5. Install the PoE firmware once, as in
+   [03-install.md, step 4](03-install.md#4-write-openwrt-to-flash): the
+   flash install starts without it. In PowerShell:
+   `ssh root@192.168.2.1 mkdir -p /lib/firmware/realtek`, then
+   `scp -O rtl8239-bt.bin root@192.168.2.1:/lib/firmware/realtek/`.
+6. Connect the switch to your network. It takes an address from your
    router's DHCP (hostname `mokerlink-switch`) and keeps `192.168.2.1` only
    as a fallback when no DHCP server answers.
 
