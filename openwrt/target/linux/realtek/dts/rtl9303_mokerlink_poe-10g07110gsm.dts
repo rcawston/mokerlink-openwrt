@@ -56,7 +56,7 @@
 	 * (rtl9300_led_config): bi-colour scan mode, three LEDs per port.
 	 * LED 0 is the orange half of the link LED (100M-5G), LED 1 the green
 	 * half (10G), LED 2 the green PoE LED, which has no hardware function
-	 * and is driven in software (led-controller@cc48 below). The cells
+	 * and is driven in software (software-leds below). The cells
 	 * list LED 2 first. Set 1 is the SFP+ port's.
 	 */
 	led_set {
@@ -71,6 +71,72 @@
 			    (RTL93XX_LED_SET_10G | RTL93XX_LED_SET_LINK | RTL93XX_LED_SET_ACT)
 			    (RTL93XX_LED_SET_2P5G | RTL93XX_LED_SET_1G | RTL93XX_LED_SET_100M |
 			     RTL93XX_LED_SET_LINK | RTL93XX_LED_SET_ACT)>;
+
+		/*
+		 * PoE status LEDs. The stock firmware (poe_led_detect_monitor in
+		 * ski.ko) takes LED 2 of every RJ45 port under software control
+		 * and switches it on while the port delivers power.
+		 */
+		software-leds {
+			#address-cells = <2>;
+			#size-cells = <0>;
+
+			led@0,2 {
+				reg = <0 2>;
+				color = <LED_COLOR_ID_GREEN>;
+				function = "poe";
+				function-enumerator = <1>;
+				linux,default-trigger = "pse-1-0022:port0:delivering";
+			};
+
+			led@8,2 {
+				reg = <8 2>;
+				color = <LED_COLOR_ID_GREEN>;
+				function = "poe";
+				function-enumerator = <2>;
+				linux,default-trigger = "pse-1-0022:port1:delivering";
+			};
+
+			led@10,2 {
+				reg = <16 2>;
+				color = <LED_COLOR_ID_GREEN>;
+				function = "poe";
+				function-enumerator = <3>;
+				linux,default-trigger = "pse-1-0022:port2:delivering";
+			};
+
+			led@14,2 {
+				reg = <20 2>;
+				color = <LED_COLOR_ID_GREEN>;
+				function = "poe";
+				function-enumerator = <4>;
+				linux,default-trigger = "pse-1-0020:port0:delivering";
+			};
+
+			led@18,2 {
+				reg = <24 2>;
+				color = <LED_COLOR_ID_GREEN>;
+				function = "poe";
+				function-enumerator = <5>;
+				linux,default-trigger = "pse-1-0020:port1:delivering";
+			};
+
+			led@19,2 {
+				reg = <25 2>;
+				color = <LED_COLOR_ID_GREEN>;
+				function = "poe";
+				function-enumerator = <6>;
+				linux,default-trigger = "pse-1-0020:port2:delivering";
+			};
+
+			led@1a,2 {
+				reg = <26 2>;
+				color = <LED_COLOR_ID_GREEN>;
+				function = "poe";
+				function-enumerator = <7>;
+				linux,default-trigger = "pse-1-0020:port3:delivering";
+			};
+		};
 	};
 
 	keys {
@@ -465,75 +531,6 @@
 				speed = <1000>;
 				full-duplex;
 			};
-		};
-	};
-
-	/*
-	 * PoE status LEDs. The stock firmware (poe_led_detect_monitor in
-	 * ski.ko) takes LED 2 of every RJ45 port, the third in the serial LED
-	 * stream, under software control and switches it on while the port
-	 * delivers power. LEDs 0 and 1 are the port's orange/green link LED.
-	 */
-	led-controller@cc48 {
-		compatible = "realtek,rtl9301-port-leds";
-		reg = <0xcc48 0x84>;
-		#address-cells = <2>;
-		#size-cells = <0>;
-
-		led@0,2 {
-			reg = <0 2>;
-			color = <LED_COLOR_ID_GREEN>;
-			function = "poe";
-			function-enumerator = <1>;
-			linux,default-trigger = "pse-1-0022:port0:delivering";
-		};
-
-		led@8,2 {
-			reg = <8 2>;
-			color = <LED_COLOR_ID_GREEN>;
-			function = "poe";
-			function-enumerator = <2>;
-			linux,default-trigger = "pse-1-0022:port1:delivering";
-		};
-
-		led@10,2 {
-			reg = <16 2>;
-			color = <LED_COLOR_ID_GREEN>;
-			function = "poe";
-			function-enumerator = <3>;
-			linux,default-trigger = "pse-1-0022:port2:delivering";
-		};
-
-		led@14,2 {
-			reg = <20 2>;
-			color = <LED_COLOR_ID_GREEN>;
-			function = "poe";
-			function-enumerator = <4>;
-			linux,default-trigger = "pse-1-0020:port0:delivering";
-		};
-
-		led@18,2 {
-			reg = <24 2>;
-			color = <LED_COLOR_ID_GREEN>;
-			function = "poe";
-			function-enumerator = <5>;
-			linux,default-trigger = "pse-1-0020:port1:delivering";
-		};
-
-		led@19,2 {
-			reg = <25 2>;
-			color = <LED_COLOR_ID_GREEN>;
-			function = "poe";
-			function-enumerator = <6>;
-			linux,default-trigger = "pse-1-0020:port2:delivering";
-		};
-
-		led@1a,2 {
-			reg = <26 2>;
-			color = <LED_COLOR_ID_GREEN>;
-			function = "poe";
-			function-enumerator = <7>;
-			linux,default-trigger = "pse-1-0020:port3:delivering";
 		};
 	};
 };

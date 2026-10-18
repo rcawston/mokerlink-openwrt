@@ -1,0 +1,265 @@
+From: =?UTF-8?q?Martin=20B=C3=B6h?= <contact@martb.dev>
+Date: Wed, 23 Sep 2026 19:08:51 +0200
+Subject: [PATCH] realtek: dsa: rtl930x: add software-controlled LEDs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The LED scan engine drives each LED from its port's link state, so
+indicators wired into the scan chain behind the front-panel ports stay
+dark. The Zyxel XMG1915 switches have their CLOUD and PoE LEDs there.
+
+The RTL930x can hand individual scan-chain LEDs over to software.
+Register the children of a "software-leds" node in the LED node as LED
+class devices, with reg = <port index> selecting the slot and the LED
+within it. The slot still has to be part of the scan chain, e.g. via
+realtek,led-setN-force-port-mask. An LED goes back to the scan engine
+when it is removed.
+
+The code lives in leds.c, which, as in the other DSA drivers, is only
+built when the LED class is reachable from the driver, so the switch
+driver itself does not depend on it.
+
+The register layout was taken from the XMG1915-10EP stock firmware.
+Each LED has a 3-bit mode: 0 is off, 7 is on, and 1-6 blink at rates
+from 32 ms to 1024 ms. Only on and off are used for now, blinking is
+left to the LED core. The mode is written to both the copper and the
+fibre field, as the scan engine uses one or the other depending on the
+port type.
+
+Assisted-by: Claude:claude-opus-5-5
+Signed-off-by: Martin Böh <contact@martb.dev>
+
+[ For testing: openwrt/openwrt#25341, adapted to the pinned OpenWrt commit; only the Kconfig and Makefile context differ. ]
+---
+diff --git a/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/Kconfig b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/Kconfig
+index cc8a9beda0..e2c91cb86e 100644
+--- a/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/Kconfig
++++ b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/Kconfig
+@@ -6,3 +6,8 @@ config NET_DSA_RTL83XX
+ 	select REALTEK_OTTO_TABLE
+ 	help
+ 	  This driver adds support for Realtek RTL83xx series switching.
++
++config NET_DSA_RTL83XX_LEDS
++	def_bool y
++	depends on NET_DSA_RTL83XX
++	depends on LEDS_CLASS=y || LEDS_CLASS=NET_DSA_RTL83XX
+diff --git a/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/Makefile b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/Makefile
+index 3745fcc169..5672fde4d1 100644
+--- a/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/Makefile
++++ b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/Makefile
+@@ -1,3 +1,4 @@
+ # SPDX-License-Identifier: GPL-2.0
+ obj-$(CONFIG_NET_DSA_RTL83XX) += rtl_otto_dsa.o
+ rtl_otto_dsa-objs := common.o dsa.o rtl838x.o rtl839x.o rtl930x.o rtl931x.o debugfs.o lag.o l2.o qos.o tc.o pie.o vlan.o l3.o stats.o stp.o mirror.o
++rtl_otto_dsa-$(CONFIG_NET_DSA_RTL83XX_LEDS) += leds.o
+diff --git a/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/leds.c b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/leds.c
+new file mode 100644
+index 0000000000..c410da59d0
+--- /dev/null
++++ b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/leds.c
+@@ -0,0 +1,155 @@
++// SPDX-License-Identifier: GPL-2.0-only
++
++#include <asm/mach-rtl-otto/mach-rtl-otto.h>
++#include <linux/leds.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++
++#include "leds.h"
++#include "rtl-otto.h"
++
++#define RTL930X_LED_SW_CTRL			(0xCC48)
++#define RTL930X_LED_SW_CTRL_START		BIT(0)
++/* 4 bits per port, set bits hand the LED from the scan engine to software */
++#define RTL930X_LED_SW_P_EN_CTRL(p)		(0xCC4C + (((p) >> 3) << 2))
++#define RTL930X_LED_SW_P_EN_SHIFT(p)		(((p) & 0x7) << 2)
++/* 3 bits per LED, copper in 11:0 and fibre in 23:12 */
++#define RTL930X_LED_SW_P_CTRL(p)		(0xCC5C + ((p) << 2))
++#define RTL930X_LED_SW_MODE_SHIFT(l, fib)	(((fib) ? 12 : 0) + (l) * 3)
++#define RTL930X_LED_SW_MODE_MASK(l, fib)	(0x7 << RTL930X_LED_SW_MODE_SHIFT(l, fib))
++#define RTL930X_LED_SW_MODE_OFF			0
++/* 1-6 blink, at rates doubling from 32 ms to 1024 ms */
++#define RTL930X_LED_SW_MODE_ON			7
++
++struct rtldsa_930x_sw_led {
++	struct led_classdev cdev;
++	struct rtl838x_switch_priv *priv;
++	u8 port;
++	u8 index;
++};
++
++static void rtldsa_930x_sw_led_mode_set(struct rtldsa_930x_sw_led *led, u32 mode)
++{
++	/* Which half the scan engine reads depends on the port type masks */
++	u32 clear = RTL930X_LED_SW_MODE_MASK(led->index, false) |
++		    RTL930X_LED_SW_MODE_MASK(led->index, true);
++	u32 set = mode << RTL930X_LED_SW_MODE_SHIFT(led->index, false) |
++		  mode << RTL930X_LED_SW_MODE_SHIFT(led->index, true);
++
++	mutex_lock(&led->priv->reg_mutex);
++	sw_w32_mask(clear, set, RTL930X_LED_SW_P_CTRL(led->port));
++	sw_w32(RTL930X_LED_SW_CTRL_START, RTL930X_LED_SW_CTRL);
++	mutex_unlock(&led->priv->reg_mutex);
++}
++
++static int rtldsa_930x_sw_led_brightness_set(struct led_classdev *cdev,
++					     enum led_brightness brightness)
++{
++	struct rtldsa_930x_sw_led *led = container_of(cdev, struct rtldsa_930x_sw_led, cdev);
++
++	rtldsa_930x_sw_led_mode_set(led, brightness ? RTL930X_LED_SW_MODE_ON :
++						      RTL930X_LED_SW_MODE_OFF);
++
++	return 0;
++}
++
++static enum led_brightness rtldsa_930x_sw_led_brightness_get(struct led_classdev *cdev)
++{
++	struct rtldsa_930x_sw_led *led = container_of(cdev, struct rtldsa_930x_sw_led, cdev);
++	u32 v = sw_r32(RTL930X_LED_SW_P_CTRL(led->port));
++
++	return (v & RTL930X_LED_SW_MODE_MASK(led->index, false)) ? LED_ON : LED_OFF;
++}
++
++static void rtldsa_930x_sw_led_own(struct rtldsa_930x_sw_led *led, bool own)
++{
++	u32 bit = BIT(led->index) << RTL930X_LED_SW_P_EN_SHIFT(led->port);
++
++	mutex_lock(&led->priv->reg_mutex);
++	sw_w32_mask(own ? 0 : bit, own ? bit : 0, RTL930X_LED_SW_P_EN_CTRL(led->port));
++	mutex_unlock(&led->priv->reg_mutex);
++}
++
++/* Hand the LED back to the scan engine */
++static void rtldsa_930x_sw_led_release(void *led)
++{
++	rtldsa_930x_sw_led_own(led, false);
++}
++
++static int rtldsa_930x_sw_led_add(struct rtl838x_switch_priv *priv,
++				  struct device_node *np)
++{
++	struct led_init_data init_data = {};
++	struct rtldsa_930x_sw_led *led;
++	u32 reg[2];
++	int err;
++
++	err = of_property_read_u32_array(np, "reg", reg, ARRAY_SIZE(reg));
++	if (err)
++		return err;
++
++	/* Past the CPU port the per-port control array runs into other registers */
++	if (reg[0] >= priv->r->cpu_port || reg[1] > 3)
++		return -EINVAL;
++
++	led = devm_kzalloc(priv->dev, sizeof(*led), GFP_KERNEL);
++	if (!led)
++		return -ENOMEM;
++
++	led->priv = priv;
++	led->port = reg[0];
++	led->index = reg[1];
++	led->cdev.max_brightness = LED_ON;
++	led->cdev.brightness_set_blocking = rtldsa_930x_sw_led_brightness_set;
++	led->cdev.brightness_get = rtldsa_930x_sw_led_brightness_get;
++
++	switch (led_init_default_state_get(of_fwnode_handle(np))) {
++	case LEDS_DEFSTATE_ON:
++		led->cdev.brightness = LED_ON;
++		break;
++	case LEDS_DEFSTATE_KEEP:
++		led->cdev.brightness = rtldsa_930x_sw_led_brightness_get(&led->cdev);
++		break;
++	default:
++		led->cdev.brightness = LED_OFF;
++		break;
++	}
++
++	/*
++	 * Registration reads the brightness back from the hardware, so the
++	 * LED is taken over and set to its default state first.
++	 */
++	rtldsa_930x_sw_led_own(led, true);
++	rtldsa_930x_sw_led_brightness_set(&led->cdev, led->cdev.brightness);
++
++	err = devm_add_action_or_reset(priv->dev, rtldsa_930x_sw_led_release, led);
++	if (err)
++		return err;
++
++	init_data.fwnode = of_fwnode_handle(np);
++
++	err = devm_led_classdev_register_ext(priv->dev, &led->cdev, &init_data);
++	if (err)
++		devm_release_action(priv->dev, rtldsa_930x_sw_led_release, led);
++
++	return err;
++}
++
++void rtldsa_930x_sw_leds_init(struct rtl838x_switch_priv *priv,
++			      struct device_node *node)
++{
++	struct device_node *leds;
++	int err;
++
++	leds = of_get_child_by_name(node, "software-leds");
++	if (!leds)
++		return;
++
++	for_each_available_child_of_node_scoped(leds, np) {
++		err = rtldsa_930x_sw_led_add(priv, np);
++		if (err)
++			dev_err(priv->dev, "failed to add LED %pOF: %d\n", np, err);
++	}
++
++	of_node_put(leds);
++}
+diff --git a/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/leds.h b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/leds.h
+new file mode 100644
+index 0000000000..9e5fe4e3e5
+--- /dev/null
++++ b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/leds.h
+@@ -0,0 +1,21 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++
++#ifndef _OTTO_LEDS_H
++#define _OTTO_LEDS_H
++
++#include <linux/kconfig.h>
++
++struct device_node;
++struct rtl838x_switch_priv;
++
++#if IS_ENABLED(CONFIG_NET_DSA_RTL83XX_LEDS)
++void rtldsa_930x_sw_leds_init(struct rtl838x_switch_priv *priv,
++			      struct device_node *node);
++#else
++static inline void rtldsa_930x_sw_leds_init(struct rtl838x_switch_priv *priv,
++					    struct device_node *node)
++{
++}
++#endif
++
++#endif /* _OTTO_LEDS_H */
+diff --git a/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/rtl930x.c b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/rtl930x.c
+index 97d36addee..94da71db4e 100644
+--- a/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/rtl930x.c
++++ b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/rtl930x.c
+@@ -6,6 +6,7 @@
+ #include <linux/regmap.h>
+ 
+ #include "lag.h"
++#include "leds.h"
+ #include "l2.h"
+ #include "l3.h"
+ #include "pie.h"
+@@ -549,6 +550,8 @@ static void rtl930x_led_init(struct rtl838x_switch_priv *priv)
+ 
+ 	for (int i = 0; i < 24; i++)
+ 		dev_dbg(dev, "%08x: %08x\n", 0xbb00cc00 + i * 4, sw_r32(0xcc00 + i * 4));
++
++	rtldsa_930x_sw_leds_init(priv, node);
+ }
+ 
+ static int
