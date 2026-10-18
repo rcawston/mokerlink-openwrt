@@ -175,7 +175,10 @@ in the copper, fibre and combo port masks and selects the port's set for
 both media, where the SDK puts the copper ports only in the copper mask
 and port 27 only in the fibre mask (all in the combo mask) and selects a
 set only for the port's own medium; with one set per port that selects the
-same LEDs. The PoE LEDs are driven in software: see [PoE LEDs](#poe-leds).
+same LEDs. Booted from flash with this, the registers read back as above,
+a 1 Gbit/s link lights its link LED orange, and the PoE LEDs follow the
+power of their ports. The PoE LEDs are driven in software: see
+[PoE LEDs](#poe-leds).
 
 ## PoE
 
@@ -402,11 +405,11 @@ partition. The build makes two images for it
 
 ## Open points
 
-- **Not yet tested on hardware:** the port LED set-up from the device
-  tree ([LEDs](#leds)), the factory image, and a class 5-8 PD under the
-  budget. Tested: the fans in automatic mode, the link change fix, and the
-  PoE budget with the PSE core fix below (a PD gets the power of its
-  class; switching a port off holds; nothing stays allotted after
+- **Not yet tested on hardware:** the factory image, and a class 5-8 PD
+  under the budget. Tested: the fans in automatic mode, the link change
+  fix, the port LEDs set up from the device tree when booted from flash,
+  and the PoE budget with the PSE core fix below (a PD gets the power of
+  its class; switching a port off holds; nothing stays allotted after
   switching off or unplugging; priorities).
 - **PSE core fix:** in the Linux PSE core, disabling a port (admin
   disable, PD unplugged, or switched off for a port of higher priority)

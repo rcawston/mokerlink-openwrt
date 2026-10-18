@@ -17,10 +17,10 @@ switch and tools to bring up the hardware safely.
 > 802.3bt devices within a 260 W budget by class, including a fix in the
 > Linux PoE core for that budget. PoE needs the RTL8239 firmware copied
 > out of your stock image
-> ([docs/05-porting.md](docs/05-porting.md#the-rtl8239-firmware)). Being
-> tested: the port LEDs set up by OpenWrt itself (the green PoE LEDs stay
-> dark when booting from flash without it), and the factory image. Open
-> points are listed in [docs/05-porting.md](docs/05-porting.md#open-points).
+> ([docs/05-porting.md](docs/05-porting.md#the-rtl8239-firmware)). The
+> port LEDs, the green PoE LEDs included, are set up by OpenWrt itself.
+> Not tested yet: the factory image. Open points are listed in
+> [docs/05-porting.md](docs/05-porting.md#open-points).
 
 ## Why OpenWrt and not firmware from scratch
 
