@@ -64,11 +64,12 @@ regs() {
 		"$(rd "$1" 0x0c)" "$(rd "$1" 0x0d)" "$(rd "$1" 0x0e)" "$(rd "$1" 0x0f)" >>"$OUT"
 }
 
-budget() { # the PoE supply's budget and what the PSE core allotted of it
+budget() { # [expected]: the PoE budget and what the PSE core allotted of it
 	local r
+	sleep 2   # the driver polls the chips twice a second
 	for r in /sys/class/regulator/regulator.*; do
 		[ "$(cat "$r/name" 2>/dev/null)" = poe ] || continue
-		say "  budget $(cat "$r/power_budget_milliwatt" 2>/dev/null) mW, allotted $(cat "$r/power_requested_milliwatt" 2>/dev/null) mW"
+		say "  budget $(cat "$r/power_budget_milliwatt" 2>/dev/null) mW, allotted $(cat "$r/power_requested_milliwatt" 2>/dev/null) mW${1:+ ($1 expected)}"
 		return
 	done
 	say "  no poe regulator"
@@ -187,24 +188,27 @@ for p in lan1 lan2 lan3 lan4 lan5 lan6 lan7; do
 	say "$p: $(pse $p)"
 done
 run ethtool --show-pse lan1
-budget
+budget "0 mW"
 regs 0x22
 if ask "Plug the PoE device into port 1"; then
 	wait_status lan1 delivering 30
 	run ethtool --show-pse lan1
-	budget
+	budget "class 1: 4000, 2: 7000, 3: 15400, 4: 30000 mW"
 	regs 0x22
 	note "Did the PoE device power up, and does its green PoE LED light? (y/n)"
 
 	say "switching port 1 off"
 	run ethtool --set-pse lan1 c33-pse-admin-control disable
 	wait_status lan1 disabled 10
-	budget
+	budget "0 mW"
 	regs 0x22
+	sleep 5
+	run ethtool --show-pse lan1
+	say "  (still disabled expected)"
 	say "switching port 1 on"
 	run ethtool --set-pse lan1 c33-pse-admin-control enable
 	wait_status lan1 delivering 30
-	budget
+	budget "the same as before"
 
 	say "priority 5 for port 1 (0 is the highest)"
 	run ethtool --set-pse lan1 prio 5
@@ -213,14 +217,19 @@ if ask "Plug the PoE device into port 1"; then
 
 	if ask "Unplug the PoE device from port 1, wait 5 s"; then
 		wait_status lan1 searching 10
-		budget
+		budget "0 mW"
 		regs 0x22
+		sleep 8
+		run sh -c "dmesg | grep -i 'rtl8239.*no power'"
+		say "  (no 'no power' lines expected)"
+		budget "0 mW"
 		if ask "Plug it back into port 1"; then
 			wait_status lan1 delivering 30
-			budget
+			budget "the same as before"
 			note "Did it power up again? (y/n)"
 		fi
 		ask "Unplug it from port 1" || true
+		budget "0 mW"
 	fi
 fi
 

@@ -1,0 +1,128 @@
+From: OpenWrt contributors
+Subject: [PATCH] net: pse-pd: don't enable a PI again while disabling it
+
+With software power control, _pse_pi_disable() frees the power budget
+of the PI and then retries the power delivery of the PIs waiting for
+power in its power domain: those that are admin enabled, have a PD
+detected, and are not enabled in hardware. The PI being disabled is one
+of them, as its admin state and PD detection are only cleared after
+_pse_pi_disable() returns, so it is enabled again right away:
+
+- an admin disable of a port with a PD keeps the port powered, and the
+  next admin enable allocates its budget a second time
+- a disconnection enables the now empty port again, with a new budget
+  allocation that is never freed: when the port reports the
+  disconnection again, its PD detection is already cleared
+- a PI disabled to free budget for a PI of higher priority is enabled
+  again with the budget it just freed, so priorities never take effect
+
+Clear the admin state and the PD detection before disabling the PI,
+and don't retry the power domain in pse_disable_pi_pol(), whose freed
+budget is meant for the PI being allocated. That PI stays waiting for
+power and is retried when budget is freed later.
+
+Fixes: ffef61d6d273 ("net: pse-pd: Add support for budget evaluation strategies")
+---
+diff --git a/drivers/net/pse-pd/pse_core.c b/drivers/net/pse-pd/pse_core.c
+index 543a17e..1084acc 100644
+--- a/drivers/net/pse-pd/pse_core.c
++++ b/drivers/net/pse-pd/pse_core.c
+@@ -537,14 +537,14 @@ static void pse_pi_deallocate_pw_budget(struct pse_pi *pi)
+ }
+ 
+ /**
+- * _pse_pi_disable - Call disable operation. Assumes the PSE lock has been
+- *		     acquired.
++ * __pse_pi_disable - Call disable operation and free the power budget of the
++ *		      PI. Assumes the PSE lock has been acquired.
+  * @pcdev: a pointer to the PSE
+  * @id: index of the PSE control
+  *
+  * Return: 0 on success and failure value on error
+  */
+-static int _pse_pi_disable(struct pse_controller_dev *pcdev, int id)
++static int __pse_pi_disable(struct pse_controller_dev *pcdev, int id)
+ {
+ 	const struct pse_controller_ops *ops = pcdev->ops;
+ 	int ret;
+@@ -558,6 +558,29 @@ static int _pse_pi_disable(struct pse_controller_dev *pcdev, int id)
+ 
+ 	pse_pi_deallocate_pw_budget(&pcdev->pi[id]);
+ 
++	return 0;
++}
++
++/**
++ * _pse_pi_disable - Disable a PI, then retry the power delivery of the PIs
++ *		     waiting for power in its power domain. Assumes the PSE
++ *		     lock has been acquired.
++ * @pcdev: a pointer to the PSE
++ * @id: index of the PSE control
++ *
++ * The caller must have cleared the admin state or the PD detection of the
++ * PI first, or the retry enables the PI again.
++ *
++ * Return: 0 on success and failure value on error
++ */
++static int _pse_pi_disable(struct pse_controller_dev *pcdev, int id)
++{
++	int ret;
++
++	ret = __pse_pi_disable(pcdev, id);
++	if (ret)
++		return ret;
++
+ 	if (pse_pw_d_is_sw_pw_control(pcdev, pcdev->pi[id].pw_d))
+ 		pse_pw_d_retry_power_delivery(pcdev, pcdev->pi[id].pw_d);
+ 
+@@ -579,7 +602,10 @@ static int pse_disable_pi_pol(struct pse_controller_dev *pcdev, int id)
+ 
+ 	dev_dbg(pcdev->dev, "Disabling PI %d to free power budget\n", id);
+ 
+-	ret = _pse_pi_disable(pcdev, id);
++	/* The power freed is for the PI being allocated, and this PI waits
++	 * for power again: no retry of the power domain here.
++	 */
++	ret = __pse_pi_disable(pcdev, id);
+ 	if (ret)
+ 		notifs |= ETHTOOL_PSE_EVENT_SW_PW_CONTROL_ERROR;
+ 
+@@ -986,6 +1012,7 @@ static int pse_pi_enable(struct regulator_dev *rdev)
+ static int pse_pi_disable(struct regulator_dev *rdev)
+ {
+ 	struct pse_controller_dev *pcdev = rdev_get_drvdata(rdev);
++	bool enabled;
+ 	int id, ret;
+ 
+ 	id = rdev_get_id(rdev);
+@@ -998,9 +1025,12 @@ static int pse_pi_disable(struct regulator_dev *rdev)
+ 		mutex_unlock(&pcdev->lock);
+ 		return 0;
+ 	}
++	/* Disabled before _pse_pi_disable() retries the power domain */
++	enabled = pcdev->pi[id].admin_state_enabled;
++	pcdev->pi[id].admin_state_enabled = 0;
+ 	ret = _pse_pi_disable(pcdev, id);
+-	if (!ret)
+-		pcdev->pi[id].admin_state_enabled = 0;
++	if (ret)
++		pcdev->pi[id].admin_state_enabled = enabled;
+ 	pse_led_update(pcdev, id);
+ 
+ 	mutex_unlock(&pcdev->lock);
+@@ -1567,10 +1597,12 @@ static int pse_set_config_isr(struct pse_controller_dev *pcdev, int id,
+ 				ret = 0;
+ 		}
+ 	} else if (notifs & ETHTOOL_C33_PSE_EVENT_DISCONNECTION) {
+-		if (pcdev->pi[id].admin_state_enabled &&
+-		    pcdev->pi[id].isr_pd_detected)
+-			ret = _pse_pi_disable(pcdev, id);
++		bool pd_detected = pcdev->pi[id].isr_pd_detected;
++
++		/* Gone before _pse_pi_disable() retries the power domain */
+ 		pcdev->pi[id].isr_pd_detected = false;
++		if (pcdev->pi[id].admin_state_enabled && pd_detected)
++			ret = _pse_pi_disable(pcdev, id);
+ 	}
+ 
+ 	return ret;

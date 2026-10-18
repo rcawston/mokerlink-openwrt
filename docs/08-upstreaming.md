@@ -14,6 +14,7 @@ this repository; the commit messages are in `upstream/`.
 | RTL9300 port LEDs: binding, switch binding, driver | `realtek: add RTL9300 port LED driver` (`832-*`, `kmod-leds-rtl9300-port`) | `leds` series: leds tree, linux-leds (the switch binding patch also to netdev) |
 | PSE LED trigger names in `leds/common.yaml` | not needed | `pse-led-triggers`: with the PSE LED trigger series |
 | the device | `realtek: rtl930x: add support for MokerLink POE-10G07110GSM` | none |
+| PSE core fix: a PI disabled with software power control is not enabled again by the retry of its power domain | `835-*`; in OpenWrt it belongs in `target/linux/generic/pending-6.18`, as a separate pull request | `net` tree as a fix (`Fixes: ffef61d6d273`), netdev; send it as it is, with your sign-off |
 | link change fix in the switch driver | `realtek: dsa: let phylib read the PHY on a port link change` (`patches/0003-*`, a patch to OpenWrt's own driver, ready to send as it is) | none |
 
 Not submitted: the `mokerlink-*` tools and the first-boot defaults in

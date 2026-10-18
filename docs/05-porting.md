@@ -372,9 +372,17 @@ partition. The build makes two images for it
 
 ## Open points
 
-- **Not yet tested on hardware:** the PoE budget, the link change fix and
-  the fans in automatic mode, which `mokerlink-hw-test` goes through, and
-  running from flash, including the factory image.
+- **Not yet tested on hardware:** the PoE budget with the PSE core fix
+  below, and the factory image. Tested: the fans in automatic mode, the
+  link change fix, and the budget's basics (a PD gets the power of its
+  class; switching off and on, unplugging, priorities).
+- **PSE core fix:** in the Linux PSE core, disabling a port (admin
+  disable, PD unplugged, or switched off for a port of higher priority)
+  re-checked the waiting ports before the port's own state was cleared,
+  so it enabled that same port again: switching off didn't hold, and the
+  budget leaked with every unplug. `patches-6.18/835-*` clears the state
+  first; it goes upstream as a fix
+  ([08-upstreaming.md](08-upstreaming.md#what-goes-where)).
 - **PoE budget across the two chips:** both chips share the 260 W, but the
   PSE core sheds and retries only ports of the chip that has the event
   (front ports 1-3 on one, 4-7 on the other). A port of one chip doesn't

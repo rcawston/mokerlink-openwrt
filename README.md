@@ -16,9 +16,10 @@ switch and tools to bring up the hardware safely.
 > the reset button works. PoE needs the RTL8239 firmware copied out of
 > your stock image
 > ([docs/05-porting.md](docs/05-porting.md#the-rtl8239-firmware)).
-> Not yet tested: the PoE power budget, the fix for doubled link-down
-> messages, the fans in the controller's automatic mode, and running from
-> flash. Open points are listed in
+> The fans run in the fan controller's automatic mode, link changes are
+> logged once, and PoE keeps a 260 W budget by class. Being tested: a fix
+> in the Linux PoE core for budget bookkeeping when a port is switched off
+> or unplugged, and the factory image. Open points are listed in
 > [docs/05-porting.md](docs/05-porting.md#open-points).
 
 ## Why OpenWrt and not firmware from scratch

@@ -85,6 +85,8 @@
 /* Budget mode: how long a port switched on may take to deliver power */
 #define RTL8239_POWER_ON_TIMEOUT	(5 * HZ)
 #define RTL8239_POWER_OFF_TIMEOUT_MS	500
+/* ... and how long the chip takes to detect and classify a PD again */
+#define RTL8239_REDETECT_TIME		(3 * HZ)
 
 /* 30.52 uA per LSB, 1.953 mV per LSB, as the vendor firmware scales them */
 #define RTL8239_UA_PER_LSB_X4096	125000
@@ -109,7 +111,10 @@ struct rtl8239_priv {
 	unsigned long pd_found;		/* PIs with a PD reported to the core */
 	unsigned long switched_on;	/* PIs in auto mode */
 	unsigned long powered;		/* ... that delivered power since */
+	unsigned long redetecting;	/* PIs switched off, PD being found again */
 	unsigned long on_since[RTL8239_MAX_CHANS];
+	unsigned long off_since[RTL8239_MAX_CHANS];
+	u8 pd_class[RTL8239_MAX_CHANS];	/* class of the PD found */
 };
 
 static struct rtl8239_priv *to_rtl8239(struct pse_controller_dev *pcdev)
@@ -201,7 +206,9 @@ static int rtl8239_pi_power(struct rtl8239_priv *priv, int id, bool *enabled,
 
 /*
  * Budget mode: switch the port off and back to detecting, once the chip has
- * dropped the power, so that semi-automatic mode does not keep it on.
+ * dropped the power, so that semi-automatic mode does not keep it on. This
+ * clears the detection and class result until the chip has found the PD
+ * again.
  */
 static int rtl8239_pi_switch_off(struct rtl8239_priv *priv, int id)
 {
@@ -209,6 +216,8 @@ static int rtl8239_pi_switch_off(struct rtl8239_priv *priv, int id)
 	int ret, err;
 
 	__clear_bit(id, &priv->switched_on);
+	__set_bit(id, &priv->redetecting);
+	priv->off_since[id] = jiffies;
 	ret = rtl8239_pi_set_mode(priv, id, RTL8239_OP_MODE_OFF);
 	if (ret)
 		return ret;
@@ -336,9 +345,19 @@ static const int rtl8239_class_power[] = {
 	15400, 4000, 7000, 15400, 30000, 45000, 60000, 75000, 90000,
 };
 
+/*
+ * In budget mode, of the PD found: the chip clears the class while it
+ * finds the PD again after the port was switched off.
+ */
 static int rtl8239_pi_get_pw_req(struct pse_controller_dev *pcdev, int id)
 {
-	int class = rtl8239_pi_get_pw_class(pcdev, id);
+	struct rtl8239_priv *priv = to_rtl8239(pcdev);
+	int class;
+
+	if (priv->budget && test_bit(id, &priv->pd_found))
+		class = priv->pd_class[id];
+	else
+		class = rtl8239_pi_get_pw_class(pcdev, id);
 
 	return class < 0 ? class : rtl8239_class_power[class];
 }
@@ -612,8 +631,11 @@ static int rtl8239_pi_get_mode(struct rtl8239_priv *priv, int id)
 	return ret >> (2 * (chan % RTL8239_QUAD_CHANS)) & RTL8239_OP_MODE_MASK;
 }
 
-/* Budget mode: whether the chip found and classified a PD on the PI */
-static int rtl8239_pi_pd_found(struct rtl8239_priv *priv, int id)
+/*
+ * Budget mode: whether the chip found and classified a PD on the PI, and
+ * its class
+ */
+static int rtl8239_pi_pd_found(struct rtl8239_priv *priv, int id, u8 *pd_class)
 {
 	int ret, class;
 
@@ -622,6 +644,7 @@ static int rtl8239_pi_pd_found(struct rtl8239_priv *priv, int id)
 		return ret;
 
 	class = FIELD_GET(RTL8239_CLASS, ret);
+	*pd_class = class >= 1 && class <= 8 ? class : 0;
 	return FIELD_GET(RTL8239_DETECT, ret) == RTL8239_DETECT_VALID &&
 	       ((class >= 1 && class <= 8) || class == RTL8239_CLASS_0);
 }
@@ -639,6 +662,7 @@ static int rtl8239_pi_budget_event(struct rtl8239_priv *priv, int id,
 				   unsigned long *event)
 {
 	struct device *dev = priv->pcdev.dev;
+	u8 pd_class;
 	int ret;
 
 	if (test_bit(id, &priv->switched_on)) {
@@ -677,13 +701,21 @@ static int rtl8239_pi_budget_event(struct rtl8239_priv *priv, int id,
 	if (ret)
 		return ret;
 
-	ret = rtl8239_pi_pd_found(priv, id);
+	/* The result of before a switch-off is gone until then */
+	if (test_bit(id, &priv->redetecting)) {
+		if (time_before(jiffies, priv->off_since[id] + RTL8239_REDETECT_TIME))
+			return 0;
+		__clear_bit(id, &priv->redetecting);
+	}
+
+	ret = rtl8239_pi_pd_found(priv, id, &pd_class);
 	if (ret < 0)
 		return ret;
 	if (ret == test_bit(id, &priv->pd_found))
 		return 0;
 
 	__assign_bit(id, &priv->pd_found, ret);
+	priv->pd_class[id] = pd_class;
 	*event = ret ? ETHTOOL_C33_PSE_EVENT_CLASSIFICATION :
 		       ETHTOOL_C33_PSE_EVENT_DISCONNECTION;
 	return 0;
