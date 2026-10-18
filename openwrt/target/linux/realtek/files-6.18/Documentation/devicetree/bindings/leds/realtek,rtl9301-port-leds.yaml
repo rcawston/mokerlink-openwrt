@@ -10,12 +10,12 @@ maintainers:
   - OpenWrt Developers <openwrt-devel@lists.openwrt.org>
 
 description: |
-  The RTL9300 switch drives up to four LEDs per port over its serial LED
-  interface, each normally showing a hardware function chosen by the LED set
-  of the port. The LEDs listed here are taken over by software instead and
-  switched on and off as LED class devices, for port LEDs that have no
-  hardware function such as the PoE status LED of a PoE switch. The node is
-  a child of the switch, whose registers it uses.
+  The RTL9300 switch drives up to four LEDs per port over its LED interface,
+  serial or scanned, each normally showing a hardware function chosen by the
+  LED set of the port. The LEDs listed here are taken over by software instead
+  and switched on and off as LED class devices, for port LEDs that have no
+  hardware function such as the PoE status LED of a PoE switch. The node is a
+  child of the switch, whose registers it uses.
 
 properties:
   compatible:
@@ -43,8 +43,8 @@ patternProperties:
           - items:
               - description: Switch port
                 maximum: 27
-              - description: LED of the port, 0 being the first in the
-                  serial LED stream
+              - description: LED of the port, numbered as in the port's
+                  LED set
                 maximum: 3
 
     required:

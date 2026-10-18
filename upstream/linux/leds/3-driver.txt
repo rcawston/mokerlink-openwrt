@@ -1,11 +1,11 @@
 leds: add Realtek RTL9300 port LED driver
 
-The RTL9300 switch drives up to four LEDs per port over its serial LED
-interface. Each normally shows a hardware function picked by the LED
-set of the port, but software can take it over: one enable bit per
-LED, a 3-bit mode per LED (off, on or one of six blink rates), kept
-separately for copper and fibre media, and a load strobe after which
-the LED controller applies the modes.
+The RTL9300 switch drives up to four LEDs per port over its LED
+interface, serial or scanned. Each normally shows a hardware function
+picked by the LED set of the port, but software can take it over: one
+enable bit per LED, a 3-bit mode per LED (off, on or one of six blink
+rates), kept separately for copper and fibre media, and a load strobe
+after which the LED controller applies the modes.
 
 Add a driver for LEDs that boards wire to the switch without a hardware
 function, such as PoE status LEDs. It takes the LEDs listed in the

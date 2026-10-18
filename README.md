@@ -8,19 +8,19 @@ It is [OpenWrt](https://openwrt.org) plus board support for this switch,
 pinned to an exact source revision, with defaults for a plain layer-2
 switch and tools to bring up the hardware safely.
 
-> **Status.** Tested on a real unit booted from RAM: all seven copper
-> ports forward traffic, with links tested at 100 Mbit/s and 1, 2.5 and
-> 10 Gbit/s; the SFP+ cage works at 10 Gbit/s with a 10G module; the fans
-> run at 50 % like stock; PoE powers 802.3at and 802.3bt devices with the
-> green PoE LEDs lit; SFP+ modules can be swapped, 1G ones included; and
-> the reset button works. PoE needs the RTL8239 firmware copied out of
-> your stock image
-> ([docs/05-porting.md](docs/05-porting.md#the-rtl8239-firmware)).
-> The fans run in the fan controller's automatic mode, link changes are
-> logged once, and PoE keeps a 260 W budget by class. Being tested: a fix
-> in the Linux PoE core for budget bookkeeping when a port is switched off
-> or unplugged, and the factory image. Open points are listed in
-> [docs/05-porting.md](docs/05-porting.md#open-points).
+> **Status.** Tested on a real unit, booted from RAM and installed to
+> flash: all seven copper ports forward traffic, with links tested at
+> 100 Mbit/s and 1, 2.5 and 10 Gbit/s; the SFP+ cage works at 10 Gbit/s
+> with a 10G module; SFP+ modules can be swapped, 1G ones included; the
+> reset button works; the fans run in the fan controller's automatic mode
+> like stock; link changes are logged once; and PoE powers 802.3at and
+> 802.3bt devices within a 260 W budget by class, including a fix in the
+> Linux PoE core for that budget. PoE needs the RTL8239 firmware copied
+> out of your stock image
+> ([docs/05-porting.md](docs/05-porting.md#the-rtl8239-firmware)). Being
+> tested: the port LEDs set up by OpenWrt itself (the green PoE LEDs stay
+> dark when booting from flash without it), and the factory image. Open
+> points are listed in [docs/05-porting.md](docs/05-porting.md#open-points).
 
 ## Why OpenWrt and not firmware from scratch
 

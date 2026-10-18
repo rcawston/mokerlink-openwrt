@@ -2,11 +2,12 @@
 /*
  * Realtek RTL9300 switch port LEDs under software control
  *
- * The RTL9300 drives up to four LEDs per switch port over its serial LED
- * interface. Each one normally shows a hardware function (link, speed,
- * activity) chosen by the LED set of the port, but software can take it
- * over and switch it on or off instead. Boards use that for port LEDs that
- * have no hardware function, such as the PoE status LED of a PoE switch.
+ * The RTL9300 drives up to four LEDs per switch port over its LED interface,
+ * serial or scanned. Each one normally shows a hardware function (link,
+ * speed, activity) chosen by the LED set of the port, but software can take
+ * it over and switch it on or off instead. Boards use that for port LEDs
+ * that have no hardware function, such as the PoE status LED of a PoE
+ * switch.
  *
  * Software control has a mode per LED, kept separately for copper and fibre
  * media, and the LED controller picks the new modes up when it is told to

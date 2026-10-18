@@ -24,8 +24,6 @@
  *   - GPIO LEDs: the system LED already works as the boot loader leaves
  *     it, and driving the wrong GPIO as an output can hold a PHY or the
  *     PoE controller in reset
- *   - port LED sets: without a "realtek,rtl9300-leds" node the switch keeps
- *     the LED setup the boot loader programmed, which is right
  *   - the RTL8231 expander: the stock firmware registers none of its pins
  *     on this board
  */
@@ -51,6 +49,28 @@
 		i2c0 = &i2c_fan;
 		i2c1 = &i2c_poe;
 		i2c2 = &i2c_sfp;
+	};
+
+	/*
+	 * Port LEDs as the vendor SDK programs them from the hardware profile
+	 * (rtl9300_led_config): bi-colour scan mode, three LEDs per port.
+	 * LED 0 is the orange half of the link LED (100M-5G), LED 1 the green
+	 * half (10G), LED 2 the green PoE LED, which has no hardware function
+	 * and is driven in software (led-controller@cc48 below). The cells
+	 * list LED 2 first. Set 1 is the SFP+ port's.
+	 */
+	led_set {
+		compatible = "realtek,rtl9300-leds";
+		realtek,led-mode = <RTL93XX_LED_MODE_BI_COLOR_SCAN>;
+
+		led_set0 = <RTL93XX_LED_SET_NONE
+			    (RTL93XX_LED_SET_10G | RTL93XX_LED_SET_LINK | RTL93XX_LED_SET_ACT)
+			    (RTL93XX_LED_SET_5G | RTL93XX_LED_SET_2P5G | RTL93XX_LED_SET_1G |
+			     RTL93XX_LED_SET_100M | RTL93XX_LED_SET_LINK | RTL93XX_LED_SET_ACT)>;
+		led_set1 = <RTL93XX_LED_SET_NONE
+			    (RTL93XX_LED_SET_10G | RTL93XX_LED_SET_LINK | RTL93XX_LED_SET_ACT)
+			    (RTL93XX_LED_SET_2P5G | RTL93XX_LED_SET_1G | RTL93XX_LED_SET_100M |
+			     RTL93XX_LED_SET_LINK | RTL93XX_LED_SET_ACT)>;
 	};
 
 	keys {
@@ -428,6 +448,7 @@
 		port27: port@27 {
 			reg = <27>;
 			label = "lan8";
+			led-set = <1>;
 			pcs-handle = <&serdes9 0>;
 			phy-mode = "10gbase-r";
 			sfp = <&sfp0>;

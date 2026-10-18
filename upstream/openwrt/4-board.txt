@@ -14,14 +14,17 @@ Specifications:
 - Buttons: reset
 - UART: header J4 (GND, TXD, RXD, 3V3), 115200 8N1
 
-The fan controller, the PoE chips and the SFP+ cage share one
-bit-banged I2C clock line (GPIO 8), with SDA on GPIOs 9, 10 and 11. The
-PoE chips need Realtek firmware loaded at power-up, which cannot be
-shipped: copy it out of the vendor firmware and install it as
-/lib/firmware/realtek/rtl8239-bt.bin. The PoE LEDs (LED 2 of each port)
-follow the PSE LED triggers. At boot, hwmon_fancontrol puts the ADT7476
-into its automatic mode with the vendor firmware's settings: 50 %, and
-full speed when the hottest of its sensors reaches 66 C.
+The fan controller, the PoE chips and the SFP+ cage share one bit-banged
+I2C clock line (GPIO 8), with SDA on GPIOs 9, 10 and 11. The PoE chips
+need Realtek firmware loaded at power-up, which cannot be shipped: copy
+it out of the vendor firmware and install it as
+/lib/firmware/realtek/rtl8239-bt.bin. The port LEDs are set up as the
+vendor SDK does (bi-colour scan mode, three LEDs per port) instead of
+relying on the vendor U-Boot, which sets them up as part of "rtk network
+on"; the PoE LEDs (LED 2 of each port) follow the PSE LED triggers. At
+boot, hwmon_fancontrol puts the ADT7476 into its automatic mode with the
+vendor firmware's settings: 50 %, and full speed when the hottest of its
+sensors reaches 66 C.
 
 Installation from the vendor web UI:
 Upload the factory image (*-squashfs-factory.bix) on the firmware

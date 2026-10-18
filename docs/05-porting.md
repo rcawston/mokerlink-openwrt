@@ -152,12 +152,30 @@ no LED for it. A GPIO LED is an output, and driving the wrong output can
 hold a PHY or the PoE controller in reset, so OpenWrt's boot and upgrade
 blinking would need the pin identified first.
 
-Each RJ45 port has three LEDs in the switch's serial LED stream: LEDs 0
-and 1 are the link LED (orange and green), LED 2 is the green PoE LED.
-Without a `realtek,rtl9300-leds` node, the link LEDs keep the boot
-loader's configuration, which is right; the driver for the PoE LEDs relies
-on the boot loader having set up three LEDs per port. The PoE LEDs are
-driven in software: see [PoE LEDs](#poe-leds).
+Each RJ45 port has three LEDs: LED 0 and LED 1 are the orange and green
+halves of the link LED, LED 2 is the green PoE LED. The vendor SDK sets
+the LED controller up: in U-Boot as part of `rtk network on`, which the
+RAM boot runs, and in the stock firmware in its switch driver. OpenWrt
+booted from flash by `boota` gets neither, so the device tree's
+`realtek,rtl9300-leds` node does it, with the values the vendor SDK writes
+for this board's hardware profile (`rtl9300_led_config` in `rtk.ko`, from
+the profile that `_hwp_led_parse` in `rtcore.ko` reads):
+
+| Setting | Value |
+|---|---|
+| LED mode (`LED_GLB_CTRL` bits 1:0) | 3, bi-colour scan (`realtek,led-mode`) |
+| LED polarity (`LED_GLB_CTRL` bit 22) | 1 (no `active-low`) |
+| LEDs per port | 3, on ports 0, 8, 16, 20, 24-26 and the SFP+ port 27 |
+| LED set 0, copper ports | LED 0 `0x0aaa`: 100M/1G/2.5G/5G link and activity; LED 1 `0x0a01`: 10G link and activity; LED 2 none |
+| LED set 1, SFP+ port | LED 0 `0x0aa8`: 100M/1G/2.5G link and activity; LED 1 `0x0a01`: 10G; LED 2 none |
+
+The `led_setN` cells list the LEDs from the last to the first, as
+OpenWrt's switch driver writes them. OpenWrt's driver also puts every port
+in the copper, fibre and combo port masks and selects the port's set for
+both media, where the SDK puts the copper ports only in the copper mask
+and port 27 only in the fibre mask (all in the combo mask) and selects a
+set only for the port's own medium; with one set per port that selects the
+same LEDs. The PoE LEDs are driven in software: see [PoE LEDs](#poe-leds).
 
 ## PoE
 
@@ -384,16 +402,18 @@ partition. The build makes two images for it
 
 ## Open points
 
-- **Not yet tested on hardware:** the PoE budget with the PSE core fix
-  below, and the factory image. Tested: the fans in automatic mode, the
-  link change fix, and the budget's basics (a PD gets the power of its
-  class; switching off and on, unplugging, priorities).
+- **Not yet tested on hardware:** the port LED set-up from the device
+  tree ([LEDs](#leds)), the factory image, and a class 5-8 PD under the
+  budget. Tested: the fans in automatic mode, the link change fix, and the
+  PoE budget with the PSE core fix below (a PD gets the power of its
+  class; switching a port off holds; nothing stays allotted after
+  switching off or unplugging; priorities).
 - **PSE core fix:** in the Linux PSE core, disabling a port (admin
   disable, PD unplugged, or switched off for a port of higher priority)
   re-checked the waiting ports before the port's own state was cleared,
   so it enabled that same port again: switching off didn't hold, and the
   budget leaked with every unplug. `patches-6.18/835-*` clears the state
-  first; it goes upstream as a fix
+  first, tested on the switch; it goes upstream as a fix
   ([08-upstreaming.md](08-upstreaming.md#what-goes-where)).
 - **PoE budget across the two chips:** both chips share the 260 W, but the
   PSE core sheds and retries only ports of the chip that has the event
