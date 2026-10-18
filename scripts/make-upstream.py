@@ -2,16 +2,20 @@
 """Build the upstream submissions from this repository.
 
     make-upstream.py openwrt TREE [board|dsa-fix|pse-fix] [options]
+    make-upstream.py netifd TREE [options]
     make-upstream.py linux TREE SERIES [options]
     make-upstream.py patches [-o DIR] [options]
 
 openwrt  adds one pull request's commits to TREE, an openwrt.git checkout,
          and writes them with git format-patch to build/upstream/openwrt/PR:
-         board    (the default) the board as four commits: the drivers as
-                  pending kernel patches with their kmods, then the device
+         board    (the default) the board as five commits: the drivers as
+                  pending kernel patches with their kmods, the base-files
+                  function for the PoE default, then the device
          dsa-fix  the link change fix in the realtek switch driver
          pse-fix  the PSE core fix as a generic pending kernel patch; with
                   --link, the patch links to its submission to netdev
+netifd   adds the board.json default for the pse option to TREE, a
+         netifd.git checkout, and writes it to build/upstream/netifd
 linux    adds one series (i2c, pse, leds, pse-led-triggers or pse-fix) as
          commits to TREE, a Linux checkout of the subsystem tree it goes
          to, with MAINTAINERS entries, and writes it with a cover letter and
@@ -49,6 +53,9 @@ UPSTREAM = os.path.join(REPO, 'upstream')
 BOARD_PATCH = os.path.join(REPO, 'patches/0001-realtek-rtl930x-add-MokerLink-POE-10G07110GSM.patch')
 KMOD_PATCH = os.path.join(REPO, 'patches/0002-realtek-add-shared-SCL-I2C-RTL8239-PSE-and-port-LED-packages.patch')
 DSA_PATCH = os.path.join(REPO, 'patches/0003-realtek-dsa-let-phylib-read-the-PHY-on-a-port-link-change.patch')
+BASE_FILES_PATCH = os.path.join(REPO, 'patches/0004-base-files-add-a-uci-defaults-function-for-the-PSE-default.patch')
+NETIFD_PATCH = os.path.join(REPO, 'openwrt/package/network/config/netifd/patches/'
+                            '100-device-add-a-board.json-default-for-the-pse-option.patch')
 PSE_FIX_NUMBER = '898'
 DTS = 'target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts'
 
@@ -243,19 +250,28 @@ def pinned_openwrt():
     return m.group(1)
 
 
-def apply_3way(tree, diff):
-    """apply one of this repository's OpenWrt patches, made against the
-    pinned commit, with a three-way merge when OpenWrt has moved on; the
+def apply_3way(tree, diff, pinned=None):
+    """apply one of this repository's patches with a three-way merge, for
+    when the tree has moved on since the commit it was made against; the
     paths it changes"""
     paths = re.findall(r'^\+\+\+ b/(\S+)', diff, re.M)
     # The index lines only abbreviate the original blobs, which a partial
     # clone cannot fetch; fetch them by path from the pinned commit
-    pinned = pinned_openwrt()
-    for p in paths:
+    for p in paths if pinned else []:
         subprocess.run(['git', '-C', tree, 'cat-file', 'blob', f'{pinned}:{p}'],
                        capture_output=True)
     git(tree, 'apply', '--3way', '-', input=diff)
     return paths
+
+
+def commit_patch_file(tree, args, path, pinned=None):
+    """commit one of this repository's patch files: a Subject line, the
+    message, then the diff after ---"""
+    m = re.match(r'Subject: \[PATCH\] (.+?)\n\n(.*?)\n---\n(.*)', read(path), re.S)
+    if not m:
+        die(f'no Subject, message and diff in {path}')
+    subject, body, diff = m.groups()
+    commit(tree, args, subject, body.strip('\n'), apply_3way(tree, diff, pinned))
 
 
 def openwrt_board(tree, args):
@@ -276,9 +292,12 @@ def openwrt_board(tree, args):
         subject, body = message(os.path.join(UPSTREAM, 'openwrt', msgfile))
         commit(tree, args, subject, body, paths)
 
-    # The device: image recipe, network setup and fan control, then the
-    # device tree
-    paths = apply_3way(tree, read(BOARD_PATCH))
+    # The function for the device's PoE default
+    commit_patch_file(tree, args, BASE_FILES_PATCH, pinned_openwrt())
+
+    # The device: image recipe, network setup, PoE default and fan control,
+    # then the device tree
+    paths = apply_3way(tree, read(BOARD_PATCH), pinned_openwrt())
     dts = os.path.join(tree, DTS)
     write(dts, read(os.path.join(REPO, 'openwrt', DTS)))
     subject, body = message(os.path.join(UPSTREAM, 'openwrt', '4-board.txt'))
@@ -287,12 +306,7 @@ def openwrt_board(tree, args):
 
 def openwrt_dsa_fix(tree, args):
     """the switch driver fix, a patch to OpenWrt's own files"""
-    text = read(DSA_PATCH)
-    m = re.match(r'Subject: \[PATCH\] (.+?)\n\n(.*?)\n---\n(.*)', text, re.S)
-    if not m:
-        die(f'no Subject, message and diff in {DSA_PATCH}')
-    subject, body, diff = m.groups()
-    commit(tree, args, subject, body.strip('\n'), apply_3way(tree, diff))
+    commit_patch_file(tree, args, DSA_PATCH, pinned_openwrt())
 
 
 def openwrt_pse_fix(tree, args):
@@ -319,6 +333,20 @@ def cmd_openwrt(args):
     OPENWRT_PRS[pr](tree, args)
 
     out = args.output or os.path.join(REPO, 'build/upstream/openwrt', pr)
+    os.makedirs(out, exist_ok=True)
+    print(git(tree, '-c', f'user.name={args.name}', '-c', f'user.email={args.email}',
+              'format-patch', '-o', out, f'{base}..HEAD'), end='')
+
+
+def cmd_netifd(args):
+    """the board.json PSE default, which this repository's build carries as
+    a patch to OpenWrt's netifd package, as a commit to netifd"""
+    tree = os.path.abspath(args.tree)
+    check_clean(tree)
+    base = git(tree, 'rev-parse', 'HEAD').strip()
+    commit_patch_file(tree, args, NETIFD_PATCH)
+
+    out = args.output or os.path.join(REPO, 'build/upstream/netifd')
     os.makedirs(out, exist_ok=True)
     print(git(tree, '-c', f'user.name={args.name}', '-c', f'user.email={args.email}',
               'format-patch', '-o', out, f'{base}..HEAD'), end='')
@@ -395,7 +423,7 @@ def cmd_linux(args):
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('command', choices=['openwrt', 'linux', 'patches'])
+    p.add_argument('command', choices=['openwrt', 'netifd', 'linux', 'patches'])
     p.add_argument('tree', nargs='?')
     p.add_argument('series', nargs='?')
     p.add_argument('-o', '--output')
@@ -424,6 +452,10 @@ def main():
         if not args.tree:
             die('openwrt needs TREE')
         cmd_openwrt(args)
+    elif args.command == 'netifd':
+        if not args.tree:
+            die('netifd needs TREE')
+        cmd_netifd(args)
     else:
         if not args.tree or not args.series:
             die('linux needs TREE and SERIES')

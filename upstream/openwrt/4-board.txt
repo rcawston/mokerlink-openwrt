@@ -18,7 +18,11 @@ The fan controller, the PoE chips and the SFP+ cage share one bit-banged
 I2C clock line (GPIO 8), with SDA on GPIOs 9, 10 and 11. The PoE chips
 need Realtek firmware loaded at power-up, which cannot be shipped: copy
 it out of the vendor firmware and install it as
-/lib/firmware/realtek/rtl8239-bt.bin. The port LEDs are set up as the
+/lib/firmware/realtek/rtl8239-bt.bin. The PoE ports share the 260 W
+supply as a power budget, with port priorities, and wait switched off
+until netifd switches them on: board.json switches PoE on for lan1-lan7
+by default (netifd's pse option, with netifd's board.json default for
+it). The port LEDs are set up as the
 vendor SDK does (bi-colour scan mode, three LEDs per port) instead of
 relying on the vendor U-Boot, which sets them up as part of "rtk network
 on"; the PoE LEDs (LED 2 of each port) follow the PSE LED triggers. At

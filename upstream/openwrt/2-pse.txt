@@ -10,4 +10,5 @@ supply with a power budget, the PSE core enforces it, with port
 priorities.
 
 Add the driver and its binding as a pending patch, and package it as
-kmod-pse-realtek-rtl8239.
+kmod-pse-realtek-rtl8239, which keeps the installed firmware across
+sysupgrade.
