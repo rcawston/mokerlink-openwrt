@@ -14,7 +14,7 @@ this repository; the commit messages are in `upstream/`.
 | RTL9300 port LEDs: binding, switch binding, driver | `realtek: add RTL9300 port LED driver` (`832-*`, `kmod-leds-rtl9300-port`) | `leds` series: leds tree, linux-leds (the switch binding patch also to netdev) |
 | PSE LED trigger names in `leds/common.yaml` | not needed | `pse-led-triggers`: with the PSE LED trigger series |
 | the device | `realtek: rtl930x: add support for MokerLink POE-10G07110GSM` | none |
-| PSE core fix: a PI disabled with software power control is not enabled again by the retry of its power domain | `835-*`; in OpenWrt it belongs in `target/linux/generic/pending-6.18`, as a separate pull request | `net` tree as a fix (`Fixes: ffef61d6d273`), netdev; send it as it is, with your sign-off |
+| PSE core fix: a PI disabled with software power control is not enabled again by the retry of its power domain | `835-*`; in OpenWrt it belongs in `target/linux/generic/pending-6.18`, as a separate pull request | `pse-fix`: net tree as a fix (`Fixes: ffef61d6d273`), netdev; made against mainline |
 | link change fix in the switch driver | `realtek: dsa: let phylib read the PHY on a port link change` (`patches/0003-*`, a patch to OpenWrt's own driver, ready to send as it is) | none |
 
 Not submitted: the `mokerlink-*` tools and the first-boot defaults in
@@ -69,19 +69,21 @@ OpenWrt.
 You review the patches, you sign them off, and you send them: an AI
 assistant must not add a `Signed-off-by`, only you can certify the
 [Developer's Certificate of Origin](https://www.kernel.org/doc/html/latest/process/submitting-patches.html#sign-your-work-the-developer-s-certificate-of-origin).
-The kernel asks for an `Assisted-by: AGENT:MODEL_VERSION` tag on code
-written with an AI assistant
-([coding-assistants](https://docs.kernel.org/process/coding-assistants.html));
+The kernel asks for an `Assisted-by: LLM [TOOL1] [TOOL2]` tag on code
+written with an AI assistant, and for the changelog to say so when a tool
+found the problem
+([coding-assistants](https://docs.kernel.org/process/coding-assistants.html),
+[generated-content](https://docs.kernel.org/process/generated-content.html));
 OpenWrt has a proposal to follow the kernel's rules. The script requires
-the tag and adds your sign-off only with `--signoff`. Author and maintainer
-default to your `git config` identity.
+the tag's value and adds your sign-off only with `--signoff`. Author and
+maintainer default to your `git config` identity.
 
 OpenWrt, on a branch of a clean `openwrt.git` main checkout:
 
 ```sh
 git -C ~/openwrt checkout -b mokerlink-poe-10g07110gsm origin/main
 scripts/make-upstream.py openwrt ~/openwrt --signoff \
-	--assisted-by "Claude:<model version>"
+	--assisted-by "<LLM>"
 # four commits on the branch, and the patches in build/upstream/openwrt
 ```
 
@@ -94,7 +96,7 @@ Linux, one series at a time, each on a branch of its subsystem tree:
 ```sh
 git -C ~/linux checkout -b rtl8239 net-next/main
 scripts/make-upstream.py linux ~/linux pse --signoff \
-	--assisted-by "Claude:<model version>"
+	--assisted-by "<LLM>"
 # commits on the branch, the series with a cover letter in build/upstream/linux/pse
 ```
 
@@ -109,10 +111,27 @@ make dt_binding_check DT_SCHEMA_FILES=net/pse-pd/realtek,rtl8239.yaml
 git send-email --to=netdev@vger.kernel.org --cc=... build/upstream/linux/pse/*.patch
 ```
 
-For net-next, put `net-next` in the subject prefix
-(`git format-patch --subject-prefix="PATCH net-next"`) and send only while
-net-next is open. Older checkpatch versions don't know `Assisted-by` and
-report it as a non-standard signature.
+The script puts the tree in the subject prefix (`[PATCH net-next]` for
+`pse`); send net-next series only while net-next is open. Older checkpatch
+versions don't know `Assisted-by` and report it as a non-standard
+signature.
+
+The PSE core fix goes to the net tree on its own, as `[PATCH net]`. It is
+made against mainline (it touches the same functions as in OpenWrt's
+kernel, without OpenWrt's pending PSE patches around them), was tested on
+the switch in OpenWrt and build-tested on mainline, and is a regular bug
+for the kernel's threat model (it needs an admin action or an unplug), so
+it goes to the list, not to the security team:
+
+```sh
+git -C ~/linux fetch https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net.git main
+git -C ~/linux checkout -b pse-fix FETCH_HEAD
+scripts/make-upstream.py linux ~/linux pse-fix --signoff --assisted-by "<LLM>"
+cd ~/linux
+./scripts/checkpatch.pl --strict -g HEAD~1..HEAD
+./scripts/get_maintainer.pl ~/mokerlink/build/upstream/linux/pse-fix/*.patch
+git send-email --to=netdev@vger.kernel.org --cc=... ~/mokerlink/build/upstream/linux/pse-fix/*.patch
+```
 
 `scripts/make-upstream.py patches` writes the kernel patches as OpenWrt
 carries them to `build/upstream/patches`, for a quick review without a

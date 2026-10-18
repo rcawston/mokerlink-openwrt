@@ -1,0 +1,34 @@
+net: pse-pd: don't enable a PI again while disabling it
+
+With software power control, _pse_pi_disable() frees the power budget
+of the PI and then retries the power delivery of the PIs waiting for
+power in its power domain: those that are admin enabled, have a PD
+detected, and are not enabled in hardware. The PI being disabled is one
+of them, as its admin state and PD detection are only cleared after
+_pse_pi_disable() returns, so it is enabled again right away:
+
+- an admin disable of a port with a PD keeps the port powered, and the
+  next admin enable allocates its budget a second time
+- a disconnection enables the now empty port again, with a new budget
+  allocation that is never freed: when the port reports the
+  disconnection again, its PD detection is already cleared
+- a PI disabled to free budget for a PI of higher priority is enabled
+  again with the budget it just freed, so priorities never take effect
+
+Clear the admin state and the PD detection before disabling the PI,
+and don't retry the power domain in pse_disable_pi_pol(), whose freed
+budget is meant for the PI being allocated. That PI stays waiting for
+power and is retried when budget is freed later.
+
+The problem was found, and this fix written, with an AI coding
+assistant, while testing the budget on a switch with two Realtek RTL8239
+PSE controllers, whose driver (not in mainline yet) uses the static
+budget strategy like the TPS23881. Before this change, "ethtool
+--set-pse <port> c33-pse-admin-control disable" left a port with a PD
+powered, and the budget allocated in the power domain grew with every
+disable and every unplug. With it, the port stays off, and the allocated
+budget is back to 0 after a disable and after an unplug. Tested on that
+switch with OpenWrt's 6.18 kernel; the change for mainline is the same
+apart from context and is build-tested.
+
+Fixes: ffef61d6d273 ("net: pse-pd: Add support for budget evaluation strategies")

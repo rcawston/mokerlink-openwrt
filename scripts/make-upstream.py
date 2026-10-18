@@ -9,11 +9,13 @@ openwrt  adds the board as four commits to TREE, an openwrt.git checkout
          (the drivers as pending kernel patches with their kmods, then the
          device), and writes them with git format-patch to
          build/upstream/openwrt.
-linux    adds one series (i2c, pse, leds or pse-led-triggers) as commits to
-         TREE, a Linux checkout of the subsystem tree it goes to, with
-         MAINTAINERS entries, and writes it with a cover letter to
-         build/upstream/linux/SERIES. The Kconfig and Makefile hunks are
-         made against v6.18 and applied with a three-way merge.
+linux    adds one series (i2c, pse, leds, pse-led-triggers or pse-fix) as
+         commits to TREE, a Linux checkout of the subsystem tree it goes
+         to, with MAINTAINERS entries, and writes it with a cover letter and
+         the subject prefix of that tree to build/upstream/linux/SERIES.
+         The Kconfig and Makefile hunks are made against v6.18, the PSE
+         core fix against mainline; they are applied with a three-way
+         merge.
 patches  writes the kernel patches as OpenWrt carries them (OpenWrt's
          kernel context) to DIR, for review; no tree needed.
 
@@ -22,10 +24,11 @@ Options:
   --signoff                 add your Signed-off-by. Only you can certify the
                             Developer's Certificate of Origin, so it is never
                             added without this option
-  --assisted-by TAG         the Assisted-by tag the kernel asks for code
-                            written with an AI assistant
-                            (Documentation/process/coding-assistants.rst),
-                            e.g. "Claude:<model version>"; required
+  --assisted-by VALUE       the value of the Assisted-by tag the kernel
+                            asks for on code written with an AI assistant,
+                            "LLM [TOOL1] [TOOL2]"
+                            (Documentation/process/coding-assistants.rst);
+                            required
 
 Commit messages live in upstream/; the drivers, bindings and patches are the
 ones this repository builds. Standard library only.
@@ -53,7 +56,8 @@ LEDS_YAML = 'Documentation/devicetree/bindings/leds/realtek,rtl9301-port-leds.ya
 LEDS_C = 'drivers/leds/leds-rtl9300-port.c'
 
 # Each patch: commit message file, new files, hunk files (OpenWrt context,
-# Linux context with blob ids). An OpenWrt number and kmod per series.
+# Linux context with blob ids). An OpenWrt number and kmod per series, and
+# the subject prefix of the tree it goes to.
 SERIES = {
     'i2c': {
         'openwrt': ('830', 'i2c-gpio-shared-scl', '1-i2c.txt'),
@@ -67,6 +71,7 @@ SERIES = {
     'pse': {
         'openwrt': ('831', 'pse-realtek-rtl8239', '2-pse.txt'),
         'list': 'netdev@vger.kernel.org',
+        'prefix': 'PATCH net-next',
         'maintainers': ('REALTEK RTL8239 PSE DRIVER', [PSE_YAML, PSE_C]),
         'patches': [
             ('1-binding.txt', [PSE_YAML], None, None),
@@ -94,7 +99,21 @@ SERIES = {
              '834-dt-bindings-leds-common-add-PSE-power-interface-triggers.patch', 'common.diff'),
         ],
     },
+    # A fix for the net tree; in OpenWrt a generic pending patch
+    'pse-fix': {
+        'openwrt': None,
+        'list': 'netdev@vger.kernel.org',
+        'prefix': 'PATCH net',
+        'maintainers': None,
+        'patches': [
+            ('1-fix.txt', [],
+             '835-net-pse-pd-don-t-enable-a-PI-again-while-disabling-it.patch', 'fix.diff'),
+        ],
+    },
 }
+
+# Tags that end a commit message and belong in one block with the trailers
+TAG = re.compile(r'(Fixes|Link|Closes|Reported-by|Suggested-by|Tested-by|Cc): ')
 
 
 def die(msg):
@@ -149,6 +168,13 @@ def trailers(args):
     return '\n'.join(t)
 
 
+def with_trailers(body, args):
+    """BODY and the trailers, in one block with the tags that end BODY"""
+    last = body.rsplit('\n\n', 1)[-1].splitlines()
+    sep = '\n' if all(TAG.match(line) for line in last) else '\n\n'
+    return f'{body}{sep}{trailers(args)}'
+
+
 def kmod_block(name):
     """the KernelPackage definition of NAME from the kmod patch"""
     text = read(KMOD_PATCH)
@@ -170,7 +196,7 @@ def check_clean(tree):
 
 def commit(tree, args, subject, body, paths):
     git(tree, 'add', *paths)
-    msg = f'{subject}\n\n{body}\n\n{trailers(args)}\n'
+    msg = f'{subject}\n\n{with_trailers(body, args)}\n'
     git(tree, '-c', f'user.name={args.name}', '-c', f'user.email={args.email}',
         'commit', '-q', f'--author={args.author}', '-F', '-', input=msg)
 
@@ -184,7 +210,7 @@ def openwrt_patch_text(args, series, i, n):
         diff += openwrt_hunks(hookpatch)
     number = f' {i + 1}/{n}' if n > 1 else ''
     return subject, (f'From: {args.author}\nSubject: [PATCH{number}] {subject}\n\n'
-                     f'{body}\n\n{trailers(args)}\n---\n{diff}')
+                     f'{with_trailers(body, args)}\n---\n{diff}')
 
 
 def cmd_patches(args):
@@ -287,7 +313,8 @@ def cmd_linux(args):
     os.makedirs(out, exist_ok=True)
     n = len(s['patches'])
     fmt = ['-c', f'user.name={args.name}', '-c', f'user.email={args.email}',
-           'format-patch', '-o', out, f'{base}..HEAD']
+           'format-patch', f'--subject-prefix={s.get("prefix", "PATCH")}',
+           '-o', out, f'{base}..HEAD']
     if n > 1:
         fmt.insert(5, '--cover-letter')
     files = git(tree, *fmt).split()
