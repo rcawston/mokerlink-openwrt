@@ -1,0 +1,3 @@
+# LF everywhere, also in Windows checkouts: the patches, shell scripts and
+# device trees are used by Linux tools, and a CRLF copy doesn't apply or run
+* text=auto eol=lf
