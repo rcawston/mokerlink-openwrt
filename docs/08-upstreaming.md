@@ -126,8 +126,7 @@ still says that an AI agent must not add one. The kernel dropped its
 applied to docs-next on 14 October), so the script adds none unless you
 pass `--assisted-by`.
 [generated-content](https://docs.kernel.org/process/generated-content.html)
-still asks for the changelog to say when a tool found a problem, as the PSE
-core fix's does.
+still asks for the changelog to say when a tool found a problem.
 
 Author and maintainer default to your `git config` identity. Pass
 `--author "Name <email>"` if that is a GitHub noreply address: the kernel
