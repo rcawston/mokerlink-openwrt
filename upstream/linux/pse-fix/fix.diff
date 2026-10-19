@@ -1,5 +1,5 @@
 diff --git a/drivers/net/pse-pd/pse_core.c b/drivers/net/pse-pd/pse_core.c
-index a5e6d7b26b9fd7a1c082096f77e7b9bf6e6b0281..51c3da627768b092977e1acfde745c21a9f8a80a 100644
+index a5e6d7b26b9fd7a1c082096f77e7b9bf6e6b0281..c71acfd5337cdff015068a2cbbff851251930c0b 100644
 --- a/drivers/net/pse-pd/pse_core.c
 +++ b/drivers/net/pse-pd/pse_core.c
 @@ -469,9 +469,6 @@ static int _pse_pi_disable(struct pse_controller_dev *pcdev, int id)
@@ -12,7 +12,16 @@ index a5e6d7b26b9fd7a1c082096f77e7b9bf6e6b0281..51c3da627768b092977e1acfde745c21
  	return 0;
  }
  
-@@ -709,8 +706,11 @@ static int pse_pi_disable(struct regulator_dev *rdev)
+@@ -493,6 +490,8 @@ static int pse_disable_pi_pol(struct pse_controller_dev *pcdev, int id)
+ 	ret = _pse_pi_disable(pcdev, id);
+ 	if (ret)
+ 		notifs |= ETHTOOL_PSE_EVENT_SW_PW_CONTROL_ERROR;
++	else if (pse_pw_d_is_sw_pw_control(pcdev, pcdev->pi[id].pw_d))
++		pse_pw_d_retry_power_delivery(pcdev, pcdev->pi[id].pw_d);
+ 
+ 	ntf.notifs = notifs;
+ 	ntf.id = id;
+@@ -709,8 +708,11 @@ static int pse_pi_disable(struct regulator_dev *rdev)
  	pi = &pcdev->pi[id];
  	mutex_lock(&pcdev->lock);
  	ret = _pse_pi_disable(pcdev, id);
@@ -25,7 +34,7 @@ index a5e6d7b26b9fd7a1c082096f77e7b9bf6e6b0281..51c3da627768b092977e1acfde745c21
  
  	mutex_unlock(&pcdev->lock);
  	return 0;
-@@ -1229,10 +1229,16 @@ static int pse_set_config_isr(struct pse_controller_dev *pcdev, int id,
+@@ -1229,10 +1231,16 @@ static int pse_set_config_isr(struct pse_controller_dev *pcdev, int id,
  				ret = 0;
  		}
  	} else if (notifs & ETHTOOL_C33_PSE_EVENT_DISCONNECTION) {

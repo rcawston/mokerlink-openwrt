@@ -4,29 +4,26 @@ Subject: [PATCH] net: pse-pd: don't enable a PI again while disabling it
 With software power control, _pse_pi_disable() frees the power budget
 of the PI and then retries the power delivery of the PIs waiting for
 power in its power domain: those that are admin enabled, have a PD
-detected, and are not enabled in hardware. The PI being disabled is one
-of them, as its admin state and PD detection are only cleared after
-_pse_pi_disable() returns, so it is enabled again right away:
+detected, and are not enabled in hardware. On an admin disable or a
+disconnection, the PI being disabled is one of them, as its admin state
+or PD detection is only cleared after _pse_pi_disable() returns, so it
+is enabled again right away:
 
 - an admin disable of a port with a PD keeps the port powered, and the
   next admin enable allocates its budget a second time
 - a disconnection enables the now empty port again, with a new budget
   allocation that is never freed: when the port reports the
   disconnection again, its PD detection is already cleared
-- a PI disabled to free budget for a PI of higher priority is enabled
-  again with the budget it just freed, so priorities never take effect
 
-Move the retry out of _pse_pi_disable() into pse_pi_disable() and the
-disconnection handling of pse_set_config_isr(), after they clear the
-admin state or the PD detection, and leave it out of
-pse_disable_pi_pol(), whose freed budget is meant for the PI being
-allocated. That PI stays waiting for power and is retried when budget
-is freed later.
+Move the retry out of _pse_pi_disable() into its callers:
+pse_pi_disable() and the disconnection handling of pse_set_config_isr()
+retry after they clear the admin state or the PD detection, and
+pse_disable_pi_pol() retries as before.
 
 Fixes: ffef61d6d273 ("net: pse-pd: Add support for budget evaluation strategies")
 ---
 diff --git a/drivers/net/pse-pd/pse_core.c b/drivers/net/pse-pd/pse_core.c
-index 543a17e..90443fb 100644
+index 543a17e..8b03520 100644
 --- a/drivers/net/pse-pd/pse_core.c
 +++ b/drivers/net/pse-pd/pse_core.c
 @@ -558,9 +558,6 @@ static int _pse_pi_disable(struct pse_controller_dev *pcdev, int id)
@@ -39,7 +36,16 @@ index 543a17e..90443fb 100644
  	return 0;
  }
  
-@@ -999,8 +996,12 @@ static int pse_pi_disable(struct regulator_dev *rdev)
+@@ -582,6 +579,8 @@ static int pse_disable_pi_pol(struct pse_controller_dev *pcdev, int id)
+ 	ret = _pse_pi_disable(pcdev, id);
+ 	if (ret)
+ 		notifs |= ETHTOOL_PSE_EVENT_SW_PW_CONTROL_ERROR;
++	else if (pse_pw_d_is_sw_pw_control(pcdev, pcdev->pi[id].pw_d))
++		pse_pw_d_retry_power_delivery(pcdev, pcdev->pi[id].pw_d);
+ 
+ 	ntf.notifs = notifs;
+ 	ntf.id = id;
+@@ -999,8 +998,12 @@ static int pse_pi_disable(struct regulator_dev *rdev)
  		return 0;
  	}
  	ret = _pse_pi_disable(pcdev, id);
@@ -53,7 +59,7 @@ index 543a17e..90443fb 100644
  	pse_led_update(pcdev, id);
  
  	mutex_unlock(&pcdev->lock);
-@@ -1567,10 +1568,16 @@ static int pse_set_config_isr(struct pse_controller_dev *pcdev, int id,
+@@ -1567,10 +1570,16 @@ static int pse_set_config_isr(struct pse_controller_dev *pcdev, int id,
  				ret = 0;
  		}
  	} else if (notifs & ETHTOOL_C33_PSE_EVENT_DISCONNECTION) {

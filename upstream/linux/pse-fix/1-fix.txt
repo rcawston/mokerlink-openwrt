@@ -3,24 +3,21 @@ net: pse-pd: don't enable a PI again while disabling it
 With software power control, _pse_pi_disable() frees the power budget
 of the PI and then retries the power delivery of the PIs waiting for
 power in its power domain: those that are admin enabled, have a PD
-detected, and are not enabled in hardware. The PI being disabled is one
-of them, as its admin state and PD detection are only cleared after
-_pse_pi_disable() returns, so it is enabled again right away:
+detected, and are not enabled in hardware. On an admin disable or a
+disconnection, the PI being disabled is one of them, as its admin state
+or PD detection is only cleared after _pse_pi_disable() returns, so it
+is enabled again right away:
 
 - an admin disable of a port with a PD keeps the port powered, and the
   next admin enable allocates its budget a second time
 - a disconnection enables the now empty port again, with a new budget
   allocation that is never freed: when the port reports the
   disconnection again, its PD detection is already cleared
-- a PI disabled to free budget for a PI of higher priority is enabled
-  again with the budget it just freed, so priorities never take effect
 
-Move the retry out of _pse_pi_disable() into pse_pi_disable() and the
-disconnection handling of pse_set_config_isr(), after they clear the
-admin state or the PD detection, and leave it out of
-pse_disable_pi_pol(), whose freed budget is meant for the PI being
-allocated. That PI stays waiting for power and is retried when budget
-is freed later.
+Move the retry out of _pse_pi_disable() into its callers:
+pse_pi_disable() and the disconnection handling of pse_set_config_isr()
+retry after they clear the admin state or the PD detection, and
+pse_disable_pi_pol() retries as before.
 
 The problem was found, and this fix written, with an AI coding
 assistant, while testing the budget on a switch with two Realtek RTL8239
