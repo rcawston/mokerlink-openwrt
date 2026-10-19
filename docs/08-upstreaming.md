@@ -25,7 +25,7 @@ As of 19 October 2026:
 | PoE LEDs in OpenWrt | OpenWrt | through [openwrt/openwrt#25341](https://github.com/openwrt/openwrt/pull/25341) (software-controlled LEDs in the realtek switch driver), tested on this board; the board's LED nodes follow once it is merged |
 | shared-SCL I²C (`i2c`) | linux-i2c | [sent and withdrawn](https://lore.kernel.org/all/20261018194315.945-1-ross@r-sc.ca/): `i2c-gpio` does it |
 | board.json PoE default | netifd | [openwrt/netifd#97](https://github.com/openwrt/netifd/pull/97) |
-| the board | OpenWrt | ready on [rcawston/openwrt `mokerlink-board`](https://github.com/rcawston/openwrt/tree/mokerlink-board), not opened yet; depends on openwrt/netifd#97 |
+| the board | OpenWrt | [openwrt/openwrt#26042](https://github.com/openwrt/openwrt/pull/26042), without the PoE LEDs; depends on openwrt/netifd#97 |
 | PSE priority choices in the web UI | LuCI | [openwrt/luci#9141](https://github.com/openwrt/luci/pull/9141) |
 | RTL8239 PSE (`pse`), PSE LED trigger names (`pse-led-triggers`) | netdev, linux-leds | not sent; wait for the PSE series they depend on ([Dependencies](#dependencies)) |
 
