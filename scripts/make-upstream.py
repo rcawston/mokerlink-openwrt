@@ -8,9 +8,11 @@
 
 openwrt  adds one pull request's commits to TREE, an openwrt.git checkout,
          and writes them with git format-patch to build/upstream/openwrt/PR:
-         board    (the default) the board as four commits: the drivers as
-                  pending kernel patches with their kmods, the base-files
-                  function for the PoE default, then the device
+         board    (the default) the board as three commits: the RTL8239
+                  driver as a pending kernel patch with its kmod, the
+                  base-files function for the PoE default, then the device;
+                  without the PoE LED driver, whose LEDs follow with
+                  openwrt/openwrt#25341
          dsa-fix  the link change fix in the realtek switch driver
          pse-fix  the PSE core fix as a generic pending kernel patch; with
                   --link, the patch links to its submission to netdev
@@ -79,8 +81,10 @@ SERIES = {
             ('2-driver.txt', [PSE_C], '831-net-pse-pd-add-Realtek-RTL8239.patch', 'hooks.diff'),
         ],
     },
+    # Not in the OpenWrt board: there, the PoE LEDs follow with the realtek
+    # switch driver's software-controlled LEDs (openwrt/openwrt#25341)
     'leds': {
-        'openwrt': ('832', 'leds-rtl9300-port', '3-leds.txt'),
+        'openwrt': None,
         'list': 'linux-leds@vger.kernel.org',
         'maintainers': ('REALTEK RTL9300 PORT LED DRIVER', [LEDS_YAML, LEDS_C]),
         'patches': [
@@ -273,6 +277,28 @@ def commit_patch_file(tree, args, path, pinned=None):
     commit(tree, args, subject, body.strip('\n'), apply_3way(tree, diff, pinned))
 
 
+def upstream_dts(text):
+    """the device tree for OpenWrt: without the node of this repository's
+    PoE LED driver, whose LEDs follow with openwrt/openwrt#25341"""
+    m = re.search(r'\n\t/\*\n\t \* PoE status LEDs\..*?\n\t\};\n'
+                  r'(?=\};\n)', text, re.S)
+    if not m or 'realtek,rtl9301-port-leds' not in m.group(0):
+        die('no PoE LED node in the device tree')
+    text = text[:m.start()] + text[m.end():]
+    for old, new in (
+            ('\t * and is driven in software (led-controller@cc48 below). The cells\n'
+             '\t * list LED 2 first. Set 1 is the SFP+ port\'s.\n',
+             '\t * and needs software control. The cells list LED 2 first. Set 1 is\n'
+             '\t * the SFP+ port\'s.\n'),
+            ('\t * Fixed I2C bus numbers, so that the PSE LED trigger names below\n',
+             '\t * Fixed I2C bus numbers, so that the PSE LED trigger names\n')):
+        if old not in text:
+            die(f'no comment {old.strip()!r} in the device tree')
+        text = text.replace(old, new)
+    # Only the PoE LED node used it
+    return text.replace('#include <dt-bindings/leds/common.h>\n', '')
+
+
 def openwrt_board(tree, args):
     patchdir = 'target/linux/realtek/patches-6.18'
     modules = os.path.join(tree, 'target/linux/realtek/modules.mk')
@@ -295,10 +321,15 @@ def openwrt_board(tree, args):
     commit_patch_file(tree, args, BASE_FILES_PATCH, pinned_openwrt())
 
     # The device: image recipe, network setup, PoE default and fan control,
-    # then the device tree
+    # then the device tree, both without this repository's PoE LED driver
     paths = apply_3way(tree, read(BOARD_PATCH), pinned_openwrt())
+    image = os.path.join(tree, 'target/linux/realtek/image/rtl930x.mk')
+    text = read(image)
+    if '\tkmod-leds-rtl9300-port \\\n' not in text:
+        die('no kmod-leds-rtl9300-port in the device recipe')
+    write(image, text.replace('\tkmod-leds-rtl9300-port \\\n', '', 1))
     dts = os.path.join(tree, DTS)
-    write(dts, read(os.path.join(REPO, 'openwrt', DTS)))
+    write(dts, upstream_dts(read(os.path.join(REPO, 'openwrt', DTS))))
     subject, body = message(os.path.join(UPSTREAM, 'openwrt', '4-board.txt'))
     commit(tree, args, subject, body, paths + [DTS])
 

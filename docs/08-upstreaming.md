@@ -21,7 +21,8 @@ As of 18 October 2026:
 | PSE core fix | netdev, `[PATCH net]` | [sent](https://lore.kernel.org/netdev/20261018182005.1193-1-ross@r-sc.ca/) |
 | PSE core fix | OpenWrt, generic pending patch | [openwrt/openwrt#25994](https://github.com/openwrt/openwrt/pull/25994) |
 | switch link change fix | OpenWrt | [openwrt/openwrt#25995](https://github.com/openwrt/openwrt/pull/25995) |
-| RTL9300 port LEDs (`leds`) | linux-leds | [sent](https://lore.kernel.org/all/20261018194339.132-1-ross@r-sc.ca/) |
+| RTL9300 port LEDs (`leds`) | linux-leds | [sent](https://lore.kernel.org/all/20261018194339.132-1-ross@r-sc.ca/); Andrew Lunn asked for port LEDs in the switch driver's port nodes, so it is to be withdrawn until there is an RTL930x switch driver upstream (asked Markus Stockhausen) |
+| PoE LEDs in OpenWrt | OpenWrt | through [openwrt/openwrt#25341](https://github.com/openwrt/openwrt/pull/25341) (software-controlled LEDs in the realtek switch driver), tested on this board; the board's LED nodes follow once it is merged |
 | shared-SCL I²C (`i2c`) | linux-i2c | [sent and withdrawn](https://lore.kernel.org/all/20261018194315.945-1-ross@r-sc.ca/): `i2c-gpio` does it |
 | board.json PoE default | netifd | [openwrt/netifd#97](https://github.com/openwrt/netifd/pull/97) |
 | the board | OpenWrt | ready on [rcawston/openwrt `mokerlink-board`](https://github.com/rcawston/openwrt/tree/mokerlink-board), not opened yet; depends on openwrt/netifd#97 |
@@ -33,7 +34,7 @@ As of 18 October 2026:
 | Part | OpenWrt | Linux (subsystem tree, list) |
 |---|---|---|
 | RTL8239 PSE: binding, driver | `realtek: add Realtek RTL8239 PSE driver` (`831-*`, `kmod-pse-realtek-rtl8239`) | `pse` series: net-next, netdev |
-| RTL9300 port LEDs: binding, switch binding, driver | `realtek: add RTL9300 port LED driver` (`832-*`, `kmod-leds-rtl9300-port`) | `leds` series: leds tree, linux-leds (the switch binding patch also to netdev) |
+| RTL9300 port LEDs: binding, switch binding, driver | not in the board pull request: the PoE LEDs follow with openwrt/openwrt#25341's software-controlled LEDs in the switch driver. This repository's own build keeps `832-*` and `kmod-leds-rtl9300-port` until then | `leds` series: leds tree, linux-leds (the switch binding patch also to netdev); to be withdrawn, see the status |
 | PSE LED trigger names in `leds/common.yaml` | not needed | `pse-led-triggers`: with the PSE LED trigger series |
 | board.json default for netifd's `pse` option | `base-files: add a uci-defaults function for the PSE default` (`patches/0004-*`), in the board pull request; netifd itself: `device: add a board.json default for the pse option`, a pull request to [openwrt/netifd](https://github.com/openwrt/netifd) (`netifd TREE`) | none |
 | the device | `realtek: rtl930x: add support for MokerLink POE-10G07110GSM` | none |
@@ -108,8 +109,10 @@ OpenWrt.
   names that contain a Linux I²C bus number (`pse-1-0022:...`), and to ask
   for `trigger-sources = <&pse_port1>` instead. That needs the trigger
   series to match LEDs by `trigger-sources`, so raise it with its author.
-- The device commit needs the two driver commits and the base-files
+- The device commit needs the RTL8239 driver commit and the base-files
   commit before it.
+- The board's PoE LEDs need openwrt/openwrt#25341; until it is merged,
+  an OpenWrt image of the board has them dark.
 
 ## Building the submissions
 
@@ -259,6 +262,8 @@ tree.
   SoC's I²C master on the same pins. The PoE firmware download rules it
   out: it is one 25 KiB write, the master moves at most 16 bytes per
   transfer, and the chips NAK a split one.
-- **Port LEDs:** whether the switch's DSA driver should own the port LEDs
-  instead (there is no upstream RTL9300 DSA driver yet; the switch's other
-  children are separate drivers on its syscon).
+- **Port LEDs:** they belong to the switch driver, in its port nodes: all
+  of a port's LEDs with on/off control, and hardware offload of the
+  triggers on top (Andrew Lunn on the `leds` series). In Linux that waits
+  for an RTL930x switch driver; in OpenWrt, openwrt/openwrt#25341 adds
+  software-controlled LEDs to the switch driver.

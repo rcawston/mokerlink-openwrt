@@ -1,9 +1,0 @@
-realtek: add RTL9300 port LED driver
-
-Some RTL930x boards wire LEDs to the switch's LED interface that have no
-hardware function and that the vendor firmware switches in software,
-such as the PoE status LEDs of the MokerLink POE-10G07110GSM. Add a
-driver that takes such LEDs under software control as LED class devices,
-so that they can follow the PSE LED triggers, with its binding and the
-binding change that allows it as a child of the switch, as pending
-patches. Package it as kmod-leds-rtl9300-port.
