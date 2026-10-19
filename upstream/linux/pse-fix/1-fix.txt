@@ -15,10 +15,12 @@ _pse_pi_disable() returns, so it is enabled again right away:
 - a PI disabled to free budget for a PI of higher priority is enabled
   again with the budget it just freed, so priorities never take effect
 
-Clear the admin state and the PD detection before disabling the PI,
-and don't retry the power domain in pse_disable_pi_pol(), whose freed
-budget is meant for the PI being allocated. That PI stays waiting for
-power and is retried when budget is freed later.
+Move the retry out of _pse_pi_disable() into pse_pi_disable() and the
+disconnection handling of pse_set_config_isr(), after they clear the
+admin state or the PD detection, and leave it out of
+pse_disable_pi_pol(), whose freed budget is meant for the PI being
+allocated. That PI stays waiting for power and is retried when budget
+is freed later.
 
 The problem was found, and this fix written, with an AI coding
 assistant, while testing the budget on a switch with two Realtek RTL8239

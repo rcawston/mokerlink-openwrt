@@ -24,7 +24,7 @@ linux    adds one series (pse, leds, pse-led-triggers or pse-fix) as
          the subject prefix of that tree to build/upstream/linux/SERIES.
          The Kconfig and Makefile hunks are made against v6.18, the PSE
          core fix against mainline; they are applied with a three-way
-         merge.
+         merge. Earlier patches in that directory are removed first.
 patches  writes the kernel patches as OpenWrt carries them (OpenWrt's
          kernel context) to DIR, for review; no tree needed.
 
@@ -37,6 +37,10 @@ Options:
                             dropped the tag in October 2026 (docs: remove
                             Assisted-by references), so it is off by default
   --link URL                openwrt pse-fix: the netdev submission of the fix
+  -v N, --reroll-count N    linux: version N of the series ([PATCH net v2]),
+                            with the changes since the earlier versions from
+                            upstream/linux/SERIES/changes.txt below the ---
+                            line (or in the cover letter)
 
 Commit messages live in upstream/; the drivers, bindings and patches are the
 ones this repository builds. Standard library only.
@@ -162,6 +166,21 @@ def new_file_diff(path):
     return '\n'.join(out) + '\n'
 
 
+def quilt(diff):
+    """a diff as OpenWrt's make target/linux/refresh writes kernel patches:
+    quilt with -p ab --no-index, so no git header lines, and diff -p, which
+    cuts the function in a hunk header to 40 characters"""
+    out = []
+    for line in diff.splitlines(keepends=True):
+        if re.match(r'(diff --git |index |(new|deleted) file mode )', line):
+            continue
+        m = re.match(r'(@@ -\S+ \+\S+ @@) (.+)', line)
+        if m:
+            line = f'{m.group(1)} {m.group(2).strip()[:40].rstrip()}\n'
+        out.append(line)
+    return ''.join(out)
+
+
 def openwrt_hunks(name):
     """the diff part of one of this repository's hook patches"""
     text = read(os.path.join(OWRT_PATCHES, name))
@@ -223,6 +242,7 @@ def openwrt_patch_text(args, series, i, n):
     diff = ''.join(new_file_diff(p) for p in files)
     if hookpatch:
         diff += openwrt_hunks(hookpatch)
+    diff = quilt(diff)
     number = f' {i + 1}/{n}' if n > 1 else ''
     # The header of git format-patch, which OpenWrt's checks ask of pending
     # patches; dated by the last change to the commit message, so that the
@@ -432,22 +452,40 @@ def cmd_linux(args):
 
     out = args.output or os.path.join(REPO, 'build/upstream/linux', args.series)
     os.makedirs(out, exist_ok=True)
+    # Only this version, so that sending *.patch can't send an earlier one
+    for name in os.listdir(out):
+        if name.endswith('.patch'):
+            os.remove(os.path.join(out, name))
     n = len(s['patches'])
     fmt = ['-c', f'user.name={args.name}', '-c', f'user.email={args.email}',
            'format-patch', f'--subject-prefix={s.get("prefix", "PATCH")}',
            '-o', out, f'{base}..HEAD']
     if n > 1:
         fmt.insert(5, '--cover-letter')
+    changes = None
+    if args.reroll_count:
+        fmt.insert(5, f'--reroll-count={args.reroll_count}')
+        path = os.path.join(UPSTREAM, 'linux', args.series, 'changes.txt')
+        if not os.path.exists(path):
+            die(f'-v {args.reroll_count} needs {path}')
+        changes = read(path).strip('\n')
     files = git(tree, *fmt).split()
     print('\n'.join(files))
     cover = os.path.join(UPSTREAM, 'linux', args.series, 'cover.txt')
     if n > 1 and os.path.exists(cover):
         subject, body = message(cover)
+        if changes:
+            body += '\n\n' + changes
         letter = files[0]
         text = read(letter)
         text = text.replace('*** SUBJECT HERE ***', subject)
         text = text.replace('*** BLURB HERE ***', body)
         write(letter, text)
+    elif changes:
+        # Below the --- line, which git am leaves out of the commit
+        text = read(files[0])
+        text = text.replace('\n---\n', f'\n---\n{changes}\n\n', 1)
+        write(files[0], text)
 
 
 def main():
@@ -461,6 +499,7 @@ def main():
     p.add_argument('--signoff', action='store_true')
     p.add_argument('--assisted-by')
     p.add_argument('--link')
+    p.add_argument('-v', '--reroll-count', type=int)
     args = p.parse_args()
 
     if not args.author:

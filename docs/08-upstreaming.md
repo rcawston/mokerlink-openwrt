@@ -14,14 +14,14 @@ to Linux was withdrawn after a review pointed that out.
 
 ## Status
 
-As of 18 October 2026:
+As of 19 October 2026:
 
 | Submission | Where | State |
 |---|---|---|
-| PSE core fix | netdev, `[PATCH net]` | [sent](https://lore.kernel.org/netdev/20261018182005.1193-1-ross@r-sc.ca/) |
-| PSE core fix | OpenWrt, generic pending patch | [openwrt/openwrt#25994](https://github.com/openwrt/openwrt/pull/25994) |
-| switch link change fix | OpenWrt | [openwrt/openwrt#25995](https://github.com/openwrt/openwrt/pull/25995) |
-| RTL9300 port LEDs (`leds`) | linux-leds | [sent](https://lore.kernel.org/all/20261018194339.132-1-ross@r-sc.ca/); Andrew Lunn asked for port LEDs in the switch driver's port nodes, so it is to be withdrawn until there is an RTL930x switch driver upstream (asked Markus Stockhausen) |
+| PSE core fix | netdev, `[PATCH net]` | [v1 sent](https://lore.kernel.org/netdev/20261018182005.1193-1-ross@r-sc.ca/); Kory Maincent asked for the retry of the power domain to move out of `_pse_pi_disable()` into its callers, which v2 does |
+| PSE core fix | OpenWrt, generic pending patch | [openwrt/openwrt#25994](https://github.com/openwrt/openwrt/pull/25994); to be updated to v2, in quilt's format, which its review asked for |
+| switch link change fix | OpenWrt | [openwrt/openwrt#25995](https://github.com/openwrt/openwrt/pull/25995); Markus Stockhausen asked to keep the MAC link change for ports with in-band status, and not to look at the PHY of an SFP module in the interrupt handler, which the update does |
+| RTL9300 port LEDs (`leds`) | linux-leds | [sent and withdrawn](https://lore.kernel.org/all/20261018194339.132-1-ross@r-sc.ca/): Andrew Lunn asked for port LEDs in the switch driver's port nodes, and Markus Stockhausen, who keeps OpenWrt's RTL930x switch driver, has no time to take it upstream yet |
 | PoE LEDs in OpenWrt | OpenWrt | through [openwrt/openwrt#25341](https://github.com/openwrt/openwrt/pull/25341) (software-controlled LEDs in the realtek switch driver), tested on this board; the board's LED nodes follow once it is merged |
 | shared-SCL I²C (`i2c`) | linux-i2c | [sent and withdrawn](https://lore.kernel.org/all/20261018194315.945-1-ross@r-sc.ca/): `i2c-gpio` does it |
 | board.json PoE default | netifd | [openwrt/netifd#97](https://github.com/openwrt/netifd/pull/97) |
@@ -34,7 +34,7 @@ As of 18 October 2026:
 | Part | OpenWrt | Linux (subsystem tree, list) |
 |---|---|---|
 | RTL8239 PSE: binding, driver | `realtek: add Realtek RTL8239 PSE driver` (`831-*`, `kmod-pse-realtek-rtl8239`) | `pse` series: net-next, netdev |
-| RTL9300 port LEDs: binding, switch binding, driver | not in the board pull request: the PoE LEDs follow with openwrt/openwrt#25341's software-controlled LEDs in the switch driver. This repository's own build keeps `832-*` and `kmod-leds-rtl9300-port` until then | `leds` series: leds tree, linux-leds (the switch binding patch also to netdev); to be withdrawn, see the status |
+| RTL9300 port LEDs: binding, switch binding, driver | not in the board pull request: the PoE LEDs follow with openwrt/openwrt#25341's software-controlled LEDs in the switch driver. This repository's own build keeps `832-*` and `kmod-leds-rtl9300-port` until then | `leds` series: leds tree, linux-leds (the switch binding patch also to netdev); withdrawn, see the status |
 | PSE LED trigger names in `leds/common.yaml` | not needed | `pse-led-triggers`: with the PSE LED trigger series |
 | board.json default for netifd's `pse` option | `base-files: add a uci-defaults function for the PSE default` (`patches/0004-*`), in the board pull request; netifd itself: `device: add a board.json default for the pse option`, a pull request to [openwrt/netifd](https://github.com/openwrt/netifd) (`netifd TREE`) | none |
 | the device | `realtek: rtl930x: add support for MokerLink POE-10G07110GSM` | none |
@@ -222,10 +222,10 @@ One series at a time, each on its tree:
 
 ```sh
 git -C ~/linux checkout -B mokerlink-pse-fix net/main
-scripts/make-upstream.py linux ~/linux pse-fix --signoff
+scripts/make-upstream.py linux ~/linux pse-fix -v 2 --signoff
 cd ~/linux
 ./scripts/checkpatch.pl --strict -g net/main..HEAD
-./scripts/get_maintainer.pl ~/mokerlink/build/upstream/linux/pse-fix/0*.patch
+./scripts/get_maintainer.pl ~/mokerlink/build/upstream/linux/pse-fix/*.patch
 git send-email --to=netdev@vger.kernel.org --cc=... ~/mokerlink/build/upstream/linux/pse-fix/*.patch
 ```
 
@@ -235,16 +235,28 @@ need a MAINTAINERS update: the entry comes with the driver patch, in
 alphabetical order with you as maintainer. Send net-next series only while
 net-next is open.
 
+A new version after a review: change the commit messages and diffs in
+`upstream/linux/SERIES/`, write what changed since each earlier version,
+with a link to it on lore, to `upstream/linux/SERIES/changes.txt`, and
+build it with `-v N`. The changes go below the `---` line of a single
+patch, or into the cover letter. The script empties the output directory
+first, so `*.patch` is only the new version. netdev wants at least 24
+hours between versions, and each version as a new thread rather than a
+reply to the earlier one.
+
 The PSE core fix goes to the net tree on its own. It is made against
 mainline (it touches the same functions as in OpenWrt's kernel, without
 OpenWrt's pending PSE patches around them), was tested on the switch in
-OpenWrt and build-tested on mainline, and is a regular bug for the
+OpenWrt and build-tested on mainline (`scripts/check-kernel.sh`, which
+CI runs on the tip of the net tree with `W=1`), and is a regular bug for the
 kernel's threat model (it needs an admin action or an unplug), so it goes
 to the list, not to the security team.
 
 `scripts/make-upstream.py patches` writes the kernel patches as OpenWrt
 carries them to `build/upstream/patches`, for a quick review without a
-tree.
+tree. They are in the format of OpenWrt's `make target/linux/refresh`,
+as in the pull requests: no git header lines, and the function in each
+hunk header cut to 40 characters.
 
 ## What reviewers will likely ask
 

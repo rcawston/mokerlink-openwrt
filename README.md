@@ -104,7 +104,7 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 | `files/` | Files added to the firmware: switch defaults and bring-up tools |
 | `config/` | Pinned OpenWrt and feed revisions, package selection |
 | `upstream/` | Commit messages for the OpenWrt and Linux submissions ([docs/08-upstreaming.md](docs/08-upstreaming.md)) |
-| `scripts/` | `build.sh`, `check-dts.sh`, `make-upstream.py` (builds the OpenWrt, netifd and Linux submissions), `uimage-remagic.py`, `uboot-wiring.py` (reads the port wiring from U-Boot), `uboot-md2bin.py` (turns a U-Boot flash dump into a binary), `uboot-collect.py` (collects all U-Boot information and dumps the flash over the serial port, CRC-verified), `extract-poe-firmware.py` (copies the RTL8239 PoE firmware out of a stock image) |
+| `scripts/` | `build.sh`, `check-dts.sh`, `check-kernel.sh` (builds the PSE core fix on the net tree), `make-upstream.py` (builds the OpenWrt, netifd and Linux submissions), `uimage-remagic.py`, `uboot-wiring.py` (reads the port wiring from U-Boot), `uboot-md2bin.py` (turns a U-Boot flash dump into a binary), `uboot-collect.py` (collects all U-Boot information and dumps the flash over the serial port, CRC-verified), `extract-poe-firmware.py` (copies the RTL8239 PoE firmware out of a stock image) |
 | `tests/` | Tests for `uboot-wiring.py` and `uboot-collect.py` against a simulated U-Boot |
 | `docs/` | Hardware notes, console, install, recovery, porting, everyday use |
 

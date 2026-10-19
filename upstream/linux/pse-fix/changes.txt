@@ -1,0 +1,6 @@
+Changes in v2:
+- Move the retry of the power domain out of _pse_pi_disable() into its
+  callers, instead of splitting out a __pse_pi_disable() without it
+  (Kory)
+
+v1: https://lore.kernel.org/netdev/20261018182005.1193-1-ross@r-sc.ca/

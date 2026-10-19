@@ -14,32 +14,63 @@ Every link loss shows up as down, up, down:
 
 For ports with a PHY, trigger the PHY state machine instead, so phylib
 reads the PHY right away and reports the change once. This also
-reports a new link without waiting for the next poll. Ports without a
-PHY, and PHYs on SFP modules, keep the MAC link change.
+reports a new link without waiting for the next poll.
+
+Ports with in-band status keep the MAC link change: phylink takes their
+link state also from the PCS, and when the PCS comes up after the PHY,
+only the MAC link change makes it resolve the link again. So do ports
+without a PHY, which include the SFP ports. Both are read from the
+port's device tree node at probe, so the interrupt handler doesn't use
+the PHY of an SFP module, which goes away with the module.
 
 ---
 diff --git a/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/common.c b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/common.c
-index 03ed0a3..eded8c8 100644
+index 03ed0a3..d925953 100644
 --- a/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/common.c
 +++ b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/common.c
-@@ -243,6 +243,24 @@ int rtl83xx_port_is_under(const struct net_device *dev, struct rtl838x_switch_pr
+@@ -164,6 +164,7 @@ static int rtldsa_ports_probe(struct rtl838x_switch_priv *priv)
+ 	led_node = of_find_compatible_node(NULL, NULL, "realtek,rtl9300-leds");
+ 
+ 	for_each_node_by_name(dn, "port") {
++		const char *managed;
+ 		u32 led_set;
+ 		char led_set_str[16] = {0};
+ 
+@@ -196,6 +197,10 @@ static int rtldsa_ports_probe(struct rtl838x_switch_priv *priv)
+ 		}
+ 
+ 		priv->ports[pn].phy = !!phy_node;
++		/* In-band status as phylink reads it */
++		if (!of_property_read_string(dn, "managed", &managed) &&
++		    !strcmp(managed, "in-band-status"))
++			priv->ports[pn].inband = true;
+ 	}
+ 
+ 	return 0;
+@@ -243,6 +248,30 @@ int rtl83xx_port_is_under(const struct net_device *dev, struct rtl838x_switch_pr
  	return -EINVAL;
  }
  
 +/*
-+ * A port with a PHY takes its link state from phylib, which polls the PHY
-+ * once a second. Reporting a MAC link loss to phylink would make it take the
-+ * link down and then straight back up from the PHY state of the last poll,
-+ * until the next poll reads the link as down. Let phylib read the PHY now
-+ * instead, which also reports a new link without waiting for the poll.
++ * A port with a PHY and without in-band status takes its link state from
++ * phylib, which polls the PHY once a second. Reporting a MAC link loss to
++ * phylink would make it take the link down and then straight back up from the
++ * PHY state of the last poll, until the next poll reads the link as down. Let
++ * phylib read the PHY now instead, which also reports a new link without
++ * waiting for the poll.
++ *
++ * With in-band status, phylink takes the link state also from the PCS, and
++ * needs the MAC link change to resolve the link again when the PCS comes up
++ * after the PHY. The SFP ports have no PHY in the device tree, so the PHY of
++ * an SFP module, which goes away with the module, is not used here.
 + */
-+static void rtldsa_port_link_change(struct dsa_switch *ds, int port, bool up)
++static void rtldsa_port_link_change(struct dsa_switch *ds, int port,
++				    const struct rtldsa_port *p, bool up)
 +{
 +	struct dsa_port *dp = dsa_to_port(ds, port);
-+	struct phy_device *phydev = dp->user ? dp->user->phydev : NULL;
 +
-+	if (phydev && !phydev->is_on_sfp_module)
-+		phy_mac_interrupt(phydev);
++	if (p->phy && !p->inband && dp->user && dp->user->phydev)
++		phy_mac_interrupt(dp->user->phydev);
 +	else
 +		dsa_port_phylink_mac_change(ds, port, up);
 +}
@@ -47,12 +78,25 @@ index 03ed0a3..eded8c8 100644
  static irqreturn_t rtldsa_switch_irq(int irq, void *dev_id)
  {
  	struct rtl838x_switch_priv *priv;
-@@ -259,7 +277,7 @@ static irqreturn_t rtldsa_switch_irq(int irq, void *dev_id)
+@@ -259,7 +288,8 @@ static irqreturn_t rtldsa_switch_irq(int irq, void *dev_id)
  
  	for (int port = 0; port < priv->r->cpu_port; port++)
  		if (ports & BIT_ULL(port))
 -			dsa_port_phylink_mac_change(ds, port, link & BIT_ULL(port));
-+			rtldsa_port_link_change(ds, port, link & BIT_ULL(port));
++			rtldsa_port_link_change(ds, port, &priv->ports[port],
++						link & BIT_ULL(port));
  
  	return IRQ_HANDLED;
  }
+diff --git a/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/rtl-otto.h b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/rtl-otto.h
+index d411b17..6e635ae 100644
+--- a/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/rtl-otto.h
++++ b/target/linux/realtek/files-6.18/drivers/net/dsa/rtl83xx/rtl-otto.h
+@@ -90,6 +90,7 @@ struct rtldsa_port {
+ 	u16 pvid;
+ 	bool eee_enabled;
+ 	bool has_pcs;
++	bool inband;
+ 	int led_set;
+ 	enum rtldsa_flood_type flood_type;
+ 	int leds_on_this_port;
