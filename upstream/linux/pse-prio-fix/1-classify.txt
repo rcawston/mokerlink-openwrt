@@ -19,6 +19,9 @@ state can't be read. A PI that holds budget while it is off, as a power
 limit change on a waiting PI or a failed disable leaves it, has that
 budget freed and allocated again, instead of a second allocation.
 
-Build-tested only.
+Sashiko, the netdev AI review bot, pointed out the case of the admin
+state read error in its review of v1 of "net: pse-pd: don't enable a PI
+again while disabling it" (the Link below). Build-tested only.
 
 Fixes: ffef61d6d273 ("net: pse-pd: Add support for budget evaluation strategies")
+Link: https://lore.kernel.org/netdev/179243532177.3135.6604862508015344848@kernel.org/

@@ -23,10 +23,12 @@ Make room without retrying the power domain:
   at the same priority, from the last one, until their budget and the
   unclaimed budget make room; then leave out those that aren't needed,
   from the highest priority. If that can't make room, nothing is turned
-  off.
+  off. Budget that such a PI holds while it is off is freed, as it is
+  not in use.
 - Turn them off and request the budget. If that fails, or enabling the
-  PI fails and leaves it off, give each PI turned off the budget it held
-  back and enable it again, without making room for it in turn.
+  PI fails and it can be disabled again, give each PI turned off the
+  budget it held back and enable it again, without making room for it
+  in turn.
 - Notify the PIs that stay off as over budget, once that is known.
 - After an admin enable or a classification that made room, retry the
   power domain for the budget left over.
@@ -44,8 +46,9 @@ use, as that one can turn it off later.
 As before, only the PIs of the PSE controller of the PI are turned off
 and retried, also when its power domain is shared with another
 controller. Only the unclaimed budget of the domain's own supply is
-counted: if the request then fails at a supply it is supplied from, the
-PIs turned off get their budget back.
+counted: when a supply it is supplied from is short of budget, the
+request fails after the PIs are turned off, they get their budget back,
+and the priorities don't apply to that shortage.
 
 Sashiko, the netdev AI review bot, pointed out in its review of v1 of
 "net: pse-pd: don't enable a PI again while disabling it" (the Link

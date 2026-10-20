@@ -1,10 +1,11 @@
 net: pse-pd: fix turning off PIs for budget
 
-With the static budget strategy, making room for a PI by turning off
-PIs of lower priority recurses until the stack overflows when the PI is
-waiting for power: when its PD is classified, and during every retry of
-its power domain. On an admin enable, it powers the PIs turned off again
-right away, so the priorities never take effect. Patch 2 fixes that,
+With the static budget strategy, priorities configured and the budget
+short, making room for a PI by turning off PIs of lower priority can
+recurse until the kernel stack overflows: when a PD is plugged in and
+classified, and during any retry of the power domain. On an admin
+enable, it powers the PIs turned off again right away, so the
+priorities never take effect. Patch 2 fixes that,
 making room without retrying the domain. Patch 1 first keeps power
 delivery from allocating the budget of a powered PI a second time,
 which with patch 2 would turn off PIs of lower priority for nothing.
@@ -13,6 +14,12 @@ The series applies on top of "net: pse-pd: don't enable a PI again
 while disabling it" (v2), which keeps the retry after turning a PI off
 that patch 2 removes:
 https://lore.kernel.org/netdev/20261019220835.613-1-ross@r-sc.ca/
+
+This overlaps Carlo Szelinsky's "net: pse-pd: assorted lifetime and
+error-path fixes" v2: patch 2 conflicts with its patches 10 and 12,
+which change the power delivery and give each PI its own supply handle.
+Whichever goes in first, the other rebases on it:
+https://lore.kernel.org/netdev/20261020171249.853085-1-github@szelinsky.de/
 
 Patch 2 is not small for a fix. Turning PIs off without a retry is what
 stops the recursion; selecting them first, and giving them their budget

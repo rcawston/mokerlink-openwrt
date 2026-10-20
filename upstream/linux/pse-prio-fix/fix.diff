@@ -1,5 +1,5 @@
 diff --git a/drivers/net/pse-pd/pse_core.c b/drivers/net/pse-pd/pse_core.c
-index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737bc759d406 100644
+index b2118b38c7a554ae95af3b26a749d45054ef3198..860de0befdfb1d6abd294e427bda45c5c78885ba 100644
 --- a/drivers/net/pse-pd/pse_core.c
 +++ b/drivers/net/pse-pd/pse_core.c
 @@ -335,7 +335,7 @@ pse_pi_is_admin_enable_pending(struct pse_controller_dev *pcdev, int id)
@@ -70,14 +70,14 @@ index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737b
  	}
  }
  
-@@ -473,63 +473,258 @@ static int _pse_pi_disable(struct pse_controller_dev *pcdev, int id)
+@@ -473,63 +473,265 @@ static int _pse_pi_disable(struct pse_controller_dev *pcdev, int id)
  }
  
  /**
 - * pse_disable_pi_pol - Disable a PI on a power budget policy
 + * pse_pi_notify - Notify PSE events of a PI
-  * @pcdev: a pointer to the PSE
-  * @id: index of the PSE PI
++ * @pcdev: a pointer to the PSE
++ * @id: index of the PSE PI
 + * @notifs: PSE events
 + */
 +static void pse_pi_notify(struct pse_controller_dev *pcdev, int id,
@@ -96,38 +96,23 @@ index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737b
 + * pse_pis_lowest_prio - Find the PI with the lowest priority in a set of PIs
 + * @pcdev: a pointer to the PSE
 + * @pis: bitmap of PIs
-  *
-- * Return: 0 on success and failure value on error
++ *
 + * Return: the index of the PI with the lowest priority (highest value), the
 + *	   last one of them at the same priority, or -1 if @pis is empty
-  */
--static int pse_disable_pi_pol(struct pse_controller_dev *pcdev, int id)
++ */
 +static int pse_pis_lowest_prio(struct pse_controller_dev *pcdev,
 +			       const unsigned long *pis)
- {
--	unsigned long notifs = ETHTOOL_PSE_EVENT_OVER_BUDGET;
--	struct pse_ntf ntf = {};
--	int ret;
++{
 +	int i, id = -1;
- 
--	dev_dbg(pcdev->dev, "Disabling PI %d to free power budget\n", id);
++
 +	for_each_set_bit(i, pis, pcdev->nr_lines) {
 +		if (id < 0 || pcdev->pi[i].prio >= pcdev->pi[id].prio)
 +			id = i;
 +	}
- 
--	ret = _pse_pi_disable(pcdev, id);
--	if (ret)
--		notifs |= ETHTOOL_PSE_EVENT_SW_PW_CONTROL_ERROR;
--	else if (pse_pw_d_is_sw_pw_control(pcdev, pcdev->pi[id].pw_d))
--		pse_pw_d_retry_power_delivery(pcdev, pcdev->pi[id].pw_d);
++
 +	return id;
 +}
- 
--	ntf.notifs = notifs;
--	ntf.id = id;
--	kfifo_in_spinlocked(&pcdev->ntf_fifo, &ntf, 1, &pcdev->ntf_fifo_lock);
--	schedule_work(&pcdev->ntf_work);
++
 +/**
 + * pse_pis_highest_prio - Find the PI with the highest priority in a set of PIs
 + * @pcdev: a pointer to the PSE
@@ -148,7 +133,7 @@ index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737b
 +
 +	return id;
 +}
- 
++
 +/**
 + * pse_pw_d_select_pis_to_disable - Select the PIs to disable to make room for
 + *				    the power request of a PI
@@ -159,13 +144,17 @@ index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737b
 + *	    budget of each PI selected
 + *
 + * Only the enabled PIs of this PSE controller that hold budget in the power
-+ * domain of the PI, with a lower priority (higher value), are selected, and
-+ * only the unclaimed budget of the domain's own supply is counted, not that
-+ * of a supply it is supplied from. The PIs
-+ * are picked from the lowest priority, and at the same priority from the
-+ * last one, until their budget and the unclaimed budget make room for the
++ * domain of the PI, with a lower priority (higher value), are selected. The
++ * budget that such a PI holds while it is off is freed, as it is not in use.
++ * The PIs are picked from the lowest priority, and at the same priority from
++ * the last one, until their budget and the unclaimed budget make room for the
 + * request. Then the picks that are not needed are left out, from the highest
 + * priority, so that each PI selected is needed.
++ *
++ * Only the unclaimed budget of the domain's own supply is counted. When a
++ * supply it is supplied from is short of budget, the request fails after the
++ * PIs selected are disabled, and they get their budget back: the priorities
++ * don't apply to that shortage.
 + *
 + * Return: 0 on success, -ERANGE if disabling all those PIs can't make room,
 + *	   with @off_pw all 0 again, and another failure value on error
@@ -185,12 +174,16 @@ index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737b
 +	for (i = 0; i < pcdev->nr_lines; i++) {
 +		if (pcdev->pi[i].pw_d != pi->pw_d ||
 +		    pcdev->pi[i].prio <= pi->prio ||
-+		    !pcdev->pi[i].pw_allocated_mW ||
-+		    pse_pi_is_hw_enabled(pcdev, i) <= 0)
++		    !pcdev->pi[i].pw_allocated_mW)
 +			continue;
 +
-+		__set_bit(i, pis);
++		ret = pse_pi_is_hw_enabled(pcdev, i);
++		if (ret > 0)
++			__set_bit(i, pis);
++		else if (!ret)
++			pse_pi_deallocate_pw_budget(&pcdev->pi[i]);
 +	}
++	ret = 0;
 +
 +	pw = regulator_get_unclaimed_power_budget(pi->pw_d->supply);
 +	while (pw < pw_req) {
@@ -222,60 +215,73 @@ index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737b
 +
 +out:
 +	bitmap_free(pis);
++	return ret;
++}
++
++/**
++ * pse_pi_power_again - Give a PI disabled to make room its budget back, and
++ *			enable it
+  * @pcdev: a pointer to the PSE
++ * @pw_d: a pointer to the PSE power domain
+  * @id: index of the PSE PI
++ * @pw: power budget in mW that the PI held
+  *
+  * Return: 0 on success and failure value on error
+  */
+-static int pse_disable_pi_pol(struct pse_controller_dev *pcdev, int id)
++static int pse_pi_power_again(struct pse_controller_dev *pcdev,
++			      struct pse_power_domain *pw_d, int id, int pw)
+ {
+-	unsigned long notifs = ETHTOOL_PSE_EVENT_OVER_BUDGET;
+-	struct pse_ntf ntf = {};
+ 	int ret;
+ 
+-	dev_dbg(pcdev->dev, "Disabling PI %d to free power budget\n", id);
+-
+-	ret = _pse_pi_disable(pcdev, id);
++	ret = regulator_request_power_budget(pw_d->supply, pw);
+ 	if (ret)
+-		notifs |= ETHTOOL_PSE_EVENT_SW_PW_CONTROL_ERROR;
+-	else if (pse_pw_d_is_sw_pw_control(pcdev, pcdev->pi[id].pw_d))
+-		pse_pw_d_retry_power_delivery(pcdev, pcdev->pi[id].pw_d);
++		return ret;
+ 
+-	ntf.notifs = notifs;
+-	ntf.id = id;
+-	kfifo_in_spinlocked(&pcdev->ntf_fifo, &ntf, 1, &pcdev->ntf_fifo_lock);
+-	schedule_work(&pcdev->ntf_work);
++	pcdev->pi[id].pw_allocated_mW = pw;
++	ret = pcdev->ops->pi_enable(pcdev, id);
++	/* Disabled again, or left with its budget if that fails too */
++	if (ret)
++		_pse_pi_disable(pcdev, id);
+ 
  	return ret;
  }
  
  /**
 - * pse_disable_pi_prio - Disable all PIs of a given priority inside a PSE
 - *			 power domain
-+ * pse_pi_power_again - Give a PI disabled to make room its budget back, and
-+ *			enable it
++ * pse_pis_power_again - Power the PIs disabled to make room again
   * @pcdev: a pointer to the PSE
   * @pw_d: a pointer to the PSE power domain
 - * @prio: priority
-+ * @id: index of the PSE PI
-+ * @pw: power budget in mW that the PI held
-  *
-  * Return: 0 on success and failure value on error
-  */
--static int pse_disable_pi_prio(struct pse_controller_dev *pcdev,
--			       struct pse_power_domain *pw_d,
--			       int prio)
-+static int pse_pi_power_again(struct pse_controller_dev *pcdev,
-+			      struct pse_power_domain *pw_d, int id, int pw)
- {
--	int i;
-+	int ret;
-+
-+	ret = regulator_request_power_budget(pw_d->supply, pw);
-+	if (ret)
-+		return ret;
-+
-+	ret = pcdev->ops->pi_enable(pcdev, id);
-+	if (ret) {
-+		regulator_free_power_budget(pw_d->supply, pw);
-+		return ret;
-+	}
-+
-+	pcdev->pi[id].pw_allocated_mW = pw;
-+	return 0;
-+}
-+
-+/**
-+ * pse_pis_power_again - Power the PIs disabled to make room again
-+ * @pcdev: a pointer to the PSE
-+ * @pw_d: a pointer to the PSE power domain
 + * @off_pw: array of nr_lines power budgets in mW, the budget that each PI
 + *	    disabled held and 0 for the others; all 0 on return
-+ *
+  *
+- * Return: 0 on success and failure value on error
 + * From the highest priority, each PI gets back the budget it held, if it is
 + * still unclaimed, and is enabled again. A PI that can't stays disabled,
 + * waiting for power, and is notified as over budget when its budget is gone,
 + * or of the error when it fails to enable.
-+ */
+  */
+-static int pse_disable_pi_prio(struct pse_controller_dev *pcdev,
+-			       struct pse_power_domain *pw_d,
+-			       int prio)
 +static void pse_pis_power_again(struct pse_controller_dev *pcdev,
 +				struct pse_power_domain *pw_d, int *off_pw)
-+{
+ {
+-	int i;
 +	unsigned long notifs;
 +	int prio, i, ret;
 +
@@ -360,7 +366,7 @@ index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737b
  }
  
  /**
-@@ -539,36 +734,41 @@ static int pse_disable_pi_prio(struct pse_controller_dev *pcdev,
+@@ -539,36 +741,41 @@ static int pse_disable_pi_prio(struct pse_controller_dev *pcdev,
   * @pcdev: a pointer to the PSE
   * @id: index of the PSE control
   * @pw_req: power requested in mW
@@ -418,7 +424,7 @@ index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737b
  
  	pi->pw_allocated_mW = pw_req;
  	return 0;
-@@ -579,12 +779,16 @@ pse_pi_allocate_pw_budget_static_prio(struct pse_controller_dev *pcdev, int id,
+@@ -579,12 +786,16 @@ pse_pi_allocate_pw_budget_static_prio(struct pse_controller_dev *pcdev, int id,
   * @pcdev: a pointer to the PSE
   * @id: index of the PSE control
   * @pw_req: power requested in mW
@@ -436,7 +442,7 @@ index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737b
  {
  	struct pse_pi *pi = &pcdev->pi[id];
  
-@@ -594,7 +798,7 @@ static int pse_pi_allocate_pw_budget(struct pse_controller_dev *pcdev, int id,
+@@ -594,7 +805,7 @@ static int pse_pi_allocate_pw_budget(struct pse_controller_dev *pcdev, int id,
  	/* PSE_BUDGET_EVAL_STRAT_STATIC */
  	if (pi->pw_d->budget_eval_strategy == PSE_BUDGET_EVAL_STRAT_STATIC)
  		return pse_pi_allocate_pw_budget_static_prio(pcdev, id, pw_req,
@@ -445,12 +451,13 @@ index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737b
  
  	return 0;
  }
-@@ -605,17 +809,23 @@ static int pse_pi_allocate_pw_budget(struct pse_controller_dev *pcdev, int id,
+@@ -605,17 +816,24 @@ static int pse_pi_allocate_pw_budget(struct pse_controller_dev *pcdev, int id,
   *				       acquired.
   * @pcdev: a pointer to the PSE
   * @id: index of the PSE control
-+ * @made_room: if not NULL, set to whether PIs of lower priority stay disabled
-+ *	       to make room, which can leave budget for PIs waiting for power
++ * @made_room: if not NULL, set to whether the PI got power and PIs of lower
++ *	       priority stay disabled for it, which can leave budget for PIs
++ *	       waiting for power
   * @extack: extack for error reporting
   *
   * Return: 0 on success and failure value on error
@@ -471,7 +478,7 @@ index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737b
  
  	if (!ops->pi_get_pw_req) {
  		/* No power allocation management */
-@@ -657,9 +867,9 @@ static int _pse_pi_delivery_power_sw_pw_ctrl(struct pse_controller_dev *pcdev,
+@@ -657,26 +875,43 @@ static int _pse_pi_delivery_power_sw_pw_ctrl(struct pse_controller_dev *pcdev,
  			pw_req = ret;
  	}
  
@@ -483,15 +490,16 @@ index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737b
  
  	ret = ops->pi_enable(pcdev, id);
  	if (ret) {
-@@ -667,16 +877,33 @@ static int _pse_pi_delivery_power_sw_pw_ctrl(struct pse_controller_dev *pcdev,
+-		pse_pi_deallocate_pw_budget(pi);
  		NL_SET_ERR_MSG_FMT(extack,
  				   "PI %d: enable error %d",
  				   id, ret);
 -		return ret;
-+		/* The PIs disabled for it get their power back, unless the
-+		 * failed enable left the PI on
++		/* Disabled again, which frees its budget, the PIs disabled for
++		 * it get their power back. If that fails too, its state is
++		 * unknown: it keeps its budget, and they stay off.
 +		 */
-+		if (off_pw && !pse_pi_is_hw_enabled(pcdev, id))
++		if (!_pse_pi_disable(pcdev, id) && off_pw)
 +			pse_pis_power_again(pcdev, pi->pw_d, off_pw);
  	}
  
@@ -519,7 +527,7 @@ index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737b
  	int id, ret = 0;
  
  	ops = pcdev->ops;
-@@ -692,12 +919,18 @@ static int pse_pi_enable(struct regulator_dev *rdev)
+@@ -692,12 +927,18 @@ static int pse_pi_enable(struct regulator_dev *rdev)
  		if (pcdev->pi[id].isr_pd_detected) {
  			struct netlink_ext_ack extack;
  
@@ -539,7 +547,7 @@ index b2118b38c7a554ae95af3b26a749d45054ef3198..129da4f216c33a935e553db82857737b
  		mutex_unlock(&pcdev->lock);
  		return ret;
  	}
-@@ -1234,14 +1467,20 @@ static int pse_set_config_isr(struct pse_controller_dev *pcdev, int id,
+@@ -1234,14 +1475,20 @@ static int pse_set_config_isr(struct pse_controller_dev *pcdev, int id,
  
  	if (notifs & ETHTOOL_C33_PSE_EVENT_CLASSIFICATION) {
  		struct netlink_ext_ack extack;
