@@ -431,10 +431,13 @@ partition. The build makes two images for it
   has been sent to netdev and to OpenWrt
   ([08-upstreaming.md](08-upstreaming.md#status)). Port priorities didn't
   take effect either: a port switched off for one of higher priority was
-  powered again straight away. `836-*` switches ports off only when that
-  makes room, one at a time from the lowest priority, and powers again
-  those whose budget wasn't needed in the end; not tested on the switch
-  yet.
+  powered again straight away, and when the port of higher priority was
+  waiting for power (its PD just classified, or its priority changed),
+  the core recursed until the kernel stack overflowed. `836-*` and
+  `837-*` switch off only the ports needed to make room, chosen from the
+  lowest priority before switching any, power them again if that fails,
+  and retry waiting ports from the highest priority; not tested on the
+  switch.
 - **PoE budget across the two chips:** both chips share the 260 W, but the
   PSE core sheds and retries only ports of the chip that has the event
   (front ports 1-3 on one, 4-7 on the other). A port of one chip doesn't

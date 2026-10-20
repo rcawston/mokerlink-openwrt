@@ -20,14 +20,14 @@ As of 19 October 2026:
 |---|---|---|
 | PSE core fix | netdev, `[PATCH net]` | [v1](https://lore.kernel.org/netdev/20261018182005.1193-1-ross@r-sc.ca/) and [v2](https://lore.kernel.org/netdev/20261019220835.613-1-ross@r-sc.ca/) sent. v2 moves the retry of the power domain out of `_pse_pi_disable()` into its callers, as Kory Maincent asked, and keeps it after `pse_disable_pi_pol()`, as netdev's AI review found that leaving it out keeps PIs off whose budget wasn't needed; the priorities need a separate patch |
 | PSE core fix | OpenWrt, generic pending patch | [openwrt/openwrt#25994](https://github.com/openwrt/openwrt/pull/25994), updated to v2, in quilt's format, which its review asked for |
-| PSE priorities (`pse-prio-fix`) | netdev, `[PATCH net]` | not sent: applies on top of the PSE core fix, so it waits for that to be applied, and for a test on the switch with a lower budget |
+| PSE priorities (`pse-prio-fix`, two patches) | netdev, `[PATCH net]` | not sent: applies on top of the PSE core fix, so it waits for that to be applied; fixes a recursion until the stack overflows when a waiting PI turns off PIs of lower priority, which the code before has as well; build-tested only |
 | PSE classification reported with a detection (`pse-detect-fix`) | netdev, `[PATCH net]` | ready, not sent; pointed out by netdev's AI review, affects the TPS23881, build-tested only |
 | switch link change fix | OpenWrt | [openwrt/openwrt#25995](https://github.com/openwrt/openwrt/pull/25995); Markus Stockhausen asked to keep the MAC link change for ports with in-band status, and not to look at the PHY of an SFP module in the interrupt handler, which the update does |
 | RTL9300 port LEDs (`leds`) | linux-leds | [sent and withdrawn](https://lore.kernel.org/all/20261018194339.132-1-ross@r-sc.ca/): Andrew Lunn asked for port LEDs in the switch driver's port nodes, and Markus Stockhausen, who keeps OpenWrt's RTL930x switch driver, has no time to take it upstream yet |
 | PoE LEDs in OpenWrt | OpenWrt | through [openwrt/openwrt#25341](https://github.com/openwrt/openwrt/pull/25341) (software-controlled LEDs in the realtek switch driver), tested on this board; the board's LED nodes follow once it is merged |
 | shared-SCL I²C (`i2c`) | linux-i2c | [sent and withdrawn](https://lore.kernel.org/all/20261018194315.945-1-ross@r-sc.ca/): `i2c-gpio` does it |
-| board.json PoE default | netifd | [openwrt/netifd#97](https://github.com/openwrt/netifd/pull/97) |
-| the board | OpenWrt | [openwrt/openwrt#26042](https://github.com/openwrt/openwrt/pull/26042), without the PoE LEDs; depends on openwrt/netifd#97 |
+| board.json PoE default | netifd | [openwrt/netifd#97](https://github.com/openwrt/netifd/pull/97), merged on 20 October 2026 (`06fc90458560`); OpenWrt's netifd package doesn't include it yet |
+| the board | OpenWrt | [openwrt/openwrt#26042](https://github.com/openwrt/openwrt/pull/26042), without the PoE LEDs; needs an OpenWrt netifd package update that includes openwrt/netifd#97 |
 | PSE priority choices in the web UI | LuCI | [openwrt/luci#9141](https://github.com/openwrt/luci/pull/9141) |
 | RTL8239 PSE (`pse`), PSE LED trigger names (`pse-led-triggers`) | netdev, linux-leds | not sent; wait for the PSE series they depend on ([Dependencies](#dependencies)) |
 
@@ -41,7 +41,7 @@ As of 19 October 2026:
 | board.json default for netifd's `pse` option | `base-files: add a uci-defaults function for the PSE default` (`patches/0004-*`), in the board pull request; netifd itself: `device: add a board.json default for the pse option`, a pull request to [openwrt/netifd](https://github.com/openwrt/netifd) (`netifd TREE`) | none |
 | the device | `realtek: rtl930x: add support for MokerLink POE-10G07110GSM` | none |
 | PSE core fix: a PI disabled with software power control is not enabled again by the retry of its power domain | `generic: pse-pd: don't enable a PI again while disabling it`: this repository's `835-*` as `generic/pending-6.18/898-*`, a separate pull request (`openwrt TREE pse-fix`) | `pse-fix`: net tree as a fix (`Fixes: ffef61d6d273`), netdev; made against mainline |
-| PSE priorities: a PI of higher priority gets the budget of the PIs of lower priority that it turns off | this repository's `836-*`; for OpenWrt once it is on netdev | `pse-prio-fix`: net tree as a fix, on top of `pse-fix` |
+| PSE priorities: a PI of higher priority gets the budget of the PIs of lower priority that it turns off, without recursing | this repository's `836-*` and `837-*`; for OpenWrt once it is on netdev | `pse-prio-fix`: net tree as a fix, on top of `pse-fix` |
 | PSE classification reported with a detection | not needed for this board: the RTL8239 driver reports a detection on its own | `pse-detect-fix`: net tree as a fix |
 | link change fix in the switch driver | `realtek: dsa: let phylib read the PHY on a port link change` (`patches/0003-*`, a patch to OpenWrt's own driver), a separate pull request (`openwrt TREE dsa-fix`) | none |
 
