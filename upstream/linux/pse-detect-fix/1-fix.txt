@@ -1,0 +1,22 @@
+net: pse-pd: don't drop a classification reported with a detection
+
+pse_set_config_isr() returns right away when the notifications have
+PSE_BUDGET_EVAL_STRAT_DYNAMIC set. That is a budget evaluation
+strategy, not an event, and its value is that of
+ETHTOOL_C33_PSE_EVENT_DETECTION. The TPS23881 reports the detection
+and the classification of a PI in one notification when both are
+latched by the time it handles its interrupt, and the classification
+is then dropped: with software power control, the PD isn't powered.
+
+pse_set_config_isr() is only called for the power domains with
+software power control, which pse_pw_d_is_sw_pw_control() never
+reports for the dynamic strategy, so the check has nothing to do.
+Remove it.
+
+This was found by Sashiko, the netdev AI review bot, in its review of an
+unrelated pse-pd fix (the Link below), not on hardware. Build-tested
+only: I don't have a TPS23881, and the driver of the Realtek RTL8239
+PSE controllers I use reports a detection on its own.
+
+Fixes: ffef61d6d273 ("net: pse-pd: Add support for budget evaluation strategies")
+Link: https://lore.kernel.org/netdev/179243532177.3135.6604862508015344848@kernel.org/

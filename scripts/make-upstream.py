@@ -18,12 +18,13 @@ openwrt  adds one pull request's commits to TREE, an openwrt.git checkout,
                   --link, the patch links to its submission to netdev
 netifd   adds the board.json default for the pse option to TREE, a
          netifd.git checkout, and writes it to build/upstream/netifd
-linux    adds one series (pse, leds, pse-led-triggers or pse-fix) as
+linux    adds one series (pse, leds, pse-led-triggers, pse-fix or
+         pse-detect-fix) as
          commits to TREE, a Linux checkout of the subsystem tree it goes
          to, with MAINTAINERS entries, and writes it with a cover letter and
          the subject prefix of that tree to build/upstream/linux/SERIES.
          The Kconfig and Makefile hunks are made against v6.18, the PSE
-         core fix against mainline; they are applied with a three-way
+         core fixes against mainline; they are applied with a three-way
          merge. Earlier patches in that directory are removed first.
 patches  writes the kernel patches as OpenWrt carries them (OpenWrt's
          kernel context) to DIR, for review; no tree needed.
@@ -117,6 +118,17 @@ SERIES = {
         'patches': [
             ('1-fix.txt', [],
              '835-net-pse-pd-don-t-enable-a-PI-again-while-disabling-it.patch', 'fix.diff'),
+        ],
+    },
+    # Not in this repository's build: the RTL8239 driver reports a
+    # detection on its own
+    'pse-detect-fix': {
+        'openwrt': None,
+        'list': 'netdev@vger.kernel.org',
+        'prefix': 'PATCH net',
+        'maintainers': None,
+        'patches': [
+            ('1-fix.txt', [], None, 'fix.diff'),
         ],
     },
 }
@@ -262,6 +274,9 @@ def cmd_patches(args):
     for series, s in SERIES.items():
         n = len(s['patches'])
         for i in range(n):
+            _, files, hookpatch, _ = s['patches'][i]
+            if not files and not hookpatch:
+                continue   # nothing in this repository's build
             subject, text = openwrt_patch_text(args, series, i, n)
             name = f'{series}-{i + 1:02d}-{slug(subject)}.patch'
             write(os.path.join(out, name), text)

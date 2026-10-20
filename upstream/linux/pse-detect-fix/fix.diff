@@ -1,0 +1,14 @@
+diff --git a/drivers/net/pse-pd/pse_core.c b/drivers/net/pse-pd/pse_core.c
+index a5e6d7b26b9fd7a1c082096f77e7b9bf6e6b0281..601a3cec50e6f52bd817e3f8f0eca2c82ba5a702 100644
+--- a/drivers/net/pse-pd/pse_core.c
++++ b/drivers/net/pse-pd/pse_core.c
+@@ -1206,9 +1206,6 @@ static int pse_set_config_isr(struct pse_controller_dev *pcdev, int id,
+ {
+ 	int ret = 0;
+ 
+-	if (notifs & PSE_BUDGET_EVAL_STRAT_DYNAMIC)
+-		return 0;
+-
+ 	if ((notifs & ETHTOOL_C33_PSE_EVENT_DISCONNECTION) &&
+ 	    ((notifs & ETHTOOL_C33_PSE_EVENT_DETECTION) ||
+ 	     (notifs & ETHTOOL_C33_PSE_EVENT_CLASSIFICATION))) {
