@@ -18,8 +18,8 @@ openwrt  adds one pull request's commits to TREE, an openwrt.git checkout,
                   --link, the patch links to its submission to netdev
 netifd   adds the board.json default for the pse option to TREE, a
          netifd.git checkout, and writes it to build/upstream/netifd
-linux    adds one series (pse, leds, pse-led-triggers, pse-fix or
-         pse-detect-fix) as
+linux    adds one series (pse, leds, pse-led-triggers, pse-fix,
+         pse-prio-fix, which applies on top of pse-fix, or pse-detect-fix) as
          commits to TREE, a Linux checkout of the subsystem tree it goes
          to, with MAINTAINERS entries, and writes it with a cover letter and
          the subject prefix of that tree to build/upstream/linux/SERIES.
@@ -118,6 +118,17 @@ SERIES = {
         'patches': [
             ('1-fix.txt', [],
              '835-net-pse-pd-don-t-enable-a-PI-again-while-disabling-it.patch', 'fix.diff'),
+        ],
+    },
+    # Applies on top of pse-fix
+    'pse-prio-fix': {
+        'openwrt': None,
+        'list': 'netdev@vger.kernel.org',
+        'prefix': 'PATCH net',
+        'maintainers': None,
+        'patches': [
+            ('1-fix.txt', [],
+             '836-net-pse-pd-make-the-static-budget-priorities-take-effect.patch', 'fix.diff'),
         ],
     },
     # Not in this repository's build: the RTL8239 driver reports a

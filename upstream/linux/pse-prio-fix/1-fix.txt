@@ -1,0 +1,32 @@
+net: pse-pd: make the static budget priorities take effect
+
+With the static budget strategy, a PI whose request doesn't fit in the
+budget of its power domain turns off the PIs of lower priority, a whole
+priority level at a time, until it fits. Each is turned off with
+pse_disable_pi_pol(), which then retries the power delivery of the PIs
+waiting for power in the domain. The PI just turned off is one of them,
+and the budget it freed is its own, so it is powered again right away:
+the PI of higher priority doesn't get the budget, and the priorities
+never take effect.
+
+Only leaving out that retry would leave PIs off for nothing: PIs of
+lower priority would be turned off also when that can't make room for
+the request, and a whole priority level when fewer PIs are enough.
+
+Instead, turn off PIs of lower priority only when the budget they hold,
+with the unclaimed budget, makes room for the request, and then one at
+a time, the lowest priority first and, within a priority, the PI that
+holds the most, until the request fits. Then retry the power delivery
+in the domain, for the PIs turned off whose budget wasn't needed in the
+end. Only PIs that are enabled count and are turned off, and the retry
+skips the PIs that hold budget, so that the PI being allocated, which
+holds its budget but is not enabled yet, is left alone.
+pse_disable_pi_pol() no longer retries the power domain.
+
+Sashiko, the netdev AI review bot, pointed out the PIs left off for
+nothing, in its review of "net: pse-pd: don't enable a PI again while
+disabling it" (the Link below), which this applies on top of.
+Build-tested only so far.
+
+Fixes: ffef61d6d273 ("net: pse-pd: Add support for budget evaluation strategies")
+Link: https://lore.kernel.org/netdev/179243532177.3135.6604862508015344848@kernel.org/

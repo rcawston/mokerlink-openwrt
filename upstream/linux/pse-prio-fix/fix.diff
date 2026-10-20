@@ -1,0 +1,169 @@
+diff --git a/drivers/net/pse-pd/pse_core.c b/drivers/net/pse-pd/pse_core.c
+index c71acfd5337cdff015068a2cbbff851251930c0b..6b6ab4cae8d37aaac30d7a6f569faacc6afe22ff 100644
+--- a/drivers/net/pse-pd/pse_core.c
++++ b/drivers/net/pse-pd/pse_core.c
+@@ -365,6 +365,12 @@ static void pse_pw_d_retry_power_delivery(struct pse_controller_dev *pcdev,
+ 		if (!pse_pi_is_admin_enable_pending(pcdev, i))
+ 			continue;
+ 
++		/* A PI that holds budget is being enabled, such as the PI
++		 * whose allocation retries the power domain
++		 */
++		if (pcdev->pi[i].pw_allocated_mW)
++			continue;
++
+ 		/* Do not try to enable PI with a lower prio (higher value)
+ 		 * than one which already can't be enabled.
+ 		 */
+@@ -490,8 +496,6 @@ static int pse_disable_pi_pol(struct pse_controller_dev *pcdev, int id)
+ 	ret = _pse_pi_disable(pcdev, id);
+ 	if (ret)
+ 		notifs |= ETHTOOL_PSE_EVENT_SW_PW_CONTROL_ERROR;
+-	else if (pse_pw_d_is_sw_pw_control(pcdev, pcdev->pi[id].pw_d))
+-		pse_pw_d_retry_power_delivery(pcdev, pcdev->pi[id].pw_d);
+ 
+ 	ntf.notifs = notifs;
+ 	ntf.id = id;
+@@ -502,34 +506,60 @@ static int pse_disable_pi_pol(struct pse_controller_dev *pcdev, int id)
+ }
+ 
+ /**
+- * pse_disable_pi_prio - Disable all PIs of a given priority inside a PSE
+- *			 power domain
++ * pse_pw_d_lower_prio_pw - Power budget held by the enabled PIs of a PSE power
++ *			    domain with a lower priority than a given one
+  * @pcdev: a pointer to the PSE
+  * @pw_d: a pointer to the PSE power domain
+  * @prio: priority
+  *
+- * Return: 0 on success and failure value on error
++ * Return: the power budget in mW
+  */
+-static int pse_disable_pi_prio(struct pse_controller_dev *pcdev,
+-			       struct pse_power_domain *pw_d,
+-			       int prio)
++static int pse_pw_d_lower_prio_pw(struct pse_controller_dev *pcdev,
++				  struct pse_power_domain *pw_d, int prio)
+ {
+-	int i;
++	int i, pw = 0;
+ 
+ 	for (i = 0; i < pcdev->nr_lines; i++) {
+-		int ret;
+-
+-		if (pcdev->pi[i].prio != prio ||
+-		    pcdev->pi[i].pw_d != pw_d ||
++		if (pcdev->pi[i].pw_d != pw_d || pcdev->pi[i].prio <= prio ||
+ 		    pse_pi_is_hw_enabled(pcdev, i) <= 0)
+ 			continue;
+ 
+-		ret = pse_disable_pi_pol(pcdev, i);
+-		if (ret)
+-			return ret;
++		pw += pcdev->pi[i].pw_allocated_mW;
+ 	}
+ 
+-	return 0;
++	return pw;
++}
++
++/**
++ * pse_pw_d_pi_to_disable - Find the PI to disable to free power budget for a
++ *			    PI of a given priority inside a PSE power domain
++ * @pcdev: a pointer to the PSE
++ * @pw_d: a pointer to the PSE power domain
++ * @prio: priority of the PI that needs the budget
++ *
++ * Return: the index of the enabled PI that holds budget with the lowest
++ *	   priority below @prio, and of those the one that holds the most, or -1
++ *	   if there is none
++ */
++static int pse_pw_d_pi_to_disable(struct pse_controller_dev *pcdev,
++				  struct pse_power_domain *pw_d, int prio)
++{
++	int i, id = -1;
++
++	for (i = 0; i < pcdev->nr_lines; i++) {
++		struct pse_pi *pi = &pcdev->pi[i];
++
++		if (pi->pw_d != pw_d || !pi->pw_allocated_mW ||
++		    pi->prio <= prio || pse_pi_is_hw_enabled(pcdev, i) <= 0)
++			continue;
++
++		if (id < 0 || pi->prio > pcdev->pi[id].prio ||
++		    (pi->prio == pcdev->pi[id].prio &&
++		     pi->pw_allocated_mW > pcdev->pi[id].pw_allocated_mW))
++			id = i;
++	}
++
++	return id;
+ }
+ 
+ /**
+@@ -542,8 +572,9 @@ static int pse_disable_pi_prio(struct pse_controller_dev *pcdev,
+  * @extack: extack for error reporting
+  *
+  * Allocates power using static budget evaluation strategy, where allocation
+- * is based on PD classification. When insufficient budget is available,
+- * lower-priority ports (higher priority numbers) are turned off first.
++ * is based on PD classification. When insufficient budget is available, and
++ * the budget of lower-priority ports (higher priority numbers) makes room,
++ * they are turned off one at a time, the lowest priority first.
+  *
+  * Return: 0 on success and failure value on error
+  */
+@@ -552,25 +583,41 @@ pse_pi_allocate_pw_budget_static_prio(struct pse_controller_dev *pcdev, int id,
+ 				      int pw_req, struct netlink_ext_ack *extack)
+ {
+ 	struct pse_pi *pi = &pcdev->pi[id];
+-	int ret, _prio;
++	struct regulator *supply = pi->pw_d->supply;
++	bool disabled = false;
++	int ret, i;
+ 
+-	_prio = pcdev->nr_lines;
+-	while (regulator_request_power_budget(pi->pw_d->supply, pw_req) == -ERANGE) {
+-		if (_prio <= pi->prio) {
+-			NL_SET_ERR_MSG_FMT(extack,
+-					   "PI %d: not enough power budget available",
+-					   id);
+-			return -ERANGE;
+-		}
++	ret = regulator_request_power_budget(supply, pw_req);
++	if (ret == -ERANGE &&
++	    regulator_get_unclaimed_power_budget(supply) +
++	    pse_pw_d_lower_prio_pw(pcdev, pi->pw_d, pi->prio) >= pw_req) {
++		while (regulator_get_unclaimed_power_budget(supply) < pw_req) {
++			i = pse_pw_d_pi_to_disable(pcdev, pi->pw_d, pi->prio);
++			if (i < 0)
++				break;
+ 
+-		ret = pse_disable_pi_prio(pcdev, pi->pw_d, _prio);
+-		if (ret < 0)
+-			return ret;
++			ret = pse_disable_pi_pol(pcdev, i);
++			if (ret)
++				return ret;
++
++			disabled = true;
++		}
+ 
+-		_prio--;
++		ret = regulator_request_power_budget(supply, pw_req);
+ 	}
++	if (ret == -ERANGE)
++		NL_SET_ERR_MSG_FMT(extack,
++				   "PI %d: not enough power budget available",
++				   id);
++	if (ret)
++		return ret;
+ 
+ 	pi->pw_allocated_mW = pw_req;
++
++	/* Power the PIs turned off whose budget was not needed in the end */
++	if (disabled)
++		pse_pw_d_retry_power_delivery(pcdev, pi->pw_d);
++
+ 	return 0;
+ }
+ 

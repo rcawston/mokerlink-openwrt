@@ -422,14 +422,19 @@ partition. The build makes two images for it
   through the driver package's keep.d entry, and the PoE budget with the
   PSE core fix below (a PD gets the power of its class; switching a port
   off holds; nothing stays allotted after switching off or unplugging;
-  priorities).
-- **PSE core fix:** in the Linux PSE core, disabling a port (admin
-  disable, PD unplugged, or switched off for a port of higher priority)
-  re-checked the waiting ports before the port's own state was cleared,
-  so it enabled that same port again: switching off didn't hold, and the
-  budget leaked with every unplug. `patches-6.18/835-*` clears the state
-  first, tested on the switch. It has been sent to netdev and to OpenWrt
-  ([08-upstreaming.md](08-upstreaming.md#status)).
+  priorities can be set).
+- **PSE core fixes:** in the Linux PSE core, disabling a port (admin
+  disable or PD unplugged) re-checked the waiting ports before the port's
+  own state was cleared, so it enabled that same port again: switching off
+  didn't hold, and the budget leaked with every unplug.
+  `patches-6.18/835-*` clears the state first, tested on the switch, and
+  has been sent to netdev and to OpenWrt
+  ([08-upstreaming.md](08-upstreaming.md#status)). Port priorities didn't
+  take effect either: a port switched off for one of higher priority was
+  powered again straight away. `836-*` switches ports off only when that
+  makes room, one at a time from the lowest priority, and powers again
+  those whose budget wasn't needed in the end; not tested on the switch
+  yet.
 - **PoE budget across the two chips:** both chips share the 260 W, but the
   PSE core sheds and retries only ports of the chip that has the event
   (front ports 1-3 on one, 4-7 on the other). A port of one chip doesn't

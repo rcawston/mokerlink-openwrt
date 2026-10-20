@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds the PSE core fixes as they go to netdev, on the tip of the net tree
 # (a few minutes): each set of series applies, and pse_core.c compiles
-# without warnings with W=1. pse-detect-fix applies both on its own and on
-# top of pse-fix.
+# without warnings with W=1. pse-prio-fix applies on top of pse-fix, and
+# pse-detect-fix both on its own and on top of the other two.
 #
 # Needs git, python3 and the kernel's build tools (gcc, make, bc, bison,
 # flex, libelf-dev, libssl-dev). The clone is cached in build/check/net.
@@ -49,5 +49,5 @@ build() { # series...: applied in this order on the tip of net
 }
 
 build pse-fix
-build pse-fix pse-detect-fix
+build pse-fix pse-prio-fix pse-detect-fix
 build pse-detect-fix
