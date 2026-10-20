@@ -1,0 +1,23 @@
+diff --git a/drivers/net/pse-pd/pse_core.c b/drivers/net/pse-pd/pse_core.c
+index c71acfd5337cdff015068a2cbbff851251930c0b..b2118b38c7a554ae95af3b26a749d45054ef3198 100644
+--- a/drivers/net/pse-pd/pse_core.c
++++ b/drivers/net/pse-pd/pse_core.c
+@@ -627,6 +627,18 @@ static int _pse_pi_delivery_power_sw_pw_ctrl(struct pse_controller_dev *pcdev,
+ 		return ret;
+ 	}
+ 
++	/* A PI that holds budget and is enabled, or whose state can't be
++	 * read, is powered: don't allocate its budget a second time. One that
++	 * holds budget while it is off, as a power limit change on a waiting
++	 * PI or a failed disable leaves it, gets its budget anew.
++	 */
++	if (pi->pw_allocated_mW) {
++		if (pse_pi_is_hw_enabled(pcdev, id))
++			return 0;
++
++		pse_pi_deallocate_pw_budget(pi);
++	}
++
+ 	ret = ops->pi_get_pw_req(pcdev, id);
+ 	if (ret < 0)
+ 		return ret;

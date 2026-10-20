@@ -1,0 +1,56 @@
+net: pse-pd: make room for a PI without recursing
+
+With the static budget strategy, making room for a PI whose request
+doesn't fit can recurse until the stack overflows. The PI turns off the
+PIs of lower priority in its power domain, a whole priority level at a
+time, with pse_disable_pi_pol(), which then retries the power delivery
+of the PIs waiting for power in the domain. The PI is waiting for power
+itself when its PD is classified, and during every retry of the domain:
+after a disconnection, an admin disable or a priority change. The retry
+then powers the PI just turned off again with the budget it freed, if it
+comes first in the domain, and allocates the budget of the PI again,
+from inside its own allocation, which turns the other PI off again, and
+so on. If the PI turned off comes after it, the retry powers the PI
+itself, from inside its own allocation, which can then allocate it a
+second time. On an admin enable, where the PI isn't waiting yet, the PI
+turned off is powered again right away, and the priorities never take
+effect.
+
+Make room without retrying the power domain:
+
+- Select the PIs to turn off before turning any off: only the enabled
+  PIs of lower priority that hold budget, from the lowest priority and,
+  at the same priority, from the last one, until their budget and the
+  unclaimed budget make room; then leave out those that aren't needed,
+  from the highest priority. If that can't make room, nothing is turned
+  off.
+- Turn them off and request the budget. If that fails, or enabling the
+  PI fails and leaves it off, give each PI turned off the budget it held
+  back and enable it again, without making room for it in turn.
+- Notify the PIs that stay off as over budget, once that is known.
+- After an admin enable or a classification that made room, retry the
+  power domain for the budget left over.
+
+Retry the PIs of a power domain from the highest priority, as
+ethtool-netlink.rst documents for the power-up order, so that a PI of
+lower priority doesn't take the budget that one of higher priority
+waits for, only to be turned off for it again. Events reported
+together are still handled one PI at a time, in the order of their
+index. This drops on purpose the cut-off that prio_max was meant for,
+and which never took effect, as it was reset for every PI: a PI of
+lower priority can still take budget that a PI of higher priority can't
+use, as that one can turn it off later.
+
+As before, only the PIs of the PSE controller of the PI are turned off
+and retried, also when its power domain is shared with another
+controller. Only the unclaimed budget of the domain's own supply is
+counted: if the request then fails at a supply it is supplied from, the
+PIs turned off get their budget back.
+
+Sashiko, the netdev AI review bot, pointed out in its review of v1 of
+"net: pse-pd: don't enable a PI again while disabling it" (the Link
+below) that leaving out the retry alone leaves PIs off for nothing. Not
+reproduced on hardware; build-tested only.
+
+Fixes: ffef61d6d273 ("net: pse-pd: Add support for budget evaluation strategies")
+Link: https://lore.kernel.org/netdev/179243532177.3135.6604862508015344848@kernel.org/

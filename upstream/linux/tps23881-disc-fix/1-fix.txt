@@ -1,0 +1,22 @@
+net: pse-pd: tps23881: report DC disconnections
+
+tps23881_irq_event_handler() reads the fault register into ret, then
+stores the result of tps23881_irq_event_over_current() in ret, and
+passes ret to tps23881_irq_event_disconnection() as the register value.
+ret is 0 by then, so the DC disconnect bits of the register are never
+looked at, although the interrupt mask enables their interrupt: a DC
+disconnect isn't reported to the PSE core. Over-current faults are not
+affected, as they are reported as an over-current and a disconnection.
+
+With software power control, a PI whose PD is unplugged then keeps its
+budget and its PD detected, and no disconnection is notified. Its port
+isn't disabled either, so detection and classification aren't enabled
+again for it, and a PD plugged in later isn't detected: as the commit
+this fixes explains, the TPS23881 stops them once it powers a port.
+
+Keep the register value in val for both.
+
+Found in code review, not on hardware; build-tested only, as I don't
+have a TPS23881.
+
+Fixes: 56cfc97635e9 ("net: pse-pd: tps23881: Add support for static port priority feature")

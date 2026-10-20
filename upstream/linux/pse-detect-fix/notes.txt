@@ -1,0 +1,13 @@
+A detection and a disconnection reported together now reach the check
+for a connection and a disconnection reported together, which drops
+both with an error. Handling them as a disconnection instead would free
+the budget of the PI whichever came first, as the TPS23881 detects and
+classifies a PD that is still there again once its port is disabled.
+Kory, would you prefer that, in this patch or a separate one?
+
+This should go in after "net: pse-pd: make room for a PI without
+recursing": the classifications it no longer drops can recurse until
+the stack overflows before that patch.
+
+I don't have a TPS23881 to test this on; a Tested-by from someone who
+has one would be welcome.

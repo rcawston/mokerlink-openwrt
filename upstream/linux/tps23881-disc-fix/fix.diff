@@ -1,0 +1,25 @@
+diff --git a/drivers/net/pse-pd/tps23881.c b/drivers/net/pse-pd/tps23881.c
+index 8a3bbd623412b013fd67f7903c3045a4ecd806c1..69370e9fa15bda3bb4943313861611519b582ec5 100644
+--- a/drivers/net/pse-pd/tps23881.c
++++ b/drivers/net/pse-pd/tps23881.c
+@@ -1313,15 +1313,15 @@ static int tps23881_irq_event_handler(struct tps23881_priv *priv, u16 reg,
+ 
+ 	if (reg & (TPS23881_REG_IT_IFAULT | TPS23881_REG_IT_IFAULT << 8 |
+ 		   TPS23881_REG_IT_DISF | TPS23881_REG_IT_DISF << 8)) {
+-		ret = i2c_smbus_read_word_data(client, TPS23881_REG_FAULT);
+-		if (ret < 0)
+-			return ret;
+-		ret = tps23881_irq_event_over_current(priv, ret, notifs,
++		val = i2c_smbus_read_word_data(client, TPS23881_REG_FAULT);
++		if (val < 0)
++			return val;
++		ret = tps23881_irq_event_over_current(priv, val, notifs,
+ 						      notifs_mask);
+ 		if (ret)
+ 			return ret;
+ 
+-		tps23881_irq_event_disconnection(priv, ret, notifs, notifs_mask);
++		tps23881_irq_event_disconnection(priv, val, notifs, notifs_mask);
+ 	}
+ 
+ 	if (reg & (TPS23881_REG_IT_DETC | TPS23881_REG_IT_DETC << 8 |

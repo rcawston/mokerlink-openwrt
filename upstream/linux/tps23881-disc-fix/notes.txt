@@ -1,0 +1,9 @@
+This should go in together with, or after, "net: pse-pd: don't enable
+a PI again while disabling it" and "net: pse-pd: make room for a PI
+without recursing": reporting DC disconnections makes every unplug
+retry the power domain. Without the first, the PSE core enables the
+empty port again and leaks its budget; without the second, the retry
+can recurse until the stack overflows.
+
+Kory, I don't have a TPS23881 to test this on; a Tested-by from someone
+who has one would be welcome.

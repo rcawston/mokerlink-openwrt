@@ -19,7 +19,8 @@ openwrt  adds one pull request's commits to TREE, an openwrt.git checkout,
 netifd   adds the board.json default for the pse option to TREE, a
          netifd.git checkout, and writes it to build/upstream/netifd
 linux    adds one series (pse, leds, pse-led-triggers, pse-fix,
-         pse-prio-fix, which applies on top of pse-fix, or pse-detect-fix) as
+         pse-prio-fix, which applies on top of pse-fix, pse-detect-fix or
+         tps23881-disc-fix) as
          commits to TREE, a Linux checkout of the subsystem tree it goes
          to, with MAINTAINERS entries, and writes it with a cover letter and
          the subject prefix of that tree to build/upstream/linux/SERIES.
@@ -41,7 +42,9 @@ Options:
   -v N, --reroll-count N    linux: version N of the series ([PATCH net v2]),
                             with the changes since the earlier versions from
                             upstream/linux/SERIES/changes.txt below the ---
-                            line (or in the cover letter)
+                            line (or in the cover letter). Notes for the
+                            reviewers in upstream/linux/SERIES/notes.txt go
+                            there in every version
 
 Commit messages live in upstream/; the drivers, bindings and patches are the
 ones this repository builds. Standard library only.
@@ -127,12 +130,25 @@ SERIES = {
         'prefix': 'PATCH net',
         'maintainers': None,
         'patches': [
-            ('1-fix.txt', [],
-             '836-net-pse-pd-make-the-static-budget-priorities-take-effect.patch', 'fix.diff'),
+            ('1-classify.txt', [],
+             '836-net-pse-pd-don-t-allocate-the-budget-of-a-powered-PI-again.patch',
+             'classify.diff'),
+            ('2-fix.txt', [],
+             '837-net-pse-pd-make-room-for-a-PI-without-recursing.patch', 'fix.diff'),
         ],
     },
-    # Not in this repository's build: the RTL8239 driver reports a
-    # detection on its own
+    # Fixes not in this repository's build, as they change nothing for the
+    # RTL8239: a TPS23881 driver fix, and one for a detection reported with
+    # another event, which the RTL8239 driver never does
+    'tps23881-disc-fix': {
+        'openwrt': None,
+        'list': 'netdev@vger.kernel.org',
+        'prefix': 'PATCH net',
+        'maintainers': None,
+        'patches': [
+            ('1-fix.txt', [], None, 'fix.diff'),
+        ],
+    },
     'pse-detect-fix': {
         'openwrt': None,
         'list': 'netdev@vger.kernel.org',
@@ -495,6 +511,11 @@ def cmd_linux(args):
         if not os.path.exists(path):
             die(f'-v {args.reroll_count} needs {path}')
         changes = read(path).strip('\n')
+    # Notes for the reviewers, such as a request for testing, go with the
+    # changes since earlier versions: outside the commit message
+    path = os.path.join(UPSTREAM, 'linux', args.series, 'notes.txt')
+    notes = read(path).strip('\n') if os.path.exists(path) else None
+    changes = '\n\n'.join(x for x in (notes, changes) if x) or None
     files = git(tree, *fmt).split()
     print('\n'.join(files))
     cover = os.path.join(UPSTREAM, 'linux', args.series, 'cover.txt')

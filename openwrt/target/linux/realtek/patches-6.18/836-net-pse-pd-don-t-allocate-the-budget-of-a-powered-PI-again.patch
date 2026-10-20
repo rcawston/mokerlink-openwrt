@@ -1,0 +1,49 @@
+From: Ross Cawston <ross@r-sc.ca>
+Subject: [PATCH] net: pse-pd: don't allocate the budget of a powered PI again
+
+With software power control, power is delivered to an admin enabled PI
+when its PD is classified and when its power domain is retried, whether
+the PI holds budget already or not. Then
+pse_pi_allocate_pw_budget_static_prio() requests its budget a second
+time and overwrites pw_allocated_mW, so the first allocation is never
+freed.
+
+The TPS23881 can report a classification for a PI that is powered:
+disabling a PI enables its detection and classification again, and a
+retry of the power domain can power the PI before the classification
+comes in. A retry also delivers power to a powered PI when reading its
+admin state fails, as pse_pi_is_admin_enable_pending() then takes it
+for waiting.
+
+Don't deliver power to a PI that holds budget and is enabled, or whose
+state can't be read. A PI that holds budget while it is off, as a power
+limit change on a waiting PI or a failed disable leaves it, has that
+budget freed and allocated again, instead of a second allocation.
+
+Build-tested only.
+
+Fixes: ffef61d6d273 ("net: pse-pd: Add support for budget evaluation strategies")
+---
+diff --git a/drivers/net/pse-pd/pse_core.c b/drivers/net/pse-pd/pse_core.c
+index 8b03520..0a58466 100644
+--- a/drivers/net/pse-pd/pse_core.c
++++ b/drivers/net/pse-pd/pse_core.c
+@@ -716,6 +716,18 @@ static int _pse_pi_delivery_power_sw_pw_ctrl(struct pse_controller_dev *pcdev,
+ 		return ret;
+ 	}
+ 
++	/* A PI that holds budget and is enabled, or whose state can't be
++	 * read, is powered: don't allocate its budget a second time. One that
++	 * holds budget while it is off, as a power limit change on a waiting
++	 * PI or a failed disable leaves it, gets its budget anew.
++	 */
++	if (pi->pw_allocated_mW) {
++		if (pse_pi_is_hw_enabled(pcdev, id))
++			return 0;
++
++		pse_pi_deallocate_pw_budget(pi);
++	}
++
+ 	ret = ops->pi_get_pw_req(pcdev, id);
+ 	if (ret < 0)
+ 		return ret;
