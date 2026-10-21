@@ -105,7 +105,9 @@ which took the link down and straight back up from the PHY state of the
 last poll (the PHYs are polled once a second), so every link loss was
 logged as down, up 14 ms later, and down again within a second.
 `patches/0003-*.patch` makes the driver let phylib read the PHY instead,
-which also reports a new link without waiting for the poll.
+which also reports a new link without waiting for the poll. OpenWrt main
+has it since `906c981d2c3b`; the patch stays until the pinned commit is
+past that.
 
 With that out of the way, a cable plugged in from a device that is
 already up gives one clean link-up: the PHY completes autonegotiation,
