@@ -10,10 +10,12 @@
 #   - the whole series builds and links, as a module, for MIPS and, compile
 #     tested, for x86_64, where pointers and DMA addresses are 64 bits
 #
-# Needs git, python3, perl, sparse, a MIPS cross compiler (Debian/Ubuntu:
-# gcc-mips-linux-gnu) and the kernel's build tools (gcc, make, bc, bison,
-# flex, libelf-dev, libssl-dev). The clone is cached in build/check/net-next,
-# the patches and the logs go to build/check/rtl930x-switch.
+# Needs git, python3, perl, sparse v0.6.5-rc1 or later (net-next hands it
+# __typeof_unqual__, which the 0.6.4 release can't parse), a MIPS cross
+# compiler (Debian/Ubuntu: gcc-mips-linux-gnu) and the kernel's build tools
+# (gcc, make, bc, bison, flex, libelf-dev, libssl-dev). The clone is cached
+# in build/check/net-next, the patches and the logs go to
+# build/check/rtl930x-switch.
 
 set -euo pipefail
 
@@ -34,6 +36,19 @@ mkdir -p "$CACHE"
 rm -rf "$OUT"
 mkdir -p "$LOGS"
 
+# An older sparse fails on every file of the driver, and so would hide
+# its warnings
+echo 'static int a; static __typeof_unqual__(a) b;' >"$OUT/sparse-probe.c"
+probe=$(sparse "$OUT/sparse-probe.c" 2>&1 || true)
+case $probe in
+*error:*)
+	echo "sparse $(sparse --version) can't parse __typeof_unqual__," \
+		"which net-next uses: v0.6.5-rc1 or later is needed" >&2
+	echo "$probe" >&2
+	exit 1
+	;;
+esac
+
 if [ -d "$NET/.git" ]; then
 	git -C "$NET" fetch -q --depth 1 origin main
 	git -C "$NET" checkout -q -f -B main FETCH_HEAD
@@ -50,9 +65,12 @@ python3 "$REPO_ROOT/scripts/make-upstream.py" linux "$NET" rtl930x-switch \
 
 fail=0
 
-# A warning or error the compiler or sparse reports in the driver
+# A warning or error the compiler or sparse reports in the driver, or an
+# error in any file: sparse goes on after one, but hasn't checked all of
+# the driver, and the build doesn't fail
 driver_warnings() { # log
-	grep -E "(^|/)($DRV|drivers/net/ethernet/realtek)/[^: ]+:[0-9]+:([0-9]+:)? (warning|error):" "$1" || true
+	grep -E "(^|/)($DRV|drivers/net/ethernet/realtek)/[^: ]+:[0-9]+:([0-9]+:)? (warning|error):|:[0-9]+:([0-9]+:)? error:" "$1" |
+		head -40 || true
 }
 
 echo "==> checkpatch --strict"

@@ -26,8 +26,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison flex libelf-dev libssl-dev \
-            gcc-mips-linux-gnu sparse python3-ply python3-git codespell \
+            gcc-mips-linux-gnu python3-ply python3-git codespell \
             pkg-config u-boot-tools device-tree-compiler cpio bzip2 xz-utils
+
+      # net-next hands __typeof_unqual__ to sparse (compiler_types.h), which
+      # the 0.6.4 release Ubuntu has can't parse
+      - name: Build sparse
+        env:
+          SPARSE_TAG: v0.6.5-rc1
+          SPARSE_COMMIT: 37156835e3d725b6d750f000be33ba3814bb2310
+        run: |
+          git clone -q --depth 1 --branch "$SPARSE_TAG" \
+            https://git.kernel.org/pub/scm/devel/sparse/sparse.git \
+            "$RUNNER_TEMP/sparse"
+          test "$(git -C "$RUNNER_TEMP/sparse" rev-parse HEAD)" = "$SPARSE_COMMIT"
+          make -C "$RUNNER_TEMP/sparse" -j"$(nproc)" PREFIX="$HOME/.local" install
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Apply, checkpatch and build the series
         run: scripts/check-rtl930x-switch.sh
