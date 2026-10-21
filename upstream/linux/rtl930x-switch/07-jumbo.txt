@@ -1,0 +1,10 @@
+net: ethernet: realtek: rtl9300: support jumbo frames
+
+The switch passes frames of up to 12288 bytes. Each port's MAC drops
+received frames longer than its limit, which counts two VLAN tags and
+the FCS, so set that limit from the MTU of the port, and allow MTUs up
+to what fits the 12288 bytes.
+
+The CPU port and the DMA engine already take frames of that length:
+its ring is sized for frames of the longest length, which span eight
+receive buffers.

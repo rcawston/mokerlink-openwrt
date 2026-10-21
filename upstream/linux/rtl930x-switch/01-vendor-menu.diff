@@ -1,0 +1,13 @@
+diff --git a/drivers/net/ethernet/realtek/Kconfig b/drivers/net/ethernet/realtek/Kconfig
+index 5818a9a500a..27554d56afd 100644
+--- a/drivers/net/ethernet/realtek/Kconfig
++++ b/drivers/net/ethernet/realtek/Kconfig
+@@ -6,7 +6,7 @@
+ config NET_VENDOR_REALTEK
+ 	bool "Realtek devices"
+ 	default y
+-	depends on PCI
++	depends on PCI || MACH_REALTEK_RTL || COMPILE_TEST
+ 	help
+ 	  If you have a network (Ethernet) card belonging to this class, say Y.
+ 

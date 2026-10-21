@@ -1,0 +1,385 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * MokerLink POE-10G07110GSM, for testing the RTL930x switch driver series on
+ * net-next. Test only, not for submission: the board DTS for mainline is a
+ * series of its own for the MIPS tree.
+ *
+ * Differences from the OpenWrt DTS of this repository:
+ *   - mainline's rtl930x.dtsi and its bindings: the switch node is the
+ *     syscon with the "switch" and "nic" interrupts, no ethernet node and
+ *     no CPU port, no SerDes, PCS or LED nodes
+ *   - the root compatible falls back to realtek,rtl9302-soc, the only one
+ *     mainline's board-realtek.c matches so far
+ *   - the RTL8264B PHYs are plain PHY nodes, not a PHY package
+ *   - every flash partition is read-only
+ *   - the PoE nodes and the PHYs' pses only with -DWITH_PSE, as the MDIO
+ *     bus waits for the PSE driver while a PHY has pses
+ *
+ * The SerDes, the PHYs and their lane polarity are as the vendor U-Boot
+ * leaves them after "rtk network on".
+ */
+
+/dts-v1/;
+
+#include "rtl930x.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/phy/phy.h>
+
+/ {
+	compatible = "mokerlink,poe-10g07110gsm", "realtek,rtl9302-soc";
+	model = "MokerLink POE-10G07110GSM";
+
+	memory@0 {
+		device_type = "memory";
+		reg = <0x0 0x8000000>;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	keys {
+		compatible = "gpio-keys";
+
+		button-reset {
+			label = "reset";
+			gpios = <&gpio0 5 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RESTART>;
+		};
+	};
+
+	sfp0: sfp-p8 {
+		compatible = "sff,sfp";
+		i2c-bus = <&i2c_sfp>;
+		mod-def0-gpios = <&gpio0 13 GPIO_ACTIVE_LOW>;
+		los-gpios = <&gpio0 12 GPIO_ACTIVE_HIGH>;
+		tx-disable-gpios = <&gpio0 14 GPIO_ACTIVE_HIGH>;
+		maximum-power-milliwatt = <2000>;
+	};
+
+	i2c_sfp: i2c-sfp {
+		compatible = "i2c-gpio";
+		sda-gpios = <&gpio0 11 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		scl-gpios = <&gpio0 8 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		i2c-gpio,delay-us = <5>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+	};
+
+#ifdef WITH_PSE
+	poe_supply: regulator-poe {
+		compatible = "regulator-fixed";
+		regulator-name = "poe";
+		regulator-min-microvolt = <54000000>;
+		regulator-max-microvolt = <54000000>;
+		regulator-always-on;
+		regulator-power-budget-milliwatt = <260000>;
+	};
+
+	i2c_poe: i2c-poe {
+		compatible = "i2c-gpio";
+		sda-gpios = <&gpio0 10 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		scl-gpios = <&gpio0 8 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		i2c-gpio,delay-us = <5>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		ethernet-pse@20 {
+			compatible = "realtek,rtl8239";
+			reg = <0x20>;
+
+			channels {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				pse_a_ch0: channel@0 { reg = <0>; };
+				pse_a_ch1: channel@1 { reg = <1>; };
+				pse_a_ch2: channel@2 { reg = <2>; };
+				pse_a_ch3: channel@3 { reg = <3>; };
+				pse_a_ch4: channel@4 { reg = <4>; };
+				pse_a_ch5: channel@5 { reg = <5>; };
+				pse_a_ch6: channel@6 { reg = <6>; };
+				pse_a_ch7: channel@7 { reg = <7>; };
+			};
+
+			pse-pis {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				pse_port4: pse-pi@0 {
+					reg = <0>;
+					#pse-cells = <0>;
+					pairset-names = "alternative-a", "alternative-b";
+					pairsets = <&pse_a_ch0>, <&pse_a_ch1>;
+					vpwr-supply = <&poe_supply>;
+				};
+
+				pse_port5: pse-pi@1 {
+					reg = <1>;
+					#pse-cells = <0>;
+					pairset-names = "alternative-a", "alternative-b";
+					pairsets = <&pse_a_ch2>, <&pse_a_ch3>;
+					vpwr-supply = <&poe_supply>;
+				};
+
+				pse_port6: pse-pi@2 {
+					reg = <2>;
+					#pse-cells = <0>;
+					pairset-names = "alternative-a", "alternative-b";
+					pairsets = <&pse_a_ch4>, <&pse_a_ch5>;
+					vpwr-supply = <&poe_supply>;
+				};
+
+				pse_port7: pse-pi@3 {
+					reg = <3>;
+					#pse-cells = <0>;
+					pairset-names = "alternative-a", "alternative-b";
+					pairsets = <&pse_a_ch6>, <&pse_a_ch7>;
+					vpwr-supply = <&poe_supply>;
+				};
+			};
+		};
+
+		ethernet-pse@22 {
+			compatible = "realtek,rtl8239";
+			reg = <0x22>;
+
+			channels {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				pse_b_ch0: channel@0 { reg = <0>; };
+				pse_b_ch1: channel@1 { reg = <1>; };
+				pse_b_ch2: channel@2 { reg = <2>; };
+				pse_b_ch3: channel@3 { reg = <3>; };
+				pse_b_ch4: channel@4 { reg = <4>; };
+				pse_b_ch5: channel@5 { reg = <5>; };
+			};
+
+			pse-pis {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				pse_port1: pse-pi@0 {
+					reg = <0>;
+					#pse-cells = <0>;
+					pairset-names = "alternative-a", "alternative-b";
+					pairsets = <&pse_b_ch0>, <&pse_b_ch1>;
+					vpwr-supply = <&poe_supply>;
+				};
+
+				pse_port2: pse-pi@1 {
+					reg = <1>;
+					#pse-cells = <0>;
+					pairset-names = "alternative-a", "alternative-b";
+					pairsets = <&pse_b_ch2>, <&pse_b_ch3>;
+					vpwr-supply = <&poe_supply>;
+				};
+
+				pse_port3: pse-pi@2 {
+					reg = <2>;
+					#pse-cells = <0>;
+					pairset-names = "alternative-a", "alternative-b";
+					pairsets = <&pse_b_ch4>, <&pse_b_ch5>;
+					vpwr-supply = <&poe_supply>;
+				};
+			};
+		};
+	};
+#endif
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&spi0 {
+	status = "okay";
+
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "u-boot";
+				reg = <0x0000000 0x00e0000>;
+				read-only;
+			};
+
+			partition@e0000 {
+				label = "u-boot-env";
+				reg = <0x00e0000 0x0010000>;
+				read-only;
+			};
+
+			partition@f0000 {
+				label = "u-boot-env2";
+				reg = <0x00f0000 0x0010000>;
+				read-only;
+			};
+
+			partition@100000 {
+				label = "jffs";
+				reg = <0x0100000 0x0100000>;
+				read-only;
+			};
+
+			partition@200000 {
+				label = "jffs2";
+				reg = <0x0200000 0x0100000>;
+				read-only;
+			};
+
+			partition@300000 {
+				label = "firmware";
+				reg = <0x0300000 0x0c00000>;
+				read-only;
+			};
+
+			partition@f00000 {
+				label = "oeminfo";
+				reg = <0x0f00000 0x0100000>;
+				read-only;
+			};
+		};
+	};
+};
+
+&mdio_controller {
+	status = "okay";
+};
+
+/* RTL8264B quad PHY: front ports 4-7 */
+&mdio0 {
+	status = "okay";
+
+	phy20: ethernet-phy@0 {
+		reg = <0>;
+		compatible = "ethernet-phy-ieee802.3-c45";
+		tx-polarity = <PHY_POL_INVERT>;
+	};
+
+	phy24: ethernet-phy@1 {
+		reg = <1>;
+		compatible = "ethernet-phy-ieee802.3-c45";
+		rx-polarity = <PHY_POL_INVERT>;
+	};
+
+	phy25: ethernet-phy@2 {
+		reg = <2>;
+		compatible = "ethernet-phy-ieee802.3-c45";
+		tx-polarity = <PHY_POL_INVERT>;
+	};
+
+	phy26: ethernet-phy@3 {
+		reg = <3>;
+		compatible = "ethernet-phy-ieee802.3-c45";
+		rx-polarity = <PHY_POL_INVERT>;
+	};
+};
+
+/* RTL8261BE PHYs: front ports 1-3 */
+&mdio1 {
+	status = "okay";
+
+	phy0: ethernet-phy@0 {
+		reg = <0>;
+		compatible = "ethernet-phy-ieee802.3-c45";
+	};
+};
+
+&mdio2 {
+	status = "okay";
+
+	phy8: ethernet-phy@0 {
+		reg = <0>;
+		compatible = "ethernet-phy-ieee802.3-c45";
+	};
+};
+
+&mdio3 {
+	status = "okay";
+
+	phy16: ethernet-phy@0 {
+		reg = <0>;
+		compatible = "ethernet-phy-ieee802.3-c45";
+	};
+};
+
+#ifdef WITH_PSE
+&phy0 { pses = <&pse_port1>; };
+&phy8 { pses = <&pse_port2>; };
+&phy16 { pses = <&pse_port3>; };
+&phy20 { pses = <&pse_port4>; };
+&phy24 { pses = <&pse_port5>; };
+&phy25 { pses = <&pse_port6>; };
+&phy26 { pses = <&pse_port7>; };
+#endif
+
+&switch0 {
+	compatible = "realtek,rtl9303-switch", "syscon", "simple-mfd";
+
+	ethernet-ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* Front ports 1-7: MAC ports 0, 8, 16, 20, 24, 25, 26 */
+		port@0 {
+			reg = <0>;
+			phy-handle = <&phy0>;
+			phy-mode = "usxgmii";
+		};
+
+		port@8 {
+			reg = <8>;
+			phy-handle = <&phy8>;
+			phy-mode = "usxgmii";
+		};
+
+		port@10 {
+			reg = <16>;
+			phy-handle = <&phy16>;
+			phy-mode = "usxgmii";
+		};
+
+		port@14 {
+			reg = <20>;
+			phy-handle = <&phy20>;
+			phy-mode = "usxgmii";
+		};
+
+		port@18 {
+			reg = <24>;
+			phy-handle = <&phy24>;
+			phy-mode = "usxgmii";
+		};
+
+		port@19 {
+			reg = <25>;
+			phy-handle = <&phy25>;
+			phy-mode = "usxgmii";
+		};
+
+		port@1a {
+			reg = <26>;
+			phy-handle = <&phy26>;
+			phy-mode = "usxgmii";
+		};
+
+		/* Front port 8, the SFP+ cage: skipped until the PCS series */
+		port@1b {
+			reg = <27>;
+			phy-mode = "10gbase-r";
+			sfp = <&sfp0>;
+			managed = "in-band-status";
+		};
+	};
+};

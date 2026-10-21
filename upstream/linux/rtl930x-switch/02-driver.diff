@@ -1,0 +1,247 @@
+diff --git a/drivers/net/ethernet/realtek/Kconfig b/drivers/net/ethernet/realtek/Kconfig
+index 27554d56afd..2bf50907f25 100644
+--- a/drivers/net/ethernet/realtek/Kconfig
++++ b/drivers/net/ethernet/realtek/Kconfig
+@@ -126,4 +126,6 @@ config RTASE
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called rtase. This is recommended.
+ 
++source "drivers/net/ethernet/realtek/rtl9300/Kconfig"
++
+ endif # NET_VENDOR_REALTEK
+diff --git a/drivers/net/ethernet/realtek/Makefile b/drivers/net/ethernet/realtek/Makefile
+index 12a9c399f40..e5259969a05 100644
+--- a/drivers/net/ethernet/realtek/Makefile
++++ b/drivers/net/ethernet/realtek/Makefile
+@@ -9,3 +9,4 @@ r8169-y += r8169_main.o r8169_firmware.o r8169_phy_config.o
+ r8169-$(CONFIG_R8169_LEDS) += r8169_leds.o
+ obj-$(CONFIG_R8169) += r8169.o
+ obj-$(CONFIG_RTASE) += rtase/
++obj-$(CONFIG_RTL9300_SWITCH) += rtl9300/
+diff --git a/drivers/net/ethernet/realtek/rtl9300/Kconfig b/drivers/net/ethernet/realtek/rtl9300/Kconfig
+new file mode 100644
+index 00000000000..f4486dae278
+--- /dev/null
++++ b/drivers/net/ethernet/realtek/rtl9300/Kconfig
+@@ -0,0 +1,14 @@
++# SPDX-License-Identifier: GPL-2.0-only
++config RTL9300_SWITCH
++	tristate "Realtek RTL930x switch support"
++	depends on MACH_REALTEK_RTL || COMPILE_TEST
++	depends on OF
++	select MFD_SYSCON
++	help
++	  This driver supports the Ethernet switch built into the Realtek
++	  RTL9301, RTL9302B, RTL9302C and RTL9303 SoCs. Each switch port is
++	  a network interface of its own, and the CPU reaches the ports
++	  through the DMA engine of the switch.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called rtl9300-switch.
+diff --git a/drivers/net/ethernet/realtek/rtl9300/Makefile b/drivers/net/ethernet/realtek/rtl9300/Makefile
+new file mode 100644
+index 00000000000..299492fbfe5
+--- /dev/null
++++ b/drivers/net/ethernet/realtek/rtl9300/Makefile
+@@ -0,0 +1,8 @@
++# SPDX-License-Identifier: GPL-2.0-only
++#
++# Makefile for the Realtek RTL930x switch driver
++#
++
++obj-$(CONFIG_RTL9300_SWITCH) += rtl9300-switch.o
++
++rtl9300-switch-y := rtl9300_main.o
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
+new file mode 100644
+index 00000000000..352d8b13ce6
+--- /dev/null
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
+@@ -0,0 +1,29 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Realtek RTL930x switch
++ *
++ * Copyright (C) 2026 Ross Cawston <ross@r-sc.ca>
++ */
++
++#ifndef _RTL9300_H_
++#define _RTL9300_H_
++
++#include <linux/regmap.h>
++#include <linux/types.h>
++
++/* Front ports 0-27, and the port the DMA engine of the switch sits on */
++#define RTL9300_NUM_PORTS		28
++#define RTL9300_CPU_PORT		28
++
++struct rtl9300_info {
++	const char *name;
++	u16 model;
++};
++
++struct rtl9300_sw {
++	struct device *dev;
++	struct regmap *map;
++	const struct rtl9300_info *info;
++};
++
++#endif /* _RTL9300_H_ */
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
+new file mode 100644
+index 00000000000..b3918ae24bd
+--- /dev/null
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
+@@ -0,0 +1,127 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Realtek RTL930x switch driver
++ *
++ * The RTL9301, RTL9302B, RTL9302C and RTL9303 are MIPS SoCs built around an
++ * Ethernet switch with up to 28 ports. The switch is one register block,
++ * shared with the MDIO, I2C and reset drivers through a syscon, and it
++ * reaches the CPU through a DMA engine of its own on port 28, which this
++ * driver runs. Every front port described in the device tree becomes a
++ * network interface.
++ *
++ * Realtek publishes no datasheet. The register layout and the order of the
++ * setup follow the OpenWrt realtek target (drivers/net/ethernet/realtek and
++ * drivers/net/dsa/rtl83xx there), by Birger Koblitz, Markus Stockhausen and
++ * other contributors.
++ *
++ * Copyright (C) 2026 Ross Cawston <ross@r-sc.ca>
++ */
++
++#include <linux/bitfield.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++
++#include "rtl9300.h"
++#include "rtl9300_regs.h"
++
++static int rtl9300_check_model(struct rtl9300_sw *sw)
++{
++	u32 val, model, letter;
++	int err;
++
++	err = regmap_read(sw->map, RTL9300_MODEL_NAME_INFO, &val);
++	if (err)
++		return err;
++
++	model = FIELD_GET(RTL9300_MODEL_NAME_ID, val);
++	letter = FIELD_GET(RTL9300_MODEL_NAME_LETTER, val);
++
++	/* The model register is read only to say which chip this is; the
++	 * compatible decides, so a mismatch is only reported
++	 */
++	if (model != sw->info->model)
++		dev_warn(sw->dev,
++			 "%s compatible, but the chip reports RTL%04x\n",
++			 sw->info->name, model);
++
++	if (letter && letter <= 26)
++		dev_info(sw->dev, "RTL%04x%c\n", model, 'A' + letter - 1);
++	else
++		dev_info(sw->dev, "RTL%04x\n", model);
++
++	return 0;
++}
++
++static int rtl9300_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct rtl9300_sw *sw;
++	int err;
++
++	sw = devm_kzalloc(dev, sizeof(*sw), GFP_KERNEL);
++	if (!sw)
++		return -ENOMEM;
++
++	sw->dev = dev;
++	sw->info = of_device_get_match_data(dev);
++
++	/* The switch node is the syscon whose regmap the child nodes use */
++	sw->map = syscon_node_to_regmap(dev->of_node);
++	if (IS_ERR(sw->map))
++		return dev_err_probe(dev, PTR_ERR(sw->map),
++				     "no switch register map\n");
++
++	err = rtl9300_check_model(sw);
++	if (err)
++		return dev_err_probe(dev, err,
++				     "failed to read the chip model\n");
++
++	platform_set_drvdata(pdev, sw);
++
++	return 0;
++}
++
++static const struct rtl9300_info rtl9301_info = {
++	.name = "RTL9301",
++	.model = 0x9301,
++};
++
++static const struct rtl9300_info rtl9302b_info = {
++	.name = "RTL9302B",
++	.model = 0x9302,
++};
++
++static const struct rtl9300_info rtl9302c_info = {
++	.name = "RTL9302C",
++	.model = 0x9302,
++};
++
++static const struct rtl9300_info rtl9303_info = {
++	.name = "RTL9303",
++	.model = 0x9303,
++};
++
++static const struct of_device_id rtl9300_of_match[] = {
++	{ .compatible = "realtek,rtl9301-switch", .data = &rtl9301_info },
++	{ .compatible = "realtek,rtl9302b-switch", .data = &rtl9302b_info },
++	{ .compatible = "realtek,rtl9302c-switch", .data = &rtl9302c_info },
++	{ .compatible = "realtek,rtl9303-switch", .data = &rtl9303_info },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, rtl9300_of_match);
++
++static struct platform_driver rtl9300_driver = {
++	.probe = rtl9300_probe,
++	.driver = {
++		.name = "rtl9300-switch",
++		.of_match_table = rtl9300_of_match,
++	},
++};
++module_platform_driver(rtl9300_driver);
++
++MODULE_AUTHOR("Ross Cawston <ross@r-sc.ca>");
++MODULE_DESCRIPTION("Realtek RTL930x switch driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
+new file mode 100644
+index 00000000000..28996ed733c
+--- /dev/null
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
+@@ -0,0 +1,19 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Registers of the Realtek RTL930x switch, as offsets into the switch block.
++ *
++ * Realtek publishes no datasheet for these SoCs. The names, offsets and
++ * fields follow the OpenWrt realtek target, which took them from the vendor
++ * SDK and from tests on hardware.
++ */
++
++#ifndef _RTL9300_REGS_H_
++#define _RTL9300_REGS_H_
++
++#include <linux/bits.h>
++
++#define RTL9300_MODEL_NAME_INFO			0x0004
++#define   RTL9300_MODEL_NAME_ID			GENMASK(31, 16)
++#define   RTL9300_MODEL_NAME_LETTER		GENMASK(15, 11)
++
++#endif /* _RTL9300_REGS_H_ */

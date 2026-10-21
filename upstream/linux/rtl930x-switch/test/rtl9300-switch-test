@@ -1,0 +1,295 @@
+#!/bin/sh
+# rtl9300-switch-test [-o REPORT] [PORT]
+#
+# Guided hardware test of the RTL930x switch driver series (CPU NIC and
+# standalone ports) on the MokerLink POE-10G07110GSM, booted from RAM with
+# the test image. Every step prints PASS, FAIL or SKIP and goes into the
+# report (default /tmp/rtl9300-switch-test.txt), which ends with a summary
+# to paste into the cover letter.
+#
+#   1. probe: the driver bound, lan1-lan7 exist, lan8 (SFP) is skipped,
+#      and the kernel log has no warning, lockdep or DMA-API report
+#   2. PHYs attached with every port down, and ethtool's PSE lookup finds
+#      the PHY ("No PSE", not "No PHY") while the port is down
+#   3. per port: link with the host at the speeds the host can do
+#   4. traffic on PORT (default lan1): ping, iperf3 both ways, statistics
+#   5. VLAN-tagged frames through PORT, both ways
+#   6. jumbo frames: MTU 9000 on PORT, the host pings with 8972 bytes and DF
+#   7. isolation: frames from one port reach no other port
+#   8. 100 link down/up cycles on PORT under traffic
+#   9. unbind and bind the driver
+#
+# The host: a Linux machine with a NIC at 192.168.<N>.2/24 for the port
+# under test, where N is the front port number (lan1: 192.168.1.2), and
+# "iperf3 -s" running. The switch side gets 192.168.<N>.1.
+
+OUT=/tmp/rtl9300-switch-test.txt
+if [ "$1" = -o ]; then
+	OUT=$2
+	shift 2
+fi
+case $1 in
+-h | --help)
+	sed -n '2,/^$/s/^# \{0,1\}//p' "$0"
+	exit 0
+	;;
+esac
+PORT=${1:-lan1}
+DRIVER=/sys/bus/platform/drivers/rtl9300-switch
+PASS=0
+FAIL=0
+SKIP=0
+: >"$OUT"
+
+say() { echo "$*" | tee -a "$OUT"; }
+section() { printf '\n========== %s ==========\n' "$*" | tee -a "$OUT"; }
+run() { printf '$ %s\n' "$*" >>"$OUT"; "$@" >>"$OUT" 2>&1; }
+pass() { PASS=$((PASS + 1)); say "PASS: $*"; }
+fail() { FAIL=$((FAIL + 1)); say "FAIL: $*"; }
+skip() { SKIP=$((SKIP + 1)); say "SKIP: $*"; }
+ask() { # prompt; Enter goes on, s + Enter skips (returns 1)
+	printf '\n>>> %s\n    Enter when done, s + Enter to skip: ' "$*"
+	read -r a </dev/tty
+	echo ">>> $* [${a:-done}]" >>"$OUT"
+	[ "$a" != s ]
+}
+yes_no() { # question; returns 0 for y
+	printf '\n??? %s [y/n]: ' "$*"
+	read -r a </dev/tty
+	echo "??? $* [$a]" >>"$OUT"
+	[ "$a" = y ]
+}
+
+num() { echo "${1#lan}"; }
+carrier() { [ "$(cat "/sys/class/net/$1/carrier" 2>/dev/null)" = 1 ]; }
+wait_carrier() { # port seconds
+	i=0
+	while [ $i -lt "$2" ]; do
+		carrier "$1" && return 0
+		sleep 1
+		i=$((i + 1))
+	done
+	return 1
+}
+log_problems() { # kernel log lines since the mark that need a look
+	dmesg | sed -n "/rtl9300-switch-test mark $1/,\$p" |
+		grep -E 'WARNING|BUG|lockdep|possible circular|DMA-API|Oops|MAC reports|timed out|stuck'
+}
+mark() { echo "rtl9300-switch-test mark $1" >/dev/kmsg; }
+nic_irqs() { # interrupts of the switch's handler, all CPUs
+	awk '/1b000000\.switch/ {
+		for (i = 2; i <= NF && $i ~ /^[0-9]+$/; i++)
+			s += $i
+	} END { print s + 0 }' /proc/interrupts
+}
+addr() { # port: the switch side address
+	ip addr flush dev "$1"
+	ip addr add "192.168.$(num "$1").1/24" dev "$1"
+}
+
+section "1. probe"
+run uname -a
+run cat /proc/cmdline
+dmesg >>"$OUT"
+if [ -e "$DRIVER/1b000000.switch" ]; then
+	pass "rtl9300-switch is bound to 1b000000.switch"
+else
+	fail "rtl9300-switch is not bound"
+fi
+ports=0
+for n in 1 2 3 4 5 6 7; do
+	[ -d "/sys/class/net/lan$n" ] && ports=$((ports + 1))
+done
+if [ $ports -eq 7 ]; then
+	pass "lan1-lan7 exist"
+else
+	fail "$ports of lan1-lan7 exist"
+	run ls -l /sys/class/net
+fi
+if [ ! -e /sys/class/net/lan8 ] && dmesg | grep -q 'port 27: no PHY, not supported yet'; then
+	pass "the SFP port is skipped, with the message"
+else
+	fail "the SFP port is not skipped as expected"
+fi
+if dmesg | grep -E 'WARNING|BUG|lockdep|possible circular|DMA-API|Oops' >>"$OUT"; then
+	fail "the kernel log has warnings (in the report)"
+else
+	pass "no warning, lockdep or DMA-API report"
+fi
+
+section "2. PHYs and PSE with the ports down"
+# The PHYs are attached before the interfaces are registered, so there are
+# no phydev links in sysfs (as with DSA); phylink logs each attach instead
+attached=$(dmesg | grep -c 'PHY \[.*\] driver \[')
+dmesg | grep 'PHY \[.*\] driver \[' >>"$OUT"
+if [ "$attached" -eq 7 ]; then
+	pass "7 PHYs attached; drivers: $(dmesg | sed -n 's/.*PHY \[.*\] driver \[\([^]]*\)\].*/\1/p' | sort | uniq -c | tr -s ' \n' ' ')"
+else
+	fail "$attached PHYs attached instead of 7"
+fi
+for n in 1 2 3 4 5 6 7; do
+	p=lan$n
+	[ -d "/sys/class/net/$p" ] || continue
+	ip link set "$p" down
+	pse=$(ethtool --show-pse "$p" 2>&1)
+	echo "$pse" >>"$OUT"
+	case $pse in
+	*"No PHY"*) fail "$p down: ethtool finds no PHY for PSE" ;;
+	*"No PSE"* | *"PSE attributes"*) pass "$p down: ethtool finds the PHY for PSE" ;;
+	*) fail "$p down: unexpected ethtool --show-pse output" ;;
+	esac
+done
+# With every port down nothing arrives or leaves, so the DMA engine has to
+# be quiet; a storm would mean an interrupt bit is a level, not an event
+before=$(nic_irqs)
+sleep 5
+idle=$(($(nic_irqs) - before))
+if [ "$idle" -lt 50 ]; then
+	pass "$idle DMA engine interrupts in 5 s with every port down"
+else
+	fail "$idle DMA engine interrupts in 5 s with every port down: a storm"
+fi
+
+section "3. link per port"
+for n in 1 2 3 4 5 6 7; do
+	p=lan$n
+	[ -d "/sys/class/net/$p" ] || continue
+	ask "Connect the host to front port $n ($p)" || { skip "$p link"; continue; }
+	mark "link-$p"
+	ip link set "$p" up
+	if wait_carrier "$p" 10; then
+		speed=$(cat "/sys/class/net/$p/speed")
+		pass "$p links at $speed Mb/s"
+		run ethtool "$p"
+	else
+		fail "$p has no link within 10 s"
+		run ethtool "$p"
+	fi
+	if yes_no "Test other speeds on $p (set them on the host with ethtool -s)?"; then
+		for s in 5000 2500 1000 100; do
+			ask "Set the host to $s Mb/s" || continue
+			sleep 3
+			wait_carrier "$p" 10
+			got=$(cat "/sys/class/net/$p/speed" 2>/dev/null)
+			if [ "$got" = "$s" ]; then
+				pass "$p links at $s Mb/s"
+			else
+				fail "$p: ${got:-no link} instead of $s Mb/s"
+			fi
+		done
+	fi
+	log_problems "link-$p" >>"$OUT" && fail "$p: kernel log problems (in the report)"
+	ip link set "$p" down
+done
+
+section "4. traffic on $PORT"
+if ask "Connect the host to $PORT at 192.168.$(num "$PORT").2/24 with iperf3 -s running"; then
+	mark traffic
+	ip link set "$PORT" up
+	wait_carrier "$PORT" 10
+	addr "$PORT"
+	host=192.168.$(num "$PORT").2
+	if run ping -c 20 -i 0.2 "$host"; then pass "ping"; else fail "ping"; fi
+	if run iperf3 -c "$host" -t 20; then pass "iperf3 TCP, switch to host"; else fail "iperf3 TCP, switch to host"; fi
+	if run iperf3 -c "$host" -t 20 -R; then pass "iperf3 TCP, host to switch"; else fail "iperf3 TCP, host to switch"; fi
+	# Sending UDP receives next to nothing, so the DMA engine's interrupts
+	# during it are TX done interrupts; without them the TX timer carries TX
+	before=$(nic_irqs)
+	if run iperf3 -c "$host" -t 20 -u -b 2G; then pass "iperf3 UDP, switch to host"; else fail "iperf3 UDP, switch to host"; fi
+	after=$(nic_irqs)
+	say "DMA engine interrupts while sending UDP: $((after - before)) (next to none means no TX done interrupt)"
+	run grep -r . "/sys/class/net/$PORT/statistics/"
+	if run ethtool -S "$PORT" --all-groups; then pass "ethtool standard statistics"; else fail "ethtool standard statistics"; fi
+	yes_no "Do the host's counters roughly match (ip -s link on both)?" &&
+		pass "counters match the host's" || fail "counters do not match the host's"
+	log_problems traffic >>"$OUT" && fail "traffic: kernel log problems (in the report)"
+else
+	skip "traffic"
+fi
+
+section "5. VLAN-tagged frames on $PORT"
+if ask "On the host: ip link add link <nic> name <nic>.100 type vlan id 100; ip addr add 192.168.100.2/24 dev <nic>.100; ip link set <nic>.100 up"; then
+	ip link add link "$PORT" name "$PORT.100" type vlan id 100
+	ip addr add 192.168.100.1/24 dev "$PORT.100"
+	ip link set "$PORT.100" up
+	if run ping -c 10 192.168.100.2; then pass "ping over VLAN 100"; else fail "ping over VLAN 100"; fi
+	yes_no "Does tcpdump -e on the host show the frames from the switch with tag 100, and untagged ones without a tag?" &&
+		pass "tags pass unchanged" || fail "tags change on the way"
+	ip link del "$PORT.100"
+else
+	skip "VLAN"
+fi
+
+section "6. jumbo frames on $PORT"
+if ask "Set the host NIC to MTU 9000"; then
+	if ip link set "$PORT" mtu 9000; then
+		pass "MTU 9000 accepted"
+		ask "On the host: ping -M do -s 8972 -c 10 192.168.$(num "$PORT").1" &&
+			{ yes_no "Did all 10 replies arrive?" && pass "8972-byte ping with DF" ||
+				fail "8972-byte ping with DF"; }
+		run ip link set "$PORT" mtu 12262 && pass "the largest MTU, 12262, is accepted" ||
+			fail "MTU 12262 refused"
+	else
+		fail "MTU 9000 refused"
+	fi
+	ip link set "$PORT" mtu 1500
+else
+	skip "jumbo frames"
+fi
+
+section "7. isolation"
+if ask "Connect a second device to another port, up and with an address in the host's subnet; note its address"; then
+	printf '    its address: '
+	read -r other </dev/tty
+	ask "On the host: ping -c 5 $other, and arping -c 5 -I <nic> $other" &&
+		{ yes_no "Did both get no answer?" && pass "no frames between ports" ||
+			fail "frames pass between ports"; }
+else
+	skip "isolation"
+fi
+
+section "8. 100 down/up cycles on $PORT"
+if ask "Leave the host on $PORT with iperf3 -s running"; then
+	mark cycles
+	before=$(awk '/MemAvailable/ { print $2 }' /proc/meminfo)
+	host=192.168.$(num "$PORT").2
+	iperf3 -c "$host" -t 600 >/dev/null 2>&1 &
+	traffic=$!
+	ok=0
+	i=0
+	while [ $i -lt 100 ]; do
+		ip link set "$PORT" down
+		ip link set "$PORT" up
+		wait_carrier "$PORT" 15 && ok=$((ok + 1))
+		i=$((i + 1))
+	done
+	kill $traffic 2>/dev/null
+	addr "$PORT"
+	if [ $ok -eq 100 ]; then pass "100 of 100 cycles came back up"; else fail "$ok of 100 cycles came back up"; fi
+	if run ping -c 5 "$host"; then pass "traffic after the cycles"; else fail "traffic after the cycles"; fi
+	after=$(awk '/MemAvailable/ { print $2 }' /proc/meminfo)
+	say "MemAvailable $before kB before, $after kB after"
+	log_problems cycles >>"$OUT" && fail "cycles: kernel log problems (in the report)"
+else
+	skip "down/up cycles"
+fi
+
+section "9. unbind and bind"
+mark unbind
+if echo 1b000000.switch >"$DRIVER/unbind" 2>>"$OUT"; then
+	[ -e /sys/class/net/lan1 ] && fail "lan1 still exists after unbind" || pass "unbind removes the ports"
+	if echo 1b000000.switch >"$DRIVER/bind" 2>>"$OUT"; then
+		sleep 2
+		n=$(ls -d /sys/class/net/eth* 2>/dev/null | wc -l)
+		[ "$n" -eq 7 ] && pass "bind brings 7 ports back" || fail "bind brings $n ports back"
+	else
+		fail "bind"
+	fi
+else
+	fail "unbind"
+fi
+log_problems unbind >>"$OUT" && fail "unbind/bind: kernel log problems (in the report)"
+
+section "summary"
+say "PASS $PASS, FAIL $FAIL, SKIP $SKIP"
+say "Report: $OUT"

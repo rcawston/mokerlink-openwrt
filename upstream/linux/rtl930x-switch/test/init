@@ -1,0 +1,36 @@
+#!/bin/busybox sh
+# Init of the RTL930x switch driver test image: mounts what the tests need,
+# names the switch ports after the front panel and starts a shell.
+
+/bin/busybox --install -s
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mount -t tmpfs tmpfs /tmp
+
+# The driver names no interface; its devlink ports give each one a
+# physical port name, p<MAC port>. Front ports 1-8 are MAC ports 0, 8, 16,
+# 20, 24, 25, 26 and 27 on the MokerLink POE-10G07110GSM.
+for dev in /sys/class/net/*; do
+	name=$(cat "$dev/phys_port_name" 2>/dev/null) || continue
+	case $name in
+	p0) lan=lan1 ;;
+	p8) lan=lan2 ;;
+	p16) lan=lan3 ;;
+	p20) lan=lan4 ;;
+	p24) lan=lan5 ;;
+	p25) lan=lan6 ;;
+	p26) lan=lan7 ;;
+	p27) lan=lan8 ;;
+	*) continue ;;
+	esac
+	ip link set dev "${dev##*/}" name "$lan"
+done
+
+ip link set lo up
+
+echo
+echo "RTL930x switch driver test image. Run: rtl9300-switch-test -h"
+echo
+
+exec setsid cttyhack /bin/sh -l

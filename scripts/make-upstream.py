@@ -18,12 +18,13 @@ openwrt  adds one pull request's commits to TREE, an openwrt.git checkout,
                   --link, the patch links to its submission to netdev
 netifd   adds the board.json default for the pse option to TREE, a
          netifd.git checkout, and writes it to build/upstream/netifd
-linux    adds one series (pse, leds, pse-led-triggers or pse-fix) as
-         commits to TREE, a Linux checkout of the subsystem tree it goes
-         to, with MAINTAINERS entries, and writes it with a cover letter and
-         the subject prefix of that tree to build/upstream/linux/SERIES.
-         The Kconfig and Makefile hunks are made against v6.18, the PSE
-         core fix against mainline; they are applied with a three-way
+linux    adds one series (pse, leds, pse-led-triggers, pse-fix or
+         rtl930x-switch) as commits to TREE, a Linux checkout of the
+         subsystem tree it goes to, with MAINTAINERS entries, and writes it
+         with a cover letter and the subject prefix of that tree to
+         build/upstream/linux/SERIES. The Kconfig and Makefile hunks are
+         made against v6.18, the PSE core fix against mainline and the
+         switch driver against net-next; they are applied with a three-way
          merge. Earlier patches in that directory are removed first.
 patches  writes the kernel patches as OpenWrt carries them (OpenWrt's
          kernel context) to DIR, for review; no tree needed.
@@ -70,6 +71,7 @@ PSE_YAML = 'Documentation/devicetree/bindings/net/pse-pd/realtek,rtl8239.yaml'
 PSE_C = 'drivers/net/pse-pd/realtek-rtl8239.c'
 LEDS_YAML = 'Documentation/devicetree/bindings/leds/realtek,rtl9301-port-leds.yaml'
 LEDS_C = 'drivers/leds/leds-rtl9300-port.c'
+RTL9300_DIR = 'drivers/net/ethernet/realtek/rtl9300/'
 
 # Each patch: commit message file, new files, hunk files (OpenWrt context,
 # Linux context with blob ids). An OpenWrt number and kmod per series, and
@@ -106,6 +108,21 @@ SERIES = {
         'patches': [
             ('1-binding.txt', [],
              '834-dt-bindings-leds-common-add-PSE-power-interface-triggers.patch', 'common.diff'),
+        ],
+    },
+    # The RTL930x switch driver, a series for net-next only. Its patches
+    # change the files earlier ones add, so each is a diff of its own,
+    # made against net-next; the MAINTAINERS entry comes with the first
+    # one that adds a .c file
+    'rtl930x-switch': {
+        'openwrt': None,
+        'list': 'netdev@vger.kernel.org',
+        'prefix': 'PATCH net-next',
+        'maintainers': ('REALTEK RTL9300 SWITCH DRIVER', [RTL9300_DIR]),
+        'patches': [
+            (f'{name}.txt', [], None, f'{name}.diff') for name in (
+                '01-vendor-menu', '02-driver', '03-standalone', '04-dma-rx',
+                '05-tx', '06-ports', '07-jumbo', '08-stats', '09-devlink')
         ],
     },
     # A fix for the net tree; in OpenWrt a generic pending patch
@@ -262,6 +279,9 @@ def cmd_patches(args):
     for series, s in SERIES.items():
         n = len(s['patches'])
         for i in range(n):
+            _, files, hookpatch, _ = s['patches'][i]
+            if not files and not hookpatch:
+                continue    # not a patch OpenWrt carries
             subject, text = openwrt_patch_text(args, series, i, n)
             name = f'{series}-{i + 1:02d}-{slug(subject)}.patch'
             write(os.path.join(out, name), text)
@@ -434,19 +454,24 @@ def cmd_linux(args):
     check_clean(tree)
     s = SERIES[args.series]
     base = git(tree, 'rev-parse', 'HEAD').strip()
+    maintainers_added = False
     for i, (msgfile, files, _, hooks) in enumerate(s['patches']):
         paths = []
+        new_c = False
         for p in files:
             write(os.path.join(tree, p), read(os.path.join(FILES, p)))
             paths.append(p)
+            new_c |= p.endswith('.c')
         if hooks:
             diff = read(os.path.join(UPSTREAM, 'linux', args.series, hooks))
             git(tree, 'apply', '--3way', '-', input=diff)
             paths += re.findall(r'^\+\+\+ b/(\S+)', diff, re.M)
-        if s['maintainers'] and files and any(p.endswith('.c') for p in files):
+            new_c |= bool(re.search(r'^--- /dev/null\n\+\+\+ b/\S+\.c$', diff, re.M))
+        if s['maintainers'] and new_c and not maintainers_added:
             title, mfiles = s['maintainers']
             add_maintainers(tree, args, title, mfiles, s['list'])
             paths.append('MAINTAINERS')
+            maintainers_added = True
         subject, body = message(os.path.join(UPSTREAM, 'linux', args.series, msgfile))
         commit(tree, args, subject, body, paths)
 

@@ -1,0 +1,53 @@
+name: rtl930x-switch
+
+# The RTL930x switch driver series for netdev, built on the tip of net-next,
+# and a RAM-boot test image of it for the MokerLink POE-10G07110GSM
+on:
+  push:
+    paths:
+      - 'upstream/linux/rtl930x-switch/**'
+      - 'scripts/check-rtl930x-switch.sh'
+      - 'scripts/build-rtl930x-test-image.sh'
+      - 'scripts/make-upstream.py'
+      - '.github/workflows/rtl930x-switch.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libelf-dev libssl-dev \
+            gcc-mips-linux-gnu sparse python3-ply python3-git codespell \
+            pkg-config u-boot-tools device-tree-compiler cpio bzip2 xz-utils
+
+      - name: Apply, checkpatch and build the series
+        run: scripts/check-rtl930x-switch.sh
+
+      - name: Build the test image
+        run: scripts/build-rtl930x-test-image.sh
+
+      - name: Upload the patches and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rtl930x-switch-${{ github.sha }}
+          path: |
+            build/check/rtl930x-switch/patches/
+            build/check/rtl930x-switch/logs/
+          if-no-files-found: ignore
+
+      - name: Upload the test image
+        uses: actions/upload-artifact@v4
+        with:
+          name: rtl930x-switch-test-image-${{ github.sha }}
+          path: build/check/rtl930x-switch/image/
+          if-no-files-found: error

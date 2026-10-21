@@ -1,0 +1,1030 @@
+diff --git a/drivers/net/ethernet/realtek/rtl9300/Kconfig b/drivers/net/ethernet/realtek/rtl9300/Kconfig
+index e5b9bc093cf..9ea36e5e2bc 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/Kconfig
++++ b/drivers/net/ethernet/realtek/rtl9300/Kconfig
+@@ -5,6 +5,7 @@ config RTL9300_SWITCH
+ 	depends on OF
+ 	select MFD_SYSCON
+ 	select PAGE_POOL
++	select PHYLINK
+ 	help
+ 	  This driver supports the Ethernet switch built into the Realtek
+ 	  RTL9301, RTL9302B, RTL9302C and RTL9303 SoCs. Each switch port is
+diff --git a/drivers/net/ethernet/realtek/rtl9300/Makefile b/drivers/net/ethernet/realtek/rtl9300/Makefile
+index 4087c6daece..81817857706 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/Makefile
++++ b/drivers/net/ethernet/realtek/rtl9300/Makefile
+@@ -5,4 +5,4 @@
+ 
+ obj-$(CONFIG_RTL9300_SWITCH) += rtl9300-switch.o
+ 
+-rtl9300-switch-y := rtl9300_main.o rtl9300_nic.o
++rtl9300-switch-y := rtl9300_main.o rtl9300_nic.o rtl9300_port.o
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
+index 03eb06181b7..8e3ed3ee582 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
+@@ -11,6 +11,7 @@
+ #include <linux/bits.h>
+ #include <linux/mutex.h>
+ #include <linux/netdevice.h>
++#include <linux/phylink.h>
+ #include <linux/regmap.h>
+ #include <linux/spinlock.h>
+ #include <linux/timer.h>
+@@ -30,6 +31,7 @@
+ 
+ struct page_pool;
+ struct rtl9300_nic_rings;
++struct rtl9300_sw;
+ 
+ struct rtl9300_info {
+ 	const char *name;
+@@ -61,8 +63,9 @@ struct rtl9300_nic {
+ 	bool rx_discard;
+ 
+ 	/* TX: the frames the hardware still owns, between tx_tail and
+-	 * tx_head, which count up and wrap at the ring size, and the timer
+-	 * that runs while there are any
++	 * tx_head, which count up and wrap at the ring size, whether the
++	 * queues are stopped for a full ring, and the timer that runs while
++	 * the ring holds frames
+ 	 */
+ 	spinlock_t tx_lock;
+ 	struct sk_buff *tx_skb[RTL9300_TX_RING_SIZE];
+@@ -70,9 +73,18 @@ struct rtl9300_nic {
+ 	unsigned int tx_len[RTL9300_TX_RING_SIZE];
+ 	unsigned int tx_head;
+ 	unsigned int tx_tail;
++	bool tx_stopped;
+ 	struct timer_list tx_timer;
+ };
+ 
++struct rtl9300_port {
++	struct rtl9300_sw *sw;
++	struct net_device *ndev;
++	struct phylink *phylink;
++	struct phylink_config phylink_config;
++	unsigned int index;
++};
++
+ struct rtl9300_sw {
+ 	struct device *dev;
+ 	struct regmap *map;
+@@ -80,11 +92,22 @@ struct rtl9300_sw {
+ 	/* Serialises the table access registers */
+ 	struct mutex tbl_lock;
+ 	struct rtl9300_nic nic;
++	/* The ports with a network interface, by port number */
++	struct rtl9300_port *ports[RTL9300_NUM_PORTS];
++	/* The ports whose interface is up, changed under the TX lock */
++	unsigned long open_ports;
+ };
+ 
++int rtl9300_ports_check(struct rtl9300_sw *sw);
++int rtl9300_ports_init(struct rtl9300_sw *sw);
++void rtl9300_ports_unregister(struct rtl9300_sw *sw);
++void rtl9300_ports_free(struct rtl9300_sw *sw);
++
+ int rtl9300_nic_init(struct rtl9300_sw *sw, int irq);
+ void rtl9300_nic_exit(struct rtl9300_sw *sw);
+ netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
+ 			     struct net_device *ndev, unsigned int port);
++void rtl9300_nic_port_open(struct rtl9300_port *port);
++void rtl9300_nic_port_stop(struct rtl9300_port *port);
+ 
+ #endif /* _RTL9300_H_ */
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
+index 75bfc38d22f..9c9e97367bf 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
+@@ -466,6 +466,11 @@ static int rtl9300_probe(struct platform_device *pdev)
+ 	if (err)
+ 		return err;
+ 
++	/* Before the hardware is touched, so that waiting is cheap */
++	err = rtl9300_ports_check(sw);
++	if (err)
++		return err;
++
+ 	err = rtl9300_check_model(sw);
+ 	if (err)
+ 		return dev_err_probe(dev, err,
+@@ -480,6 +485,13 @@ static int rtl9300_probe(struct platform_device *pdev)
+ 		return dev_err_probe(dev, err,
+ 				     "failed to set up the DMA engine\n");
+ 
++	err = rtl9300_ports_init(sw);
++	if (err) {
++		rtl9300_nic_exit(sw);
++		rtl9300_ports_free(sw);
++		return dev_err_probe(dev, err, "failed to create the ports\n");
++	}
++
+ 	platform_set_drvdata(pdev, sw);
+ 
+ 	return 0;
+@@ -493,7 +505,9 @@ static void rtl9300_remove(struct platform_device *pdev)
+ 	if (!sw)
+ 		return;
+ 
++	rtl9300_ports_unregister(sw);
+ 	rtl9300_nic_exit(sw);
++	rtl9300_ports_free(sw);
+ }
+ 
+ /* The DMA engine has to stop before a kernel started with kexec takes
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c
+index 18a07ac93c6..6dd8e266261 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c
+@@ -23,6 +23,7 @@
+ #include <linux/dma-mapping.h>
+ #include <linux/etherdevice.h>
+ #include <linux/interrupt.h>
++#include <linux/lockdep.h>
+ #include <linux/netdevice.h>
+ #include <linux/skbuff.h>
+ #include <linux/timer.h>
+@@ -70,6 +71,8 @@
+ #define RTL9300_TX_KICK_US		10
+ /* While frames are in the ring, the timer runs every tick */
+ #define RTL9300_TX_TIMER_TICKS		1
++/* The stopped queues wake once a quarter of the ring is free again */
++#define RTL9300_TX_WAKE_ROOM		(RTL9300_TX_RING_SIZE / 4)
+ 
+ struct rtl9300_desc {
+ 	__be32 addr;
+@@ -226,22 +229,56 @@ static int rtl9300_rx_add(struct rtl9300_nic *nic, struct page *page,
+ 	return 0;
+ }
+ 
+-/* A complete frame, FCS included, from front port INDEX */
++/* The interface of front port INDEX if it is up, or NULL. It stays
++ * registered until this poll is done with it, since closing it comes
++ * before the RCU grace period that unregistering waits for.
++ */
++static struct net_device *rtl9300_rx_ndev(struct rtl9300_sw *sw,
++					  unsigned int index)
++{
++	unsigned long open;
++
++	if (index >= RTL9300_NUM_PORTS)
++		return NULL;
++
++	/* Pairs with the release in rtl9300_nic_port_open(), after which
++	 * sw->ports[] holds the port
++	 */
++	open = smp_load_acquire(&sw->open_ports);
++	if (!(open & BIT(index)))
++		return NULL;
++
++	return sw->ports[index]->ndev;
++}
++
++/* A complete frame, FCS included, from front port INDEX. Only a port that
++ * is up gets frames, and counts those it loses.
++ */
+ static void rtl9300_rx_frame(struct rtl9300_sw *sw, struct sk_buff *skb,
+ 			     unsigned int index)
+ {
++	struct net_device *ndev = rtl9300_rx_ndev(sw, index);
++
++	if (!ndev) {
++		kfree_skb_reason(skb, SKB_DROP_REASON_DEV_READY);
++		return;
++	}
++
+ 	if (skb->len < ETH_HLEN + ETH_FCS_LEN) {
++		dev_dstats_rx_dropped(ndev);
+ 		kfree_skb_reason(skb, SKB_DROP_REASON_PKT_TOO_SMALL);
+ 		return;
+ 	}
+ 
+ 	if (pskb_trim(skb, skb->len - ETH_FCS_LEN)) {
++		dev_dstats_rx_dropped(ndev);
+ 		kfree_skb_reason(skb, SKB_DROP_REASON_NOMEM);
+ 		return;
+ 	}
+ 
+-	/* No port has a network interface yet */
+-	kfree_skb_reason(skb, SKB_DROP_REASON_DEV_READY);
++	dev_dstats_rx_add(ndev, skb->len);
++	skb->protocol = eth_type_trans(skb, ndev);
++	napi_gro_receive(&sw->nic.napi, skb);
+ }
+ 
+ /* Receives up to BUDGET frames, and returns how many it took */
+@@ -294,6 +331,18 @@ static int rtl9300_rx(struct rtl9300_sw *sw, int budget)
+ 		goto next;
+ 
+ drop:
++		/* A frame counts as lost at the first buffer it loses, on the
++		 * port its first descriptor names
++		 */
++		if (!nic->rx_discard) {
++			struct net_device *ndev;
++
++			ndev = rtl9300_rx_ndev(sw, nic->rx_skb ? nic->rx_port :
++					       rtl9300_rx_desc_port(desc));
++			if (ndev)
++				dev_dstats_rx_dropped(ndev);
++		}
++
+ 		/* The rest of a frame that lost a buffer is dropped too */
+ 		if (nic->rx_skb) {
+ 			kfree_skb(nic->rx_skb);
+@@ -334,12 +383,44 @@ static void rtl9300_tx_init(struct rtl9300_nic *nic)
+ 	nic->tx_tail = 0;
+ }
+ 
+-/* Frees the frames the hardware has sent */
+-static void rtl9300_tx_reclaim(struct rtl9300_sw *sw, int budget)
++/* How many more frames the ring takes */
++static unsigned int rtl9300_tx_room(struct rtl9300_nic *nic)
++{
++	return RTL9300_TX_RING_SIZE - (nic->tx_head - nic->tx_tail);
++}
++
++/* The ring is shared, so a full ring stops the queues of all open ports,
++ * and they wake together once a quarter of it is free again. Called with
++ * the TX lock held.
++ */
++static void rtl9300_tx_stop_queues(struct rtl9300_sw *sw)
++{
++	unsigned int i;
++
++	for_each_set_bit(i, &sw->open_ports, RTL9300_NUM_PORTS)
++		netif_stop_queue(sw->ports[i]->ndev);
++
++	sw->nic.tx_stopped = true;
++}
++
++static void rtl9300_tx_wake_queues(struct rtl9300_sw *sw)
++{
++	unsigned int i;
++
++	sw->nic.tx_stopped = false;
++
++	for_each_set_bit(i, &sw->open_ports, RTL9300_NUM_PORTS)
++		netif_wake_queue(sw->ports[i]->ndev);
++}
++
++/* Frees the frames the hardware has sent, and wakes the queues if they
++ * were stopped and there is room again. Called with the TX lock held.
++ */
++static void __rtl9300_tx_reclaim(struct rtl9300_sw *sw, int budget)
+ {
+ 	struct rtl9300_nic *nic = &sw->nic;
+ 
+-	spin_lock(&nic->tx_lock);
++	lockdep_assert_held(&nic->tx_lock);
+ 
+ 	while (nic->tx_tail != nic->tx_head) {
+ 		unsigned int i = nic->tx_tail & (RTL9300_TX_RING_SIZE - 1);
+@@ -355,6 +436,16 @@ static void rtl9300_tx_reclaim(struct rtl9300_sw *sw, int budget)
+ 		nic->tx_tail++;
+ 	}
+ 
++	if (nic->tx_stopped && rtl9300_tx_room(nic) >= RTL9300_TX_WAKE_ROOM)
++		rtl9300_tx_wake_queues(sw);
++}
++
++static void rtl9300_tx_reclaim(struct rtl9300_sw *sw, int budget)
++{
++	struct rtl9300_nic *nic = &sw->nic;
++
++	spin_lock(&nic->tx_lock);
++	__rtl9300_tx_reclaim(sw, budget);
+ 	spin_unlock(&nic->tx_lock);
+ }
+ 
+@@ -435,14 +526,18 @@ netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
+ 			     struct net_device *ndev, unsigned int port)
+ {
+ 	struct rtl9300_nic *nic = &sw->nic;
++	unsigned int i, len, bytes;
+ 	struct rtl9300_desc *desc;
+-	unsigned int i, len;
+ 	dma_addr_t dma;
+ 	u32 entry;
+ 
+ 	spin_lock(&nic->tx_lock);
+ 
+-	if (nic->tx_head - nic->tx_tail >= RTL9300_TX_RING_SIZE) {
++	/* Another port may have filled the ring since this queue woke */
++	if (!rtl9300_tx_room(nic))
++		__rtl9300_tx_reclaim(sw, 0);
++	if (!rtl9300_tx_room(nic)) {
++		rtl9300_tx_stop_queues(sw);
+ 		spin_unlock(&nic->tx_lock);
+ 		return NETDEV_TX_BUSY;
+ 	}
+@@ -451,6 +546,7 @@ netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
+ 	 * whatever they hold, so they only have to be there: in the tailroom,
+ 	 * which leaves the frame as it is, also when it is a clone
+ 	 */
++	bytes = skb->len;
+ 	if (skb_put_padto(skb, ETH_ZLEN))
+ 		goto drop_freed;
+ 	if (skb_tailroom(skb) < ETH_FCS_LEN && skb_pad(skb, ETH_FCS_LEN))
+@@ -491,8 +587,16 @@ netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
+ 	if (!timer_pending(&nic->tx_timer))
+ 		mod_timer(&nic->tx_timer, jiffies + RTL9300_TX_TIMER_TICKS);
+ 
++	/* Stop only if the hardware holds a full ring */
++	if (!rtl9300_tx_room(nic))
++		__rtl9300_tx_reclaim(sw, 0);
++	if (!rtl9300_tx_room(nic))
++		rtl9300_tx_stop_queues(sw);
++
+ 	spin_unlock(&nic->tx_lock);
+ 
++	dev_dstats_tx_add(ndev, bytes);
++
+ 	return NETDEV_TX_OK;
+ 
+ drop:
+@@ -504,6 +608,44 @@ netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
+ 	return NETDEV_TX_OK;
+ }
+ 
++/**
++ * rtl9300_nic_port_open - let a port send and receive frames
++ * @port: the port, whose interface is being opened
++ */
++void rtl9300_nic_port_open(struct rtl9300_port *port)
++{
++	struct rtl9300_nic *nic = &port->sw->nic;
++	struct rtl9300_sw *sw = port->sw;
++
++	spin_lock_bh(&nic->tx_lock);
++
++	/* The port is in sw->ports[] before the poll sees it open */
++	smp_store_release(&sw->open_ports, sw->open_ports | BIT(port->index));
++
++	/* While the ring is full, the queue waits with the others */
++	if (nic->tx_stopped)
++		netif_stop_queue(port->ndev);
++	else
++		netif_start_queue(port->ndev);
++
++	spin_unlock_bh(&nic->tx_lock);
++}
++
++/**
++ * rtl9300_nic_port_stop - stop the frames of a port
++ * @port: the port, whose interface is being closed
++ */
++void rtl9300_nic_port_stop(struct rtl9300_port *port)
++{
++	struct rtl9300_nic *nic = &port->sw->nic;
++	struct rtl9300_sw *sw = port->sw;
++
++	spin_lock_bh(&nic->tx_lock);
++	WRITE_ONCE(sw->open_ports, sw->open_ports & ~BIT(port->index));
++	netif_stop_queue(port->ndev);
++	spin_unlock_bh(&nic->tx_lock);
++}
++
+ static void rtl9300_nic_irq_enable(struct rtl9300_sw *sw)
+ {
+ 	regmap_set_bits(sw->map, RTL9300_DMA_IF_INTR_RX_RUNOUT_MSK, BIT(0));
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
+new file mode 100644
+index 00000000000..544eeda0f94
+--- /dev/null
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
+@@ -0,0 +1,599 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Realtek RTL930x switch: the front ports as network interfaces
++ *
++ * Every port of the ethernet-ports node with a PHY becomes a network
++ * interface. Its link is handled by phylink, and its PHY is attached when
++ * the port is created rather than when the interface is opened, as DSA
++ * does: the PHY's PSE control has to work while the interface is down,
++ * and attaching the PHY is what turns on the hardware polling of it in the
++ * MDIO driver, which the MAC takes its speed and duplex from.
++ *
++ * Copyright (C) 2026 Ross Cawston <ross@r-sc.ca>
++ */
++
++#include <linux/bitfield.h>
++#include <linux/device.h>
++#include <linux/etherdevice.h>
++#include <linux/iopoll.h>
++#include <linux/netdevice.h>
++#include <linux/of.h>
++#include <linux/of_mdio.h>
++#include <linux/of_net.h>
++#include <linux/phy.h>
++#include <linux/phylink.h>
++#include <linux/rtnetlink.h>
++
++#include "rtl9300.h"
++#include "rtl9300_regs.h"
++
++static struct rtl9300_port *rtl9300_phylink_to_port(struct phylink_config *cfg)
++{
++	return container_of(cfg, struct rtl9300_port, phylink_config);
++}
++
++static void rtl9300_mac_config(struct phylink_config *config,
++			       unsigned int mode,
++			       const struct phylink_link_state *state)
++{
++	struct rtl9300_port *port = rtl9300_phylink_to_port(config);
++
++	/* The MAC follows the polling of its PHY, so nothing is forced */
++	regmap_write(port->sw->map,
++		     RTL9300_MAC_FORCE_MODE_CTRL(port->index), 0);
++}
++
++static int rtl9300_mac_speed(u32 code)
++{
++	switch (code) {
++	case RTL9300_MAC_LINK_SPD_10:
++		return SPEED_10;
++	case RTL9300_MAC_LINK_SPD_100:
++		return SPEED_100;
++	case RTL9300_MAC_LINK_SPD_1000:
++		return SPEED_1000;
++	case RTL9300_MAC_LINK_SPD_2500:
++		return SPEED_2500;
++	case RTL9300_MAC_LINK_SPD_5000:
++		return SPEED_5000;
++	case RTL9300_MAC_LINK_SPD_10000_LEGACY:
++	case RTL9300_MAC_LINK_SPD_10000:
++		return SPEED_10000;
++	default:
++		return SPEED_UNKNOWN;
++	}
++}
++
++/* Reads the link state the hardware polling gave the MAC */
++static int rtl9300_mac_state(struct rtl9300_port *port, int *speed,
++			     int *duplex)
++{
++	struct regmap *map = port->sw->map;
++	unsigned int p = port->index;
++	u32 link, spd, dup;
++	int err;
++
++	err = regmap_read(map, RTL9300_MAC_LINK_STS, &link);
++	if (err)
++		return err;
++
++	err = regmap_read(map, RTL9300_MAC_LINK_SPD_STS(p), &spd);
++	if (err)
++		return err;
++
++	err = regmap_read(map, RTL9300_MAC_LINK_DUP_STS, &dup);
++	if (err)
++		return err;
++
++	if (!(link & BIT(p))) {
++		*speed = SPEED_UNKNOWN;
++		*duplex = DUPLEX_UNKNOWN;
++		return 0;
++	}
++
++	*speed = rtl9300_mac_speed(field_get(RTL9300_MAC_LINK_SPD_MASK(p),
++					     spd));
++	*duplex = dup & BIT(p) ? DUPLEX_FULL : DUPLEX_HALF;
++
++	return 0;
++}
++
++static void rtl9300_mac_link_up(struct phylink_config *config,
++				struct phy_device *phydev, unsigned int mode,
++				phy_interface_t interface, int speed,
++				int duplex, bool tx_pause, bool rx_pause)
++{
++	struct rtl9300_port *port = rtl9300_phylink_to_port(config);
++	int mac_speed = SPEED_UNKNOWN, mac_duplex = DUPLEX_UNKNOWN;
++	struct regmap *map = port->sw->map;
++	unsigned int p = port->index;
++	u32 pause = 0;
++	int err, ret;
++
++	/* The polling sets speed and duplex, but pause is forced to what
++	 * phylink resolved, as OpenWrt does
++	 */
++	if (tx_pause)
++		pause |= RTL9300_MAC_FORCE_TX_PAUSE;
++	if (rx_pause)
++		pause |= RTL9300_MAC_FORCE_RX_PAUSE;
++
++	regmap_update_bits(map, RTL9300_MAC_FORCE_MODE_CTRL(p),
++			   RTL9300_MAC_FORCE_EN | RTL9300_MAC_FORCE_FC_EN |
++			   RTL9300_MAC_FORCE_TX_PAUSE |
++			   RTL9300_MAC_FORCE_RX_PAUSE,
++			   RTL9300_MAC_FORCE_FC_EN | pause);
++
++	/* With rate matching, phylink gives the speed and duplex of the
++	 * interface, and the polling reads those of the PHY's link
++	 */
++	if (phydev && phydev->rate_matching != RATE_MATCH_NONE) {
++		speed = phydev->speed;
++		duplex = phydev->duplex;
++	}
++
++	/* The polling has to give the MAC the link phylib reports. It may
++	 * lag behind phylib for a moment, and its link bit latches a loss
++	 * of link, so read it until it agrees or the time is up. A MAC that
++	 * doesn't agree stays off until the link goes down and up again.
++	 */
++	ret = read_poll_timeout(rtl9300_mac_state, err,
++				err || (mac_speed == speed &&
++					mac_duplex == duplex),
++				10000, 500000, false,
++				port, &mac_speed, &mac_duplex);
++	if (ret || err) {
++		netdev_err(port->ndev,
++			   "PHY link is %s/%s, but the MAC reports %s/%s; port disabled\n",
++			   phy_speed_to_str(speed), phy_duplex_to_str(duplex),
++			   phy_speed_to_str(mac_speed),
++			   phy_duplex_to_str(mac_duplex));
++		return;
++	}
++
++	regmap_set_bits(map, RTL9300_MAC_L2_PORT_CTRL(p),
++			RTL9300_MAC_L2_PORT_TXRX_EN);
++}
++
++static void rtl9300_mac_link_down(struct phylink_config *config,
++				  unsigned int mode, phy_interface_t interface)
++{
++	struct rtl9300_port *port = rtl9300_phylink_to_port(config);
++
++	regmap_clear_bits(port->sw->map, RTL9300_MAC_L2_PORT_CTRL(port->index),
++			  RTL9300_MAC_L2_PORT_TXRX_EN);
++}
++
++static const struct phylink_mac_ops rtl9300_phylink_mac_ops = {
++	.mac_config = rtl9300_mac_config,
++	.mac_link_up = rtl9300_mac_link_up,
++	.mac_link_down = rtl9300_mac_link_down,
++};
++
++static int rtl9300_port_open(struct net_device *ndev)
++{
++	struct rtl9300_port *port = netdev_priv(ndev);
++
++	phylink_start(port->phylink);
++	rtl9300_nic_port_open(port);
++
++	return 0;
++}
++
++static int rtl9300_port_stop(struct net_device *ndev)
++{
++	struct rtl9300_port *port = netdev_priv(ndev);
++
++	rtl9300_nic_port_stop(port);
++	phylink_stop(port->phylink);
++
++	return 0;
++}
++
++static netdev_tx_t rtl9300_port_xmit(struct sk_buff *skb,
++				     struct net_device *ndev)
++{
++	struct rtl9300_port *port = netdev_priv(ndev);
++
++	return rtl9300_nic_xmit(port->sw, skb, ndev, port->index);
++}
++
++static int rtl9300_port_ioctl(struct net_device *ndev, struct ifreq *ifr,
++			      int cmd)
++{
++	struct rtl9300_port *port = netdev_priv(ndev);
++
++	return phylink_mii_ioctl(port->phylink, ifr, cmd);
++}
++
++static const struct net_device_ops rtl9300_port_netdev_ops = {
++	.ndo_open = rtl9300_port_open,
++	.ndo_stop = rtl9300_port_stop,
++	.ndo_start_xmit = rtl9300_port_xmit,
++	.ndo_eth_ioctl = rtl9300_port_ioctl,
++	.ndo_set_mac_address = eth_mac_addr,
++	.ndo_validate_addr = eth_validate_addr,
++};
++
++static int rtl9300_port_get_link_ksettings(struct net_device *ndev,
++					   struct ethtool_link_ksettings *cmd)
++{
++	struct rtl9300_port *port = netdev_priv(ndev);
++
++	return phylink_ethtool_ksettings_get(port->phylink, cmd);
++}
++
++static int
++rtl9300_port_set_link_ksettings(struct net_device *ndev,
++				const struct ethtool_link_ksettings *cmd)
++{
++	struct rtl9300_port *port = netdev_priv(ndev);
++
++	return phylink_ethtool_ksettings_set(port->phylink, cmd);
++}
++
++static int rtl9300_port_nway_reset(struct net_device *ndev)
++{
++	struct rtl9300_port *port = netdev_priv(ndev);
++
++	return phylink_ethtool_nway_reset(port->phylink);
++}
++
++static void rtl9300_port_get_pauseparam(struct net_device *ndev,
++					struct ethtool_pauseparam *pause)
++{
++	struct rtl9300_port *port = netdev_priv(ndev);
++
++	phylink_ethtool_get_pauseparam(port->phylink, pause);
++}
++
++static int rtl9300_port_set_pauseparam(struct net_device *ndev,
++				       struct ethtool_pauseparam *pause)
++{
++	struct rtl9300_port *port = netdev_priv(ndev);
++
++	return phylink_ethtool_set_pauseparam(port->phylink, pause);
++}
++
++static const struct ethtool_ops rtl9300_port_ethtool_ops = {
++	.get_link = ethtool_op_get_link,
++	.get_link_ksettings = rtl9300_port_get_link_ksettings,
++	.set_link_ksettings = rtl9300_port_set_link_ksettings,
++	.nway_reset = rtl9300_port_nway_reset,
++	.get_pauseparam = rtl9300_port_get_pauseparam,
++	.set_pauseparam = rtl9300_port_set_pauseparam,
++};
++
++static bool rtl9300_node_available(struct device_node *np,
++				   const struct device_node *top)
++{
++	struct device_node *node = of_node_get(np);
++	bool available = true;
++
++	while (node && node != top) {
++		struct device_node *parent;
++
++		if (!of_device_is_available(node)) {
++			available = false;
++			break;
++		}
++
++		parent = of_get_parent(node);
++		of_node_put(node);
++		node = parent;
++	}
++
++	of_node_put(node);
++
++	return available;
++}
++
++/* Whether the PHY of a port is there (0), will be there (-EPROBE_DEFER)
++ * or never will: -ENXIO for a PHY that is disabled, or on a disabled MDIO
++ * bus, and -ENODEV for a port without a PHY. The ports are only probed
++ * once the MDIO driver has registered their PHYs; fw_devlink doesn't
++ * follow phy-handle, and the MDIO controller is a child of the switch
++ * anyway.
++ */
++static int rtl9300_port_find_phy(struct rtl9300_sw *sw, struct device_node *np)
++{
++	struct device_node *phy_np;
++	struct phy_device *phydev;
++	int err = 0;
++
++	phy_np = of_parse_phandle(np, "phy-handle", 0);
++	if (!phy_np)
++		return -ENODEV;
++
++	phydev = of_phy_find_device(phy_np);
++	if (phydev)
++		put_device(&phydev->mdio.dev);
++	else if (rtl9300_node_available(phy_np, sw->dev->of_node))
++		err = -EPROBE_DEFER;
++	else
++		err = -ENXIO;
++
++	of_node_put(phy_np);
++
++	return err;
++}
++
++static bool rtl9300_port_mode_supported(phy_interface_t mode)
++{
++	switch (mode) {
++	case PHY_INTERFACE_MODE_SGMII:
++	case PHY_INTERFACE_MODE_QSGMII:
++	case PHY_INTERFACE_MODE_USXGMII:
++	case PHY_INTERFACE_MODE_10G_QXGMII:
++		return true;
++	default:
++		return false;
++	}
++}
++
++/* Checks a port node; -ENODEV for a port the driver doesn't run */
++static int rtl9300_port_parse(struct rtl9300_sw *sw, struct device_node *np,
++			      u32 *index, phy_interface_t *mode)
++{
++	struct device *dev = sw->dev;
++	int err;
++
++	err = of_property_read_u32(np, "reg", index);
++	if (err)
++		return dev_err_probe(dev, err, "%pOF: no port number\n", np);
++
++	if (*index >= RTL9300_NUM_PORTS)
++		return dev_err_probe(dev, -EINVAL, "%pOF: no port %u\n",
++				     np, *index);
++
++	err = of_get_phy_mode(np, mode);
++	if (err) {
++		dev_warn(dev, "port %u: no phy-mode\n", *index);
++		return -ENODEV;
++	}
++
++	err = rtl9300_port_find_phy(sw, np);
++	if (err == -EPROBE_DEFER) {
++		/* rtl9300_ports_check() gave up waiting for it */
++		dev_warn(dev, "port %u: PHY not found\n", *index);
++		return -ENODEV;
++	}
++	if (err == -ENXIO) {
++		dev_info(dev, "port %u: PHY disabled\n", *index);
++		return -ENODEV;
++	}
++	if (err) {
++		/* SerDes ports without a PHY need the PCS, which comes later */
++		dev_info(dev, "port %u: no PHY, not supported yet\n", *index);
++		return -ENODEV;
++	}
++
++	if (!rtl9300_port_mode_supported(*mode)) {
++		dev_info(dev, "port %u: %s not supported\n", *index,
++			 phy_modes(*mode));
++		return -ENODEV;
++	}
++
++	return 0;
++}
++
++/**
++ * rtl9300_ports_check - wait for what the ports need
++ * @sw: the switch
++ *
++ * The PHYs of the ports, and the NVMEM cells of their MAC addresses, have
++ * to be there before the hardware is set up, so that waiting for them is
++ * cheap. What doesn't come before the deferred probe timeout costs only
++ * its port, or the port's MAC address.
++ *
++ * Return: 0, -ENODEV without an ethernet-ports node, or -EPROBE_DEFER.
++ */
++int rtl9300_ports_check(struct rtl9300_sw *sw)
++{
++	struct device_node *ports_np;
++	struct device *dev = sw->dev;
++	int err = 0;
++
++	ports_np = of_get_child_by_name(dev->of_node, "ethernet-ports");
++	if (!ports_np)
++		return dev_err_probe(dev, -ENODEV, "no ethernet-ports\n");
++
++	for_each_available_child_of_node_scoped(ports_np, np) {
++		phy_interface_t mode;
++		u8 addr[ETH_ALEN];
++		int ret;
++
++		/* Ports the driver skips anyway */
++		if (of_get_phy_mode(np, &mode) ||
++		    !rtl9300_port_mode_supported(mode))
++			continue;
++
++		ret = rtl9300_port_find_phy(sw, np);
++		if (ret == -EPROBE_DEFER)
++			ret = driver_deferred_probe_check_state(dev);
++		if (ret == -EPROBE_DEFER) {
++			err = dev_err_probe(dev, ret,
++					    "%pOF: waiting for the PHY\n",
++					    np);
++			break;
++		}
++		/* No PHY, or no more waiting for it: the port is skipped */
++		if (ret)
++			continue;
++
++		ret = of_get_mac_address(np, addr);
++		if (ret == -EPROBE_DEFER)
++			ret = driver_deferred_probe_check_state(dev);
++		if (ret == -EPROBE_DEFER) {
++			err = dev_err_probe(dev, ret,
++					    "%pOF: waiting for its MAC address\n",
++					    np);
++			break;
++		}
++	}
++
++	of_node_put(ports_np);
++
++	return err;
++}
++
++static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
++			       u32 index, phy_interface_t mode)
++{
++	struct phylink_config *config;
++	struct rtl9300_port *port;
++	struct net_device *ndev;
++	struct phylink *pl;
++	int err;
++
++	if (sw->ports[index])
++		return dev_err_probe(sw->dev, -EINVAL, "port %u twice\n",
++				     index);
++
++	ndev = alloc_etherdev(sizeof(*port));
++	if (!ndev)
++		return -ENOMEM;
++
++	SET_NETDEV_DEV(ndev, sw->dev);
++	ndev->dev.of_node = of_node_get(np);
++	ndev->netdev_ops = &rtl9300_port_netdev_ops;
++	ndev->ethtool_ops = &rtl9300_port_ethtool_ops;
++	ndev->pcpu_stat_type = NETDEV_PCPU_STAT_DSTATS;
++	/* Room for the FCS the DMA engine adds. Making that room, or padding
++	 * a short frame, can change the skb, so one skb can't be sent twice.
++	 */
++	ndev->needed_tailroom = ETH_FCS_LEN;
++	ndev->priv_flags &= ~IFF_TX_SKB_SHARING;
++
++	port = netdev_priv(ndev);
++	port->sw = sw;
++	port->ndev = ndev;
++	port->index = index;
++
++	err = of_get_ethdev_address(np, ndev);
++	/* Only if rtl9300_ports_check() gave up waiting for an NVMEM cell */
++	if (err == -EPROBE_DEFER)
++		dev_warn(sw->dev, "port %u: MAC address not found\n", index);
++	if (err)
++		eth_hw_addr_random(ndev);
++
++	config = &port->phylink_config;
++	config->dev = &ndev->dev;
++	config->type = PHYLINK_NETDEV;
++	config->mac_capabilities = MAC_ASYM_PAUSE | MAC_SYM_PAUSE | MAC_10 |
++				   MAC_100 | MAC_1000FD | MAC_2500FD |
++				   MAC_5000FD | MAC_10000FD;
++	__set_bit(mode, config->supported_interfaces);
++
++	pl = phylink_create(config, of_fwnode_handle(np), mode,
++			    &rtl9300_phylink_mac_ops);
++	if (IS_ERR(pl)) {
++		err = PTR_ERR(pl);
++		goto err_free;
++	}
++	port->phylink = pl;
++
++	/* A PHY that fails to attach costs only its port */
++	err = phylink_of_phy_connect(pl, np, 0);
++	if (err) {
++		dev_err(sw->dev, "port %u: failed to attach the PHY: %pe\n",
++			index, ERR_PTR(err));
++		err = -ENODEV;
++		goto err_destroy;
++	}
++
++	/* The DMA engine looks the port up only once its interface is up */
++	sw->ports[index] = port;
++
++	err = register_netdev(ndev);
++	if (err) {
++		sw->ports[index] = NULL;
++		goto err_disconnect;
++	}
++
++	return 0;
++
++err_disconnect:
++	rtnl_lock();
++	phylink_disconnect_phy(pl);
++	rtnl_unlock();
++err_destroy:
++	phylink_destroy(pl);
++err_free:
++	of_node_put(ndev->dev.of_node);
++	free_netdev(ndev);
++	return err;
++}
++
++/**
++ * rtl9300_ports_init - create the network interfaces of the ports
++ * @sw: the switch
++ *
++ * On failure, the ports created so far are unregistered, but not freed:
++ * that is for rtl9300_ports_free() once the DMA engine is stopped.
++ *
++ * Return: 0 or a negative error.
++ */
++int rtl9300_ports_init(struct rtl9300_sw *sw)
++{
++	struct device_node *ports_np;
++	int err = 0;
++
++	ports_np = of_get_child_by_name(sw->dev->of_node, "ethernet-ports");
++	if (!ports_np)
++		return -ENODEV;
++
++	for_each_available_child_of_node_scoped(ports_np, np) {
++		phy_interface_t mode;
++		u32 index;
++
++		err = rtl9300_port_parse(sw, np, &index, &mode);
++		if (!err)
++			err = rtl9300_port_create(sw, np, index, mode);
++		/* A port the driver doesn't run */
++		if (err == -ENODEV)
++			err = 0;
++		if (err)
++			break;
++	}
++
++	of_node_put(ports_np);
++
++	if (err)
++		rtl9300_ports_unregister(sw);
++
++	return err;
++}
++
++/* Unregisters the network interfaces and detaches their PHYs */
++void rtl9300_ports_unregister(struct rtl9300_sw *sw)
++{
++	for (int i = 0; i < RTL9300_NUM_PORTS; i++) {
++		struct rtl9300_port *port = sw->ports[i];
++
++		if (!port)
++			continue;
++
++		unregister_netdev(port->ndev);
++
++		rtnl_lock();
++		phylink_disconnect_phy(port->phylink);
++		rtnl_unlock();
++		phylink_destroy(port->phylink);
++	}
++}
++
++/* Frees the ports, with the DMA engine stopped */
++void rtl9300_ports_free(struct rtl9300_sw *sw)
++{
++	for (int i = 0; i < RTL9300_NUM_PORTS; i++) {
++		struct rtl9300_port *port = sw->ports[i];
++
++		if (!port)
++			continue;
++
++		sw->ports[i] = NULL;
++		of_node_put(port->ndev->dev.of_node);
++		free_netdev(port->ndev);
++	}
++}
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
+index 0e68fbee517..24b02862080 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
+@@ -35,12 +35,28 @@
+ #define RTL9300_QM_RSN2CPUQID_CTRL(n)		(0xa344 + 4 * (n))
+ #define RTL9300_QM_RSN2CPUQID_REGS		11
+ 
++/* MAC link state as the hardware polling of the PHYs left it */
++#define RTL9300_MAC_LINK_STS			0xcb10
++#define RTL9300_MAC_LINK_SPD_STS(port)		(0xcb18 + 4 * ((port) / 8))
++#define   RTL9300_MAC_LINK_SPD_MASK(port)	\
++	(GENMASK(3, 0) << (4 * ((port) % 8)))
++#define   RTL9300_MAC_LINK_SPD_10		0
++#define   RTL9300_MAC_LINK_SPD_100		1
++#define   RTL9300_MAC_LINK_SPD_1000		2
++#define   RTL9300_MAC_LINK_SPD_10000_LEGACY	3
++#define   RTL9300_MAC_LINK_SPD_10000		4
++#define   RTL9300_MAC_LINK_SPD_2500		5
++#define   RTL9300_MAC_LINK_SPD_5000		6
++#define RTL9300_MAC_LINK_DUP_STS		0xcb28
++
+ #define RTL9300_MAC_FORCE_MODE_CTRL(port)	(0xca1c + 4 * (port))
+ #define   RTL9300_MAC_FORCE_EN			BIT(0)
+ #define   RTL9300_MAC_FORCE_LINK		BIT(1)
+ #define   RTL9300_MAC_FORCE_DUPLEX		BIT(2)
+ #define   RTL9300_MAC_FORCE_SPEED		GENMASK(6, 3)
+ #define   RTL9300_MAC_FORCE_SPEED_1000		2
++#define   RTL9300_MAC_FORCE_TX_PAUSE		BIT(7)
++#define   RTL9300_MAC_FORCE_RX_PAUSE		BIT(8)
+ #define   RTL9300_MAC_FORCE_FC_EN		BIT(9)
+ 
+ /* DMA engine (NIC) of the CPU port. The RX ring size and counter

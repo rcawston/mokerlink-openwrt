@@ -1,0 +1,23 @@
+net: ethernet: realtek: rtl9300: add the DMA engine and receive frames
+
+The switch reaches the CPU through a DMA engine on its port 28. Frames
+move through rings of 32-bit entries, each with the address of a
+descriptor and two flags, OWN for a descriptor the hardware may use and
+WRAP on the last entry. A descriptor points to one buffer and carries
+the CPU tag, which says from which port a received frame came. A frame
+longer than a buffer spans descriptors, and a counter register limits
+how many frames the hardware may put into a ring before the driver
+gives the space back.
+
+Set the engine up with RX ring 0, the one ring every trap reason goes
+to, and receive frames into page pool fragments in one NAPI context,
+which sits on a dummy netdev because it serves all ports. The ring
+takes as many frames as fit at the longest frame the switch passes, 64,
+so that it can never overflow. The FCS is cut off, and until the ports
+become interfaces in a later patch, the frames are dropped.
+
+The engine is reset first, as the boot loader may have left it
+running, and stopped at shutdown too, so that it doesn't write into
+memory that a kernel started with kexec has taken over. The
+descriptor layout, the ring handling and the reset with its settling
+times follow OpenWrt's rtl838x_eth.c.

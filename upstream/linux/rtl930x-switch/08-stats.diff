@@ -1,0 +1,479 @@
+diff --git a/drivers/net/ethernet/realtek/rtl9300/Makefile b/drivers/net/ethernet/realtek/rtl9300/Makefile
+index 81817857706..d0043d5982c 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/Makefile
++++ b/drivers/net/ethernet/realtek/rtl9300/Makefile
+@@ -5,4 +5,5 @@
+ 
+ obj-$(CONFIG_RTL9300_SWITCH) += rtl9300-switch.o
+ 
+-rtl9300-switch-y := rtl9300_main.o rtl9300_nic.o rtl9300_port.o
++rtl9300-switch-y := rtl9300_main.o rtl9300_nic.o rtl9300_port.o \
++		    rtl9300_stats.o
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
+index 1c3f4c73176..3730452132e 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
+@@ -18,6 +18,7 @@
+ #include <linux/spinlock.h>
+ #include <linux/timer.h>
+ #include <linux/types.h>
++#include <linux/workqueue.h>
+ 
+ /* Front ports 0-27, and the port the DMA engine of the switch sits on */
+ #define RTL9300_NUM_PORTS		28
+@@ -81,12 +82,49 @@ struct rtl9300_nic {
+ 	struct timer_list tx_timer;
+ };
+ 
++/* Frame length ranges of the MIB counters */
++#define RTL9300_MIB_HIST_COUNT		7
++
++/* The MIB counters the driver reports */
++enum {
++	RTL9300_MIB_IN_OCTETS,
++	RTL9300_MIB_OUT_OCTETS,
++	RTL9300_MIB_IN_UCAST,
++	RTL9300_MIB_IN_MCAST,
++	RTL9300_MIB_IN_BCAST,
++	RTL9300_MIB_OUT_UCAST,
++	RTL9300_MIB_OUT_MCAST,
++	RTL9300_MIB_OUT_BCAST,
++	RTL9300_MIB_OUT_DISCARDS,
++	RTL9300_MIB_SINGLE_COL,
++	RTL9300_MIB_MULTI_COL,
++	RTL9300_MIB_DEFERRED,
++	RTL9300_MIB_LATE_COL,
++	RTL9300_MIB_EXCESS_COL,
++	RTL9300_MIB_UNSUP_OPCODE,
++	RTL9300_MIB_RX_PAUSE,
++	RTL9300_MIB_TX_PAUSE,
++	RTL9300_MIB_CRC_ALIGN,
++	RTL9300_MIB_RX_UNDERSIZE,
++	RTL9300_MIB_RX_OVERSIZE,
++	RTL9300_MIB_RX_FRAGMENTS,
++	RTL9300_MIB_RX_JABBERS,
++	RTL9300_MIB_RX_TOO_LONG,
++	/* Frames by length, RTL9300_MIB_HIST_COUNT ranges each */
++	RTL9300_MIB_RX_HIST,
++	RTL9300_MIB_TX_HIST = RTL9300_MIB_RX_HIST + RTL9300_MIB_HIST_COUNT,
++	RTL9300_MIB_COUNT = RTL9300_MIB_TX_HIST + RTL9300_MIB_HIST_COUNT,
++};
++
+ struct rtl9300_port {
+ 	struct rtl9300_sw *sw;
+ 	struct net_device *ndev;
+ 	struct phylink *phylink;
+ 	struct phylink_config phylink_config;
+ 	unsigned int index;
++	/* MIB counters since the port was created, and the last readings */
++	u64 mib[RTL9300_MIB_COUNT];
++	u64 mib_last[RTL9300_MIB_COUNT];
+ };
+ 
+ struct rtl9300_sw {
+@@ -100,8 +138,24 @@ struct rtl9300_sw {
+ 	struct rtl9300_port *ports[RTL9300_NUM_PORTS];
+ 	/* The ports whose interface is up, changed under the TX lock */
+ 	unsigned long open_ports;
++	/* Serialises the MIB counters of the ports */
++	struct mutex stats_lock;
++	struct delayed_work stats_work;
+ };
+ 
++void rtl9300_port_stats_init(struct rtl9300_port *port);
++void rtl9300_stats_start(struct rtl9300_sw *sw);
++void rtl9300_stats_stop(struct rtl9300_sw *sw);
++void rtl9300_get_eth_mac_stats(struct net_device *ndev,
++			       struct ethtool_eth_mac_stats *s);
++void rtl9300_get_eth_ctrl_stats(struct net_device *ndev,
++				struct ethtool_eth_ctrl_stats *s);
++void rtl9300_get_pause_stats(struct net_device *ndev,
++			     struct ethtool_pause_stats *s);
++void rtl9300_get_rmon_stats(struct net_device *ndev,
++			    struct ethtool_rmon_stats *s,
++			    const struct ethtool_rmon_hist_range **ranges);
++
+ int rtl9300_ports_check(struct rtl9300_sw *sw);
+ int rtl9300_ports_init(struct rtl9300_sw *sw);
+ void rtl9300_ports_unregister(struct rtl9300_sw *sw);
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
+index 9c9e97367bf..2bc0ac289ca 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
+@@ -466,6 +466,10 @@ static int rtl9300_probe(struct platform_device *pdev)
+ 	if (err)
+ 		return err;
+ 
++	err = devm_mutex_init(dev, &sw->stats_lock);
++	if (err)
++		return err;
++
+ 	/* Before the hardware is touched, so that waiting is cheap */
+ 	err = rtl9300_ports_check(sw);
+ 	if (err)
+@@ -492,6 +496,7 @@ static int rtl9300_probe(struct platform_device *pdev)
+ 		return dev_err_probe(dev, err, "failed to create the ports\n");
+ 	}
+ 
++	rtl9300_stats_start(sw);
+ 	platform_set_drvdata(pdev, sw);
+ 
+ 	return 0;
+@@ -505,6 +510,7 @@ static void rtl9300_remove(struct platform_device *pdev)
+ 	if (!sw)
+ 		return;
+ 
++	rtl9300_stats_stop(sw);
+ 	rtl9300_ports_unregister(sw);
+ 	rtl9300_nic_exit(sw);
+ 	rtl9300_ports_free(sw);
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
+index d87bccacc6b..e178776e531 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
+@@ -293,6 +293,10 @@ static const struct ethtool_ops rtl9300_port_ethtool_ops = {
+ 	.nway_reset = rtl9300_port_nway_reset,
+ 	.get_pauseparam = rtl9300_port_get_pauseparam,
+ 	.set_pauseparam = rtl9300_port_set_pauseparam,
++	.get_pause_stats = rtl9300_get_pause_stats,
++	.get_eth_mac_stats = rtl9300_get_eth_mac_stats,
++	.get_eth_ctrl_stats = rtl9300_get_eth_ctrl_stats,
++	.get_rmon_stats = rtl9300_get_rmon_stats,
+ };
+ 
+ static bool rtl9300_node_available(struct device_node *np,
+@@ -513,6 +517,8 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
+ 	if (err)
+ 		goto err_free;
+ 
++	rtl9300_port_stats_init(port);
++
+ 	config = &port->phylink_config;
+ 	config->dev = &ndev->dev;
+ 	config->type = PHYLINK_NETDEV;
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
+index 24b02862080..8d7ad94a350 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
+@@ -19,6 +19,10 @@
+ #define RTL9300_RST_GLB_CTRL_0			0x000c
+ #define   RTL9300_RST_NIC_QUEUES		GENMASK(2, 1)
+ 
++/* MIB counters, 256 and 128 bytes per port */
++#define RTL9300_STAT_PORT_MIB_CNTR		0x0664
++#define RTL9300_STAT_PORT_PRVTE_CNTR		0x2364
++
+ /* MAC of each port, 64 bytes apart */
+ #define RTL9300_MAC_L2_PORT_CTRL(port)		(0x3268 + 64 * (port))
+ #define   RTL9300_MAC_L2_PORT_TXRX_EN		GENMASK(1, 0)
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_stats.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_stats.c
+new file mode 100644
+index 00000000000..4683383d167
+--- /dev/null
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_stats.c
+@@ -0,0 +1,305 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Realtek RTL930x switch: the MIB counters of the ports
++ *
++ * Each port has a block of standard counters, 256 bytes per port, and one
++ * of private counters, 128 bytes per port, both stored backwards: the
++ * counter at offset o of port p sits at base + (p + 1) * size - 4 - o. The
++ * octet and frame counts are 64 bits wide, high word first; the others are
++ * 32 bits wide and wrap, at 10G within minutes, so they are read at least
++ * once a minute and added up. The offsets follow OpenWrt's rtl83xx driver.
++ *
++ * Copyright (C) 2026 Ross Cawston <ross@r-sc.ca>
++ */
++
++#include <linux/ethtool.h>
++#include <linux/lockdep.h>
++#include <linux/netdevice.h>
++#include <linux/workqueue.h>
++
++#include "rtl9300.h"
++#include "rtl9300_regs.h"
++
++#define RTL9300_STATS_INTERVAL		(60 * HZ)
++/* Header and FCS of a frame, which the octet counters count */
++#define RTL9300_MIB_FRAME_OCTETS	(ETH_HLEN + ETH_FCS_LEN)
++
++struct rtl9300_mib {
++	u16 offset;
++	bool prv;
++	bool wide;
++};
++
++#define RTL9300_MIB_STD(off, w)		{ .offset = (off), .wide = (w) }
++#define RTL9300_MIB_PRV(off)		{ .offset = (off), .prv = true }
++
++static const struct rtl9300_mib rtl9300_mibs[RTL9300_MIB_COUNT] = {
++	[RTL9300_MIB_IN_OCTETS] = RTL9300_MIB_STD(0xf8, true),
++	[RTL9300_MIB_OUT_OCTETS] = RTL9300_MIB_STD(0xf0, true),
++	[RTL9300_MIB_IN_UCAST] = RTL9300_MIB_STD(0xe8, true),
++	[RTL9300_MIB_IN_MCAST] = RTL9300_MIB_STD(0xe0, true),
++	[RTL9300_MIB_IN_BCAST] = RTL9300_MIB_STD(0xd8, true),
++	[RTL9300_MIB_OUT_UCAST] = RTL9300_MIB_STD(0xd0, true),
++	[RTL9300_MIB_OUT_MCAST] = RTL9300_MIB_STD(0xc8, true),
++	[RTL9300_MIB_OUT_BCAST] = RTL9300_MIB_STD(0xc0, true),
++	[RTL9300_MIB_OUT_DISCARDS] = RTL9300_MIB_STD(0xbc, false),
++	[RTL9300_MIB_SINGLE_COL] = RTL9300_MIB_STD(0xb4, false),
++	[RTL9300_MIB_MULTI_COL] = RTL9300_MIB_STD(0xb0, false),
++	[RTL9300_MIB_DEFERRED] = RTL9300_MIB_STD(0xac, false),
++	[RTL9300_MIB_LATE_COL] = RTL9300_MIB_STD(0xa8, false),
++	[RTL9300_MIB_EXCESS_COL] = RTL9300_MIB_STD(0xa4, false),
++	[RTL9300_MIB_UNSUP_OPCODE] = RTL9300_MIB_STD(0x9c, false),
++	[RTL9300_MIB_RX_PAUSE] = RTL9300_MIB_STD(0x98, false),
++	[RTL9300_MIB_TX_PAUSE] = RTL9300_MIB_STD(0x94, false),
++	[RTL9300_MIB_CRC_ALIGN] = RTL9300_MIB_STD(0x80, false),
++	[RTL9300_MIB_RX_UNDERSIZE] = RTL9300_MIB_STD(0x78, false),
++	[RTL9300_MIB_RX_OVERSIZE] = RTL9300_MIB_STD(0x70, false),
++	[RTL9300_MIB_RX_FRAGMENTS] = RTL9300_MIB_STD(0x68, false),
++	[RTL9300_MIB_RX_JABBERS] = RTL9300_MIB_STD(0x60, false),
++	[RTL9300_MIB_RX_TOO_LONG] = RTL9300_MIB_PRV(0x6c),
++	[RTL9300_MIB_RX_HIST + 0] = RTL9300_MIB_STD(0x54, false),
++	[RTL9300_MIB_RX_HIST + 1] = RTL9300_MIB_STD(0x4c, false),
++	[RTL9300_MIB_RX_HIST + 2] = RTL9300_MIB_STD(0x44, false),
++	[RTL9300_MIB_RX_HIST + 3] = RTL9300_MIB_STD(0x3c, false),
++	[RTL9300_MIB_RX_HIST + 4] = RTL9300_MIB_STD(0x34, false),
++	[RTL9300_MIB_RX_HIST + 5] = RTL9300_MIB_STD(0x2c, false),
++	[RTL9300_MIB_RX_HIST + 6] = RTL9300_MIB_PRV(0x74),
++	[RTL9300_MIB_TX_HIST + 0] = RTL9300_MIB_STD(0x58, false),
++	[RTL9300_MIB_TX_HIST + 1] = RTL9300_MIB_STD(0x50, false),
++	[RTL9300_MIB_TX_HIST + 2] = RTL9300_MIB_STD(0x48, false),
++	[RTL9300_MIB_TX_HIST + 3] = RTL9300_MIB_STD(0x40, false),
++	[RTL9300_MIB_TX_HIST + 4] = RTL9300_MIB_STD(0x38, false),
++	[RTL9300_MIB_TX_HIST + 5] = RTL9300_MIB_STD(0x30, false),
++	[RTL9300_MIB_TX_HIST + 6] = RTL9300_MIB_PRV(0x78),
++};
++
++/* The ranges of the RX_HIST and TX_HIST counters */
++static const struct ethtool_rmon_hist_range rtl9300_rmon_ranges[] = {
++	{ 0, 64 },
++	{ 65, 127 },
++	{ 128, 255 },
++	{ 256, 511 },
++	{ 512, 1023 },
++	{ 1024, 1518 },
++	{ 1519, RTL9300_MAX_FRAME },
++	{}
++};
++
++static_assert(ARRAY_SIZE(rtl9300_rmon_ranges) - 1 == RTL9300_MIB_HIST_COUNT);
++
++static int rtl9300_mib_read(struct rtl9300_sw *sw, unsigned int port,
++			    const struct rtl9300_mib *mib, u64 *val)
++{
++	u32 base, addr, lo, hi, hi2;
++	int err;
++
++	if (mib->prv)
++		base = RTL9300_STAT_PORT_PRVTE_CNTR + (port + 1) * 128;
++	else
++		base = RTL9300_STAT_PORT_MIB_CNTR + (port + 1) * 256;
++	addr = base - 4 - mib->offset;
++
++	if (!mib->wide) {
++		err = regmap_read(sw->map, addr, &lo);
++		*val = lo;
++		return err;
++	}
++
++	err = regmap_read(sw->map, addr - 4, &hi);
++	if (err)
++		return err;
++
++	err = regmap_read(sw->map, addr, &lo);
++	if (err)
++		return err;
++
++	err = regmap_read(sw->map, addr - 4, &hi2);
++	if (err)
++		return err;
++
++	/* The low word wrapped into the high one in between */
++	if (hi != hi2) {
++		err = regmap_read(sw->map, addr, &lo);
++		if (err)
++			return err;
++	}
++
++	*val = (u64)hi2 << 32 | lo;
++
++	return 0;
++}
++
++/* Adds what the counters of a port counted since the last time */
++static void rtl9300_mib_update(struct rtl9300_port *port)
++{
++	struct rtl9300_sw *sw = port->sw;
++
++	lockdep_assert_held(&sw->stats_lock);
++
++	for (int i = 0; i < RTL9300_MIB_COUNT; i++) {
++		const struct rtl9300_mib *mib = &rtl9300_mibs[i];
++		u64 val, delta;
++
++		if (rtl9300_mib_read(sw, port->index, mib, &val))
++			continue;
++
++		delta = val - port->mib_last[i];
++		if (!mib->wide)
++			delta = (u32)delta;
++
++		port->mib[i] += delta;
++		port->mib_last[i] = val;
++	}
++}
++
++/**
++ * rtl9300_port_stats_init - start counting for a new port
++ * @port: the port
++ *
++ * The counters count from where the hardware stands, so that what the
++ * boot loader counted is left out.
++ */
++void rtl9300_port_stats_init(struct rtl9300_port *port)
++{
++	struct rtl9300_sw *sw = port->sw;
++
++	mutex_lock(&sw->stats_lock);
++
++	for (int i = 0; i < RTL9300_MIB_COUNT; i++) {
++		u64 val = 0;
++
++		rtl9300_mib_read(sw, port->index, &rtl9300_mibs[i], &val);
++		port->mib_last[i] = val;
++		port->mib[i] = 0;
++	}
++
++	mutex_unlock(&sw->stats_lock);
++}
++
++static void rtl9300_stats_work(struct work_struct *work)
++{
++	struct rtl9300_sw *sw = container_of(to_delayed_work(work),
++					     struct rtl9300_sw, stats_work);
++
++	mutex_lock(&sw->stats_lock);
++
++	for (int i = 0; i < RTL9300_NUM_PORTS; i++) {
++		if (sw->ports[i])
++			rtl9300_mib_update(sw->ports[i]);
++	}
++
++	mutex_unlock(&sw->stats_lock);
++
++	schedule_delayed_work(&sw->stats_work, RTL9300_STATS_INTERVAL);
++}
++
++void rtl9300_stats_start(struct rtl9300_sw *sw)
++{
++	INIT_DELAYED_WORK(&sw->stats_work, rtl9300_stats_work);
++	schedule_delayed_work(&sw->stats_work, RTL9300_STATS_INTERVAL);
++}
++
++void rtl9300_stats_stop(struct rtl9300_sw *sw)
++{
++	cancel_delayed_work_sync(&sw->stats_work);
++}
++
++/* A difference of counters, which are read one after the other and so
++ * can be a little apart
++ */
++static u64 rtl9300_mib_sub(u64 a, u64 b)
++{
++	return a > b ? a - b : 0;
++}
++
++void rtl9300_get_eth_mac_stats(struct net_device *ndev,
++			       struct ethtool_eth_mac_stats *s)
++{
++	struct rtl9300_port *port = netdev_priv(ndev);
++	const u64 *c = port->mib;
++	u64 rx, tx;
++
++	mutex_lock(&port->sw->stats_lock);
++	rtl9300_mib_update(port);
++
++	/* The IEEE counts from the RFC 2863 ones, as RFC 3635 has it and
++	 * rtl8365mb does: the frames with pause frames, the frames sent
++	 * without discarded ones, and the octets without the header and
++	 * the FCS of each frame
++	 */
++	rx = c[RTL9300_MIB_IN_UCAST] + c[RTL9300_MIB_IN_MCAST] +
++	     c[RTL9300_MIB_IN_BCAST] + c[RTL9300_MIB_RX_PAUSE];
++	tx = rtl9300_mib_sub(c[RTL9300_MIB_OUT_UCAST] +
++			     c[RTL9300_MIB_OUT_MCAST] +
++			     c[RTL9300_MIB_OUT_BCAST] +
++			     c[RTL9300_MIB_TX_PAUSE],
++			     c[RTL9300_MIB_OUT_DISCARDS]);
++	s->FramesReceivedOK = rx;
++	s->FramesTransmittedOK = tx;
++	s->OctetsReceivedOK = rtl9300_mib_sub(c[RTL9300_MIB_IN_OCTETS],
++					      RTL9300_MIB_FRAME_OCTETS * rx);
++	s->OctetsTransmittedOK = rtl9300_mib_sub(c[RTL9300_MIB_OUT_OCTETS],
++						 RTL9300_MIB_FRAME_OCTETS * tx);
++	s->SingleCollisionFrames = c[RTL9300_MIB_SINGLE_COL];
++	s->MultipleCollisionFrames = c[RTL9300_MIB_MULTI_COL];
++	/* CRC and alignment errors share a counter */
++	s->FrameCheckSequenceErrors = c[RTL9300_MIB_CRC_ALIGN];
++	s->FramesWithDeferredXmissions = c[RTL9300_MIB_DEFERRED];
++	s->LateCollisions = c[RTL9300_MIB_LATE_COL];
++	s->FramesAbortedDueToXSColls = c[RTL9300_MIB_EXCESS_COL];
++	s->MulticastFramesXmittedOK = c[RTL9300_MIB_OUT_MCAST];
++	s->BroadcastFramesXmittedOK = c[RTL9300_MIB_OUT_BCAST];
++	s->MulticastFramesReceivedOK = c[RTL9300_MIB_IN_MCAST];
++	s->BroadcastFramesReceivedOK = c[RTL9300_MIB_IN_BCAST];
++	s->FrameTooLongErrors = c[RTL9300_MIB_RX_TOO_LONG];
++
++	mutex_unlock(&port->sw->stats_lock);
++}
++
++void rtl9300_get_eth_ctrl_stats(struct net_device *ndev,
++				struct ethtool_eth_ctrl_stats *s)
++{
++	struct rtl9300_port *port = netdev_priv(ndev);
++
++	mutex_lock(&port->sw->stats_lock);
++	rtl9300_mib_update(port);
++	s->UnsupportedOpcodesReceived = port->mib[RTL9300_MIB_UNSUP_OPCODE];
++	mutex_unlock(&port->sw->stats_lock);
++}
++
++void rtl9300_get_pause_stats(struct net_device *ndev,
++			     struct ethtool_pause_stats *s)
++{
++	struct rtl9300_port *port = netdev_priv(ndev);
++
++	mutex_lock(&port->sw->stats_lock);
++	rtl9300_mib_update(port);
++	s->tx_pause_frames = port->mib[RTL9300_MIB_TX_PAUSE];
++	s->rx_pause_frames = port->mib[RTL9300_MIB_RX_PAUSE];
++	mutex_unlock(&port->sw->stats_lock);
++}
++
++void rtl9300_get_rmon_stats(struct net_device *ndev,
++			    struct ethtool_rmon_stats *s,
++			    const struct ethtool_rmon_hist_range **ranges)
++{
++	struct rtl9300_port *port = netdev_priv(ndev);
++	const u64 *c = port->mib;
++
++	mutex_lock(&port->sw->stats_lock);
++	rtl9300_mib_update(port);
++
++	s->undersize_pkts = c[RTL9300_MIB_RX_UNDERSIZE];
++	s->oversize_pkts = c[RTL9300_MIB_RX_OVERSIZE];
++	s->fragments = c[RTL9300_MIB_RX_FRAGMENTS];
++	s->jabbers = c[RTL9300_MIB_RX_JABBERS];
++
++	for (int i = 0; i < RTL9300_MIB_HIST_COUNT; i++) {
++		s->hist[i] = c[RTL9300_MIB_RX_HIST + i];
++		s->hist_tx[i] = c[RTL9300_MIB_TX_HIST + i];
++	}
++
++	mutex_unlock(&port->sw->stats_lock);
++
++	*ranges = rtl9300_rmon_ranges;
++}

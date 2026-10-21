@@ -1,0 +1,20 @@
+net: ethernet: realtek: add an RTL930x switch driver
+
+The Realtek RTL9301, RTL9302B, RTL9302C and RTL9303 are MIPS SoCs built
+around an Ethernet switch with up to 28 ports. The switch is one
+register block, described as a syscon whose children are the MDIO, I2C
+and reset controllers, and the CPU reaches it through a DMA engine of
+the switch on its port 28, with the source and destination ports in
+the DMA descriptors rather than in the frames.
+
+That makes it a switchdev driver with its own DMA, like the Microchip
+sparx5 and lan966x drivers, rather than a DSA switch behind a conduit.
+The binding already describes it that way.
+
+Start the driver: bind the switch node, take the register map of the
+syscon and report which chip it is. The ports, the DMA engine and the
+switch setup follow in the next patches.
+
+There is no public datasheet. The register layout and the order of the
+setup follow the OpenWrt realtek target, by Birger Koblitz, Markus
+Stockhausen and other contributors.

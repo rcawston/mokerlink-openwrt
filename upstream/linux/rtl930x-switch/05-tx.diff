@@ -1,0 +1,392 @@
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
+index 8a8a94e4a7a..03eb06181b7 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
+@@ -12,6 +12,8 @@
+ #include <linux/mutex.h>
+ #include <linux/netdevice.h>
+ #include <linux/regmap.h>
++#include <linux/spinlock.h>
++#include <linux/timer.h>
+ #include <linux/types.h>
+ 
+ /* Front ports 0-27, and the port the DMA engine of the switch sits on */
+@@ -24,6 +26,7 @@
+ #define RTL9300_MAX_FRAME		12288
+ 
+ #define RTL9300_RX_RING_SIZE		512
++#define RTL9300_TX_RING_SIZE		64
+ 
+ struct page_pool;
+ struct rtl9300_nic_rings;
+@@ -56,6 +59,18 @@ struct rtl9300_nic {
+ 	struct sk_buff *rx_skb;
+ 	unsigned int rx_port;
+ 	bool rx_discard;
++
++	/* TX: the frames the hardware still owns, between tx_tail and
++	 * tx_head, which count up and wrap at the ring size, and the timer
++	 * that runs while there are any
++	 */
++	spinlock_t tx_lock;
++	struct sk_buff *tx_skb[RTL9300_TX_RING_SIZE];
++	dma_addr_t tx_dma[RTL9300_TX_RING_SIZE];
++	unsigned int tx_len[RTL9300_TX_RING_SIZE];
++	unsigned int tx_head;
++	unsigned int tx_tail;
++	struct timer_list tx_timer;
+ };
+ 
+ struct rtl9300_sw {
+@@ -69,5 +84,7 @@ struct rtl9300_sw {
+ 
+ int rtl9300_nic_init(struct rtl9300_sw *sw, int irq);
+ void rtl9300_nic_exit(struct rtl9300_sw *sw);
++netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
++			     struct net_device *ndev, unsigned int port);
+ 
+ #endif /* _RTL9300_H_ */
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c
+index 6e391c259be..18a07ac93c6 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c
+@@ -25,6 +25,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/netdevice.h>
+ #include <linux/skbuff.h>
++#include <linux/timer.h>
+ #include <net/page_pool/helpers.h>
+ 
+ #include "rtl9300.h"
+@@ -53,6 +54,23 @@
+ 
+ #define RTL9300_RX_TAG0_PORT		GENMASK(13, 8)
+ 
++/* A frame to send carries a CPU tag; forwarding type "physical" sends it
++ * to the ports in the destination mask (tag words 4-7, bit 0 of word 7 for
++ * port 0) without an L2 lookup, and regardless of the spanning tree state
++ */
++#define RTL9300_TX_TAG0_CPU_TAG		BIT(15)
++#define RTL9300_TX_TAG1_FWD_TYPE	GENMASK(11, 8)
++#define   RTL9300_TX_FWD_PHYSICAL	1
++#define RTL9300_TX_TAG1_IGNORE_STP	BIT(2)
++
++/* How long the control register is read before a transmit is triggered,
++ * and when the timer kicks the engine, which only takes a quick look
++ */
++#define RTL9300_TX_TRIGGER_US		5000
++#define RTL9300_TX_KICK_US		10
++/* While frames are in the ring, the timer runs every tick */
++#define RTL9300_TX_TIMER_TICKS		1
++
+ struct rtl9300_desc {
+ 	__be32 addr;
+ 	__be16 reserved;
+@@ -64,10 +82,14 @@ struct rtl9300_desc {
+ 
+ struct rtl9300_nic_rings {
+ 	__be32 rx_ring[RTL9300_RX_RING_SIZE];
++	__be32 tx_ring[RTL9300_TX_RING_SIZE];
+ 	struct rtl9300_desc rx_desc[RTL9300_RX_RING_SIZE];
++	struct rtl9300_desc tx_desc[RTL9300_TX_RING_SIZE];
+ };
+ 
+ static_assert(sizeof(struct rtl9300_desc) == 32);
++/* The TX indices wrap at the ring size */
++static_assert((RTL9300_TX_RING_SIZE & (RTL9300_TX_RING_SIZE - 1)) == 0);
+ /* The width of the counter field */
+ static_assert(RTL9300_RX_RING_FRAMES <= 0x3ff);
+ 
+@@ -84,6 +106,14 @@ static dma_addr_t rtl9300_rx_desc_dma(struct rtl9300_nic *nic, unsigned int i)
+ 	return nic->rings_dma + offset;
+ }
+ 
++static dma_addr_t rtl9300_tx_desc_dma(struct rtl9300_nic *nic, unsigned int i)
++{
++	size_t offset = offsetof(struct rtl9300_nic_rings, tx_desc) +
++			sizeof(struct rtl9300_desc) * i;
++
++	return nic->rings_dma + offset;
++}
++
+ /* Hands RX descriptor i to the hardware */
+ static void rtl9300_rx_give(struct rtl9300_nic *nic, unsigned int i)
+ {
+@@ -289,10 +319,196 @@ static int rtl9300_rx(struct rtl9300_sw *sw, int budget)
+ 	return frames;
+ }
+ 
++static void rtl9300_tx_init(struct rtl9300_nic *nic)
++{
++	for (unsigned int i = 0; i < RTL9300_TX_RING_SIZE; i++) {
++		u32 entry = lower_32_bits(rtl9300_tx_desc_dma(nic, i));
++
++		if (i == RTL9300_TX_RING_SIZE - 1)
++			entry |= RTL9300_RING_WRAP;
++
++		nic->rings->tx_ring[i] = cpu_to_be32(entry);
++	}
++
++	nic->tx_head = 0;
++	nic->tx_tail = 0;
++}
++
++/* Frees the frames the hardware has sent */
++static void rtl9300_tx_reclaim(struct rtl9300_sw *sw, int budget)
++{
++	struct rtl9300_nic *nic = &sw->nic;
++
++	spin_lock(&nic->tx_lock);
++
++	while (nic->tx_tail != nic->tx_head) {
++		unsigned int i = nic->tx_tail & (RTL9300_TX_RING_SIZE - 1);
++		u32 entry = be32_to_cpu(READ_ONCE(nic->rings->tx_ring[i]));
++
++		if (entry & RTL9300_RING_OWN)
++			break;
++
++		dma_unmap_single(sw->dev, nic->tx_dma[i], nic->tx_len[i],
++				 DMA_TO_DEVICE);
++		napi_consume_skb(nic->tx_skb[i], budget);
++		nic->tx_skb[i] = NULL;
++		nic->tx_tail++;
++	}
++
++	spin_unlock(&nic->tx_lock);
++}
++
++/* Frees the frames that were never sent, with the engine stopped */
++static void rtl9300_tx_free(struct rtl9300_sw *sw)
++{
++	struct rtl9300_nic *nic = &sw->nic;
++
++	for (unsigned int i = 0; i < RTL9300_TX_RING_SIZE; i++) {
++		if (!nic->tx_skb[i])
++			continue;
++
++		dma_unmap_single(sw->dev, nic->tx_dma[i], nic->tx_len[i],
++				 DMA_TO_DEVICE);
++		kfree_skb(nic->tx_skb[i]);
++		nic->tx_skb[i] = NULL;
++	}
++}
++
++static void rtl9300_tx_trigger(struct rtl9300_sw *sw, u64 timeout_us)
++{
++	u32 val;
++	int err;
++
++	/* Reads of the control register sometimes come back empty, and
++	 * writing such a value back would stop the engine (OpenWrt)
++	 */
++	err = regmap_read_poll_timeout_atomic(sw->map, RTL9300_DMA_IF_CTRL,
++					      val,
++					      (val & RTL9300_DMA_IF_TXRX_EN) ==
++					      RTL9300_DMA_IF_TXRX_EN,
++					      0, timeout_us);
++	if (err) {
++		dev_err_ratelimited(sw->dev,
++				    "DMA control reads back %#x\n", val);
++		return;
++	}
++
++	regmap_write(sw->map, RTL9300_DMA_IF_CTRL,
++		     val | RTL9300_DMA_IF_TX_TRIGGER(0));
++}
++
++/* The TX done interrupt is this driver's own reading of the interrupt
++ * registers: OpenWrt never enables it, and frees sent frames from its RX
++ * poll. So while frames are in the ring, a timer also kicks the engine,
++ * in case a trigger was lost, and the poll, which frees what was sent, as
++ * the TX coalescing timer of stmmac does.
++ */
++static void rtl9300_tx_timer(struct timer_list *t)
++{
++	struct rtl9300_nic *nic = timer_container_of(nic, t, tx_timer);
++	struct rtl9300_sw *sw = rtl9300_nic_to_sw(nic);
++	bool busy;
++
++	spin_lock(&nic->tx_lock);
++	busy = nic->tx_head != nic->tx_tail;
++	if (busy) {
++		rtl9300_tx_trigger(sw, RTL9300_TX_KICK_US);
++		mod_timer(&nic->tx_timer, jiffies + RTL9300_TX_TIMER_TICKS);
++	}
++	spin_unlock(&nic->tx_lock);
++
++	if (busy)
++		napi_schedule(&nic->napi);
++}
++
++/**
++ * rtl9300_nic_xmit - send a frame out of one port
++ * @sw: the switch
++ * @skb: the frame, without FCS
++ * @ndev: the network interface of the port, for its statistics
++ * @port: the front port
++ *
++ * Return: NETDEV_TX_BUSY, with the frame untouched, when the ring is full;
++ * NETDEV_TX_OK otherwise, when the frame is queued or dropped.
++ */
++netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
++			     struct net_device *ndev, unsigned int port)
++{
++	struct rtl9300_nic *nic = &sw->nic;
++	struct rtl9300_desc *desc;
++	unsigned int i, len;
++	dma_addr_t dma;
++	u32 entry;
++
++	spin_lock(&nic->tx_lock);
++
++	if (nic->tx_head - nic->tx_tail >= RTL9300_TX_RING_SIZE) {
++		spin_unlock(&nic->tx_lock);
++		return NETDEV_TX_BUSY;
++	}
++
++	/* The engine puts the FCS into the last four bytes of the buffer,
++	 * whatever they hold, so they only have to be there: in the tailroom,
++	 * which leaves the frame as it is, also when it is a clone
++	 */
++	if (skb_put_padto(skb, ETH_ZLEN))
++		goto drop_freed;
++	if (skb_tailroom(skb) < ETH_FCS_LEN && skb_pad(skb, ETH_FCS_LEN))
++		goto drop_freed;
++	len = skb->len + ETH_FCS_LEN;
++
++	dma = dma_map_single(sw->dev, skb->data, len, DMA_TO_DEVICE);
++	if (dma_mapping_error(sw->dev, dma))
++		goto drop;
++
++	i = nic->tx_head & (RTL9300_TX_RING_SIZE - 1);
++	nic->tx_skb[i] = skb;
++	nic->tx_dma[i] = dma;
++	nic->tx_len[i] = len;
++
++	desc = &nic->rings->tx_desc[i];
++	memset(desc, 0, sizeof(*desc));
++	desc->addr = cpu_to_be32(lower_32_bits(dma));
++	desc->len = cpu_to_be16(len);
++	desc->tag[0] = cpu_to_be16(RTL9300_TX_TAG0_CPU_TAG);
++	desc->tag[1] = cpu_to_be16(FIELD_PREP(RTL9300_TX_TAG1_FWD_TYPE,
++					      RTL9300_TX_FWD_PHYSICAL) |
++				   RTL9300_TX_TAG1_IGNORE_STP);
++	desc->tag[6] = cpu_to_be16(upper_16_bits(BIT(port)));
++	desc->tag[7] = cpu_to_be16(lower_16_bits(BIT(port)));
++
++	entry = lower_32_bits(rtl9300_tx_desc_dma(nic, i)) | RTL9300_RING_OWN;
++	if (i == RTL9300_TX_RING_SIZE - 1)
++		entry |= RTL9300_RING_WRAP;
++
++	/* The descriptor must be complete before the entry hands it over */
++	dma_wmb();
++	WRITE_ONCE(nic->rings->tx_ring[i], cpu_to_be32(entry));
++	nic->tx_head++;
++
++	skb_tx_timestamp(skb);
++	rtl9300_tx_trigger(sw, RTL9300_TX_TRIGGER_US);
++	if (!timer_pending(&nic->tx_timer))
++		mod_timer(&nic->tx_timer, jiffies + RTL9300_TX_TIMER_TICKS);
++
++	spin_unlock(&nic->tx_lock);
++
++	return NETDEV_TX_OK;
++
++drop:
++	dev_kfree_skb_any(skb);
++drop_freed:
++	spin_unlock(&nic->tx_lock);
++	dev_dstats_tx_dropped(ndev);
++
++	return NETDEV_TX_OK;
++}
++
+ static void rtl9300_nic_irq_enable(struct rtl9300_sw *sw)
+ {
+ 	regmap_set_bits(sw->map, RTL9300_DMA_IF_INTR_RX_RUNOUT_MSK, BIT(0));
+ 	regmap_set_bits(sw->map, RTL9300_DMA_IF_INTR_RX_DONE_MSK, BIT(0));
++	regmap_set_bits(sw->map, RTL9300_DMA_IF_INTR_TX_DONE_MSK, BIT(0));
+ }
+ 
+ /* Masks and acknowledges every interrupt of the DMA engine */
+@@ -309,20 +525,24 @@ static void rtl9300_nic_irq_disable_all(struct rtl9300_sw *sw)
+ static irqreturn_t rtl9300_nic_irq(int irq, void *data)
+ {
+ 	struct rtl9300_sw *sw = data;
+-	u32 runout, done;
++	u32 runout, done, tx_done;
+ 
+ 	regmap_read(sw->map, RTL9300_DMA_IF_INTR_RX_RUNOUT_STS, &runout);
+ 	regmap_read(sw->map, RTL9300_DMA_IF_INTR_RX_DONE_STS, &done);
++	regmap_read(sw->map, RTL9300_DMA_IF_INTR_TX_DONE_STS, &tx_done);
+ 	runout &= BIT(0);
+ 	done &= BIT(0);
+-	if (!runout && !done)
++	tx_done &= BIT(0);
++	if (!runout && !done && !tx_done)
+ 		return IRQ_NONE;
+ 
+ 	/* Masked until the poll has caught up */
+ 	regmap_clear_bits(sw->map, RTL9300_DMA_IF_INTR_RX_RUNOUT_MSK, BIT(0));
+ 	regmap_clear_bits(sw->map, RTL9300_DMA_IF_INTR_RX_DONE_MSK, BIT(0));
++	regmap_clear_bits(sw->map, RTL9300_DMA_IF_INTR_TX_DONE_MSK, BIT(0));
+ 	regmap_write(sw->map, RTL9300_DMA_IF_INTR_RX_RUNOUT_STS, runout);
+ 	regmap_write(sw->map, RTL9300_DMA_IF_INTR_RX_DONE_STS, done);
++	regmap_write(sw->map, RTL9300_DMA_IF_INTR_TX_DONE_STS, tx_done);
+ 
+ 	napi_schedule(&sw->nic.napi);
+ 
+@@ -335,6 +555,7 @@ static int rtl9300_nic_poll(struct napi_struct *napi, int budget)
+ 	struct rtl9300_sw *sw = rtl9300_nic_to_sw(nic);
+ 	int frames;
+ 
++	rtl9300_tx_reclaim(sw, budget);
+ 	frames = rtl9300_rx(sw, budget);
+ 	if (frames < budget && napi_complete_done(napi, frames))
+ 		rtl9300_nic_irq_enable(sw);
+@@ -397,6 +618,11 @@ static int rtl9300_nic_setup(struct rtl9300_sw *sw)
+ 	if (err)
+ 		return err;
+ 
++	err = regmap_write(sw->map, RTL9300_DMA_TX_BASE(0),
++			   rings + offsetof(struct rtl9300_nic_rings, tx_ring));
++	if (err)
++		return err;
++
+ 	err = regmap_update_bits(sw->map, RTL9300_DMA_IF_RX_RING_SIZE(0),
+ 				 RTL9300_DMA_IF_RX_RING_FIELD(0),
+ 				 FIELD_PREP(RTL9300_DMA_IF_RX_RING_FIELD(0),
+@@ -500,6 +726,8 @@ int rtl9300_nic_init(struct rtl9300_sw *sw, int irq)
+ 	BUILD_BUG_ON(RTL9300_RX_FRAG_SIZE > PAGE_SIZE);
+ 
+ 	nic->irq = irq;
++	spin_lock_init(&nic->tx_lock);
++	timer_setup(&nic->tx_timer, rtl9300_tx_timer, 0);
+ 
+ 	err = dma_set_mask_and_coherent(sw->dev, DMA_BIT_MASK(32));
+ 	if (err)
+@@ -528,6 +756,7 @@ int rtl9300_nic_init(struct rtl9300_sw *sw, int irq)
+ 	if (err)
+ 		goto err_pool;
+ 
++	rtl9300_tx_init(nic);
+ 	err = rtl9300_rx_fill(nic);
+ 	if (err)
+ 		goto err_buffers;
+@@ -569,6 +798,8 @@ void rtl9300_nic_exit(struct rtl9300_sw *sw)
+ {
+ 	struct rtl9300_nic *nic = &sw->nic;
+ 
++	timer_shutdown_sync(&nic->tx_timer);
++
+ 	/* napi_disable() returns once the poll has given NAPI up, which can
+ 	 * be before it has unmasked the interrupts again; the poll runs with
+ 	 * BH off, so it is done after an RCU grace period
+@@ -580,6 +811,7 @@ void rtl9300_nic_exit(struct rtl9300_sw *sw)
+ 
+ 	/* The engine is idle after this, so its buffers can go */
+ 	rtl9300_nic_stop(sw);
++	rtl9300_tx_free(sw);
+ 	rtl9300_rx_free(nic);
+ 
+ 	page_pool_destroy(nic->pool);

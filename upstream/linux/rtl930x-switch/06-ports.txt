@@ -1,0 +1,39 @@
+net: ethernet: realtek: rtl9300: add the ports
+
+Every port of the ethernet-ports node with a PHY becomes a network
+interface. Received frames go to the interface of the port in their CPU
+tag, if it is up, and frames to send leave through the port of their
+interface. Frames lost on the way to an interface that is up count as
+its rx_dropped.
+
+The link of a port is handled by phylink. The MAC can't be given the
+speed and duplex of a PHY port itself: the MDIO controller polls the
+PHYs in hardware and sets the MAC from that, once the PHY is attached,
+which turns the polling of the port on in the MDIO driver. So the MAC
+is left unforced, and mac_link_up only enables it, after checking that
+the MAC reports the link phylib does, as Andrew Lunn suggested for this
+hardware: a MAC that disagrees stays off with an error, rather than
+passing traffic at the wrong speed. Pause is forced to what phylink
+resolved, as OpenWrt does.
+
+The PHY is attached when the port is created, not when the interface
+is opened, as DSA does: a PHY's PSE control has to work while its
+interface is down, and ethtool finds it through the attached PHY. As
+with DSA, the PHY's sysfs links to the interface are missing, as the
+interface isn't registered yet when the PHY is attached.
+
+fw_devlink does not follow phy-handle, and the MDIO controller is a
+child of the switch, so the driver defers its probe itself until the
+PHYs of the ports, and the NVMEM cells of their MAC addresses, are
+there, before it touches the hardware. A PHY that isn't there by the
+deferred probe timeout, or that fails to attach, costs only its port,
+and so does a PHY on a disabled MDIO bus; a missing NVMEM cell gives
+the port a random address. Ports without a PHY, such as SFP cages, need
+the SerDes and PCS setup that comes in a later series, and are skipped
+for now; so are interface modes other than SGMII, QSGMII, USXGMII and
+10G-QXGMII. The SerDes of the supported modes are used as the boot
+loader set them up.
+
+All ports share the one TX ring, so when it is full the queues of all
+open ports stop, as with lan966x and ocelot, and they wake together
+once a quarter of the ring is free again.

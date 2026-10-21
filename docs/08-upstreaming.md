@@ -14,7 +14,7 @@ to Linux was withdrawn after a review pointed that out.
 
 ## Status
 
-As of 19 October 2026:
+As of 20 October 2026:
 
 | Submission | Where | State |
 |---|---|---|
@@ -28,6 +28,7 @@ As of 19 October 2026:
 | the board | OpenWrt | [openwrt/openwrt#26042](https://github.com/openwrt/openwrt/pull/26042), without the PoE LEDs; depends on openwrt/netifd#97 |
 | PSE priority choices in the web UI | LuCI | [openwrt/luci#9141](https://github.com/openwrt/luci/pull/9141) |
 | RTL8239 PSE (`pse`), PSE LED trigger names (`pse-led-triggers`) | netdev, linux-leds | not sent; wait for the PSE series they depend on ([Dependencies](#dependencies)) |
+| RTL930x switch driver (`rtl930x-switch`) | netdev, `[PATCH net-next]` | not sent: 9 patches, checkpatch-clean, not yet built (CI) or run on the board. First the coordination with Markus Stockhausen, Chris Packham and Jonas Jelonek, by email (draft in `build/upstream/linux/rtl930x-switch/`, not in the repository); the design is in its `DESIGN.md` |
 
 ## What goes where
 
@@ -40,6 +41,7 @@ As of 19 October 2026:
 | the device | `realtek: rtl930x: add support for MokerLink POE-10G07110GSM` | none |
 | PSE core fix: a PI disabled with software power control is not enabled again by the retry of its power domain | `generic: pse-pd: don't enable a PI again while disabling it`: this repository's `835-*` as `generic/pending-6.18/898-*`, a separate pull request (`openwrt TREE pse-fix`) | `pse-fix`: net tree as a fix (`Fixes: ffef61d6d273`), netdev; made against mainline |
 | link change fix in the switch driver | `realtek: dsa: let phylib read the PHY on a port link change` (`patches/0003-*`, a patch to OpenWrt's own driver), a separate pull request (`openwrt TREE dsa-fix`) | none |
+| RTL930x switch driver: the DMA engine and the ports as standalone interfaces | none: OpenWrt keeps its own DSA driver | `rtl930x-switch`: net-next, netdev; made against net-next |
 
 Not submitted: the `mokerlink-*` tools and the first-boot defaults in
 `files/`.
@@ -218,6 +220,7 @@ One series at a time, each on its tree:
 | `pse-fix` | `net/main` | `[PATCH net]` |
 | `leds` | `leds/for-leds-next` | `[PATCH]` |
 | `pse` | `net-next/main`, once the PSE series it needs is in it | `[PATCH net-next]` |
+| `rtl930x-switch` | `net-next/main` | `[PATCH net-next]` |
 
 ```sh
 git -C ~/linux checkout -B mokerlink-pse-fix net/main
@@ -251,6 +254,15 @@ CI runs on the tip of the net tree with `W=1`), and is a regular bug for the
 kernel's threat model (it needs an admin action or an unplug), so it goes
 to the list, not to the security team.
 
+The switch driver series is checked by `scripts/check-rtl930x-switch.sh`:
+on the tip of net-next, checkpatch, then a `W=1` and sparse build of
+every patch for MIPS and a `COMPILE_TEST` build for x86_64. The
+`rtl930x-switch` workflow runs it on every push that changes the series,
+together with `scripts/build-rtl930x-test-image.sh`, which builds a
+RAM-boot test image of net-next with the series for this board. The
+hardware test and its plan are in `upstream/linux/rtl930x-switch/test/`;
+the cover letter's Testing section takes only what they showed.
+
 `scripts/make-upstream.py patches` writes the kernel patches as OpenWrt
 carries them to `build/upstream/patches`, for a quick review without a
 tree. They are in the format of OpenWrt's `make target/linux/refresh`,
@@ -276,5 +288,6 @@ hunk header cut to 40 characters.
 - **Port LEDs:** they belong to the switch driver, in its port nodes: all
   of a port's LEDs with on/off control, and hardware offload of the
   triggers on top (Andrew Lunn on the `leds` series). In Linux that waits
-  for an RTL930x switch driver; in OpenWrt, openwrt/openwrt#25341 adds
+  for an RTL930x switch driver, which `rtl930x-switch` starts; in
+  OpenWrt, openwrt/openwrt#25341 adds
   software-controlled LEDs to the switch driver.

@@ -1,0 +1,17 @@
+net: ethernet: realtek: rtl9300: report the MIB counters
+
+Report the hardware counters of each port through the ethtool groups
+for the MAC, MAC control, pause and RMON statistics. The frame and
+octet counts of the MAC group are derived from the RFC 2863 counters
+as RFC 3635 has it, as rtl8365mb does.
+
+The counters sit in two blocks per port, stored backwards. The octet
+and frame counts are 64 bits wide; the others are 32 bits wide and
+wrap, at 10G within minutes, so a worker reads them every minute and
+adds them up, and every ethtool read updates them too. The counts start
+at zero when the port is created, so that what the boot loader counted
+is left out.
+
+The interface statistics stay what the CPU sent and received through
+each port, which is all a port carries while ports forward nothing
+between them. The counter offsets follow OpenWrt's rtl83xx driver.

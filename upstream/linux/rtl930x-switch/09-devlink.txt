@@ -1,0 +1,7 @@
+net: ethernet: realtek: rtl9300: add devlink ports
+
+Register a devlink port for each port, so that every interface has a
+physical port name, which udev can name the interfaces by, and all of
+them share one switch ID, which bridge offload needs later. The ID only
+has to set this switch apart from others on the system, so it is
+random.

@@ -1,0 +1,88 @@
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
+index 8e3ed3ee582..1c3f4c73176 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
+@@ -9,6 +9,8 @@
+ #define _RTL9300_H_
+ 
+ #include <linux/bits.h>
++#include <linux/if_ether.h>
++#include <linux/if_vlan.h>
+ #include <linux/mutex.h>
+ #include <linux/netdevice.h>
+ #include <linux/phylink.h>
+@@ -25,6 +27,8 @@
+ 
+ /* Longest frame the switch passes, with FCS */
+ #define RTL9300_MAX_FRAME		12288
++/* A frame on top of its MTU: Ethernet header, two VLAN tags and FCS */
++#define RTL9300_FRAME_OVERHEAD		(ETH_HLEN + 2 * VLAN_HLEN + ETH_FCS_LEN)
+ 
+ #define RTL9300_RX_RING_SIZE		512
+ #define RTL9300_TX_RING_SIZE		64
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
+index 544eeda0f94..d87bccacc6b 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
+@@ -206,11 +206,42 @@ static int rtl9300_port_ioctl(struct net_device *ndev, struct ifreq *ifr,
+ 	return phylink_mii_ioctl(port->phylink, ifr, cmd);
+ }
+ 
++/* The MAC drops received frames longer than this, counting two VLAN tags
++ * and the FCS, at every speed
++ */
++static int rtl9300_port_set_max_frame(struct rtl9300_port *port, int mtu)
++{
++	u32 reg = RTL9300_MAC_L2_PORT_MAX_LEN_CTRL(port->index);
++	u32 frame = mtu + RTL9300_FRAME_OVERHEAD;
++
++	return regmap_update_bits(port->sw->map, reg,
++				  RTL9300_MAC_MAX_LEN_10_100 |
++				  RTL9300_MAC_MAX_LEN,
++				  FIELD_PREP(RTL9300_MAC_MAX_LEN_10_100,
++					     frame) |
++				  FIELD_PREP(RTL9300_MAC_MAX_LEN, frame));
++}
++
++static int rtl9300_port_change_mtu(struct net_device *ndev, int mtu)
++{
++	struct rtl9300_port *port = netdev_priv(ndev);
++	int err;
++
++	err = rtl9300_port_set_max_frame(port, mtu);
++	if (err)
++		return err;
++
++	WRITE_ONCE(ndev->mtu, mtu);
++
++	return 0;
++}
++
+ static const struct net_device_ops rtl9300_port_netdev_ops = {
+ 	.ndo_open = rtl9300_port_open,
+ 	.ndo_stop = rtl9300_port_stop,
+ 	.ndo_start_xmit = rtl9300_port_xmit,
+ 	.ndo_eth_ioctl = rtl9300_port_ioctl,
++	.ndo_change_mtu = rtl9300_port_change_mtu,
+ 	.ndo_set_mac_address = eth_mac_addr,
+ 	.ndo_validate_addr = eth_validate_addr,
+ };
+@@ -464,6 +495,7 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
+ 	 */
+ 	ndev->needed_tailroom = ETH_FCS_LEN;
+ 	ndev->priv_flags &= ~IFF_TX_SKB_SHARING;
++	ndev->max_mtu = RTL9300_MAX_FRAME - RTL9300_FRAME_OVERHEAD;
+ 
+ 	port = netdev_priv(ndev);
+ 	port->sw = sw;
+@@ -477,6 +509,10 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
+ 	if (err)
+ 		eth_hw_addr_random(ndev);
+ 
++	err = rtl9300_port_set_max_frame(port, ndev->mtu);
++	if (err)
++		goto err_free;
++
+ 	config = &port->phylink_config;
+ 	config->dev = &ndev->dev;
+ 	config->type = PHYLINK_NETDEV;

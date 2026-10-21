@@ -1,0 +1,7 @@
+net: ethernet: realtek: offer the vendor menu on Realtek switch SoCs
+
+The Realtek Ethernet menu depends on PCI, because all its drivers so far
+are for PCI devices. The switch built into the Realtek RTL930x SoCs is
+not one, and its driver goes into this menu next. Offer the menu on
+those SoCs too, and for compile testing; the PCI drivers in it keep
+their own dependency on PCI.

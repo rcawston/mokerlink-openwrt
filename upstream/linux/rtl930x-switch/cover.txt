@@ -1,0 +1,78 @@
+net: ethernet: realtek: add an RTL930x switch driver
+
+The Realtek RTL9301, RTL9302B, RTL9302C and RTL9303 are MIPS SoCs built
+around an Ethernet switch with up to 28 ports. Mainline has the drivers
+for the switch's MDIO and I2C controllers and its binding, but not for
+the switch. This series adds the start of that driver: the DMA engine
+through which the CPU reaches the switch, and the ports as standalone
+network interfaces with phylink. Bridge offload, VLANs, the SerDes and
+PCS, and the port LEDs follow in later series.
+
+The hardware, in Linux terms:
+
+        CPU (MIPS 34Kc)
+           |
+    +------+--------------------- switch block (one syscon) ---------+
+    |      |                                                          |
+    |  DMA engine ("NIC") --- port 28 --+                             |
+    |   CPU tag in the                  |                             |
+    |   descriptors           L2 switch +--- ports 0-27 --- SerDes ------ PHYs
+    |                                   |                             |   |
+    |  MDIO controller: polls the PHYs and sets the MACs from them -------+
+    |  I2C controllers, reset                                         |
+    +-----------------------------------------------------------------+
+
+The DMA engine is part of the switch block and reaches nothing but the
+switch's port 28. It is not an Ethernet controller, and the CPU tag (the
+source port of a received frame, the destination ports of one to send)
+exists only in its DMA descriptors, never in a frame. So this is a
+switchdev driver that runs the DMA engine itself, as sparx5, lan966x and
+ocelot's VSC7514 driver do, and not a DSA switch behind a conduit; Andrew
+advised that for this chip when Chris asked in 2024 [1], and the binding
+already describes it that way: the "nic" interrupt is on the switch node,
+and there is no CPU port.
+
+How the ports work:
+
+- Each port with a PHY becomes an interface. Its MAC can't be given the
+  speed or duplex of the PHY itself: the MDIO controller polls the PHYs
+  in hardware and sets the MACs from that, once phylib attaches the PHY,
+  which turns the polling of the port on in the MDIO driver. So the MAC
+  is left unforced, and mac_link_up enables it only after checking that
+  the MAC reports the link phylib does, as Andrew suggested on the MDIO
+  driver. Pause is forced to what phylink resolved.
+- The PHY is attached when the port is created, not when the interface is
+  opened, as DSA does, so that ethtool's PSE control works on a port that
+  is down.
+- The ports forward nothing between them: each one forwards only to the
+  CPU port, nothing is learned, every port forwards in the one spanning
+  tree instance, and VLANs neither filter nor change what reaches the
+  CPU.
+- All ports share one TX ring of the DMA engine, so their queues stop
+  together when it is full. OpenWrt never uses the TX done interrupt, so
+  while frames are in the ring a timer also kicks the engine and the poll
+  every tick, as stmmac's TX coalescing timer does.
+- The RX ring holds 64 frames at any MTU: its counter must never let it
+  overflow, even with frames of the longest length.
+
+What it relies on: the SerDes of the ports are used as the boot loader set
+them up, and the parts of the hardware polling setup that mainline's MDIO
+driver doesn't do yet (the MAC type of each port, the polling of SerDes
+ports) too. Ports without a PHY, such as SFP cages, need the PCS that
+comes with the SerDes series, and are skipped for now, as are interface
+modes other than SGMII, QSGMII, USXGMII and 10G-QXGMII.
+
+There is no public datasheet. The register layout and the order of the
+setup follow OpenWrt's realtek target, by Birger Koblitz, Markus
+Stockhausen, Jonas Jelonek, Gennaro Cimmino and other contributors.
+
+Merge path: all patches through net-next. The series changes no binding
+and depends on nothing outside net-next; the device tree of the
+MokerLink POE-10G07110GSM goes to the MIPS tree separately.
+
+Testing: not built or run yet. The results of the CI builds (W=1 and
+sparse, for MIPS and, compile tested, for x86_64) and of the hardware
+test on a MokerLink POE-10G07110GSM (RTL9303) go here before this is
+posted.
+
+[1] https://lore.kernel.org/netdev/c19eb8d0-f89b-4909-bf14-dfffcdc7c1a6@lunn.ch/

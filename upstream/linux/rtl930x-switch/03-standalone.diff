@@ -1,0 +1,567 @@
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
+index 352d8b13ce6..9e48cad17b2 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
+@@ -8,12 +8,16 @@
+ #ifndef _RTL9300_H_
+ #define _RTL9300_H_
+ 
++#include <linux/bits.h>
++#include <linux/mutex.h>
+ #include <linux/regmap.h>
+ #include <linux/types.h>
+ 
+ /* Front ports 0-27, and the port the DMA engine of the switch sits on */
+ #define RTL9300_NUM_PORTS		28
+ #define RTL9300_CPU_PORT		28
++#define RTL9300_FRONT_PORTS		GENMASK(RTL9300_NUM_PORTS - 1, 0)
++#define RTL9300_ALL_PORTS		GENMASK(RTL9300_CPU_PORT, 0)
+ 
+ struct rtl9300_info {
+ 	const char *name;
+@@ -24,6 +28,8 @@ struct rtl9300_sw {
+ 	struct device *dev;
+ 	struct regmap *map;
+ 	const struct rtl9300_info *info;
++	/* Serialises the table access registers */
++	struct mutex tbl_lock;
+ };
+ 
+ #endif /* _RTL9300_H_ */
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
+index b3918ae24bd..86998c3fe09 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
+@@ -18,6 +18,8 @@
+  */
+ 
+ #include <linux/bitfield.h>
++#include <linux/if_vlan.h>
++#include <linux/lockdep.h>
+ #include <linux/mfd/syscon.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+@@ -27,6 +29,388 @@
+ #include "rtl9300.h"
+ #include "rtl9300_regs.h"
+ 
++/* A table behind one of the table access blocks */
++struct rtl9300_table {
++	u32 ctrl;	/* control register of the block */
++	u32 data;	/* its first data register */
++	u32 exec;	/* execute bit of the block */
++	u32 write;	/* command that writes an entry of the table */
++};
++
++static const struct rtl9300_table rtl9300_tbl_vlan = {
++	.ctrl = RTL9300_TBL_ACCESS_CTRL_0,
++	.data = RTL9300_TBL_ACCESS_DATA_0,
++	.exec = RTL9300_TBL_CTRL_0_EXEC,
++	.write = RTL9300_TBL_CTRL_0_WRITE |
++		 FIELD_PREP_CONST(RTL9300_TBL_CTRL_0_TYPE, RTL9300_TBL_VLAN),
++};
++
++static const struct rtl9300_table rtl9300_tbl_msti = {
++	.ctrl = RTL9300_TBL_ACCESS_CTRL_0,
++	.data = RTL9300_TBL_ACCESS_DATA_0,
++	.exec = RTL9300_TBL_CTRL_0_EXEC,
++	.write = RTL9300_TBL_CTRL_0_WRITE |
++		 FIELD_PREP_CONST(RTL9300_TBL_CTRL_0_TYPE, RTL9300_TBL_MSTI),
++};
++
++static const struct rtl9300_table rtl9300_tbl_port_iso = {
++	.ctrl = RTL9300_TBL_ACCESS_CTRL_0,
++	.data = RTL9300_TBL_ACCESS_DATA_0,
++	.exec = RTL9300_TBL_CTRL_0_EXEC,
++	.write = RTL9300_TBL_CTRL_0_WRITE |
++		 FIELD_PREP_CONST(RTL9300_TBL_CTRL_0_TYPE,
++				  RTL9300_TBL_PORT_ISO),
++};
++
++static const struct rtl9300_table rtl9300_tbl_untag = {
++	.ctrl = RTL9300_TBL_ACCESS_CTRL_2,
++	.data = RTL9300_TBL_ACCESS_DATA_2,
++	.exec = RTL9300_TBL_CTRL_2_EXEC,
++	.write = RTL9300_TBL_CTRL_2_WRITE |
++		 FIELD_PREP_CONST(RTL9300_TBL_CTRL_2_TYPE, RTL9300_TBL_UNTAG),
++};
++
++static int rtl9300_tbl_wait(struct rtl9300_sw *sw,
++			    const struct rtl9300_table *tbl)
++{
++	u32 val;
++
++	return regmap_read_poll_timeout(sw->map, tbl->ctrl, val,
++					!(val & tbl->exec), 20, 10000);
++}
++
++/* Writes one entry of a table */
++static int rtl9300_tbl_write(struct rtl9300_sw *sw,
++			     const struct rtl9300_table *tbl, u32 index,
++			     const u32 *data, unsigned int words)
++{
++	u32 cmd;
++	int err;
++
++	lockdep_assert_held(&sw->tbl_lock);
++
++	/* In case an earlier command never completed */
++	err = rtl9300_tbl_wait(sw, tbl);
++	if (err)
++		return err;
++
++	for (unsigned int i = 0; i < words; i++) {
++		err = regmap_write(sw->map, tbl->data + 4 * i, data[i]);
++		if (err)
++			return err;
++	}
++
++	cmd = tbl->exec | tbl->write |
++	      FIELD_PREP(RTL9300_TBL_CTRL_INDEX, index);
++	err = regmap_write(sw->map, tbl->ctrl, cmd);
++	if (err)
++		return err;
++
++	return rtl9300_tbl_wait(sw, tbl);
++}
++
++/* Each front port forwards only to the CPU port, the CPU port to all of
++ * them, so that no frame passes between two ports in hardware
++ */
++static int rtl9300_setup_isolation(struct rtl9300_sw *sw)
++{
++	int err = 0;
++	u32 data;
++
++	mutex_lock(&sw->tbl_lock);
++
++	data = FIELD_PREP(RTL9300_PORT_ISO_MEMBERS, BIT(RTL9300_CPU_PORT));
++	for (int port = 0; port < RTL9300_NUM_PORTS; port++) {
++		err = rtl9300_tbl_write(sw, &rtl9300_tbl_port_iso, port,
++					&data, 1);
++		if (err)
++			goto out;
++	}
++
++	data = FIELD_PREP(RTL9300_PORT_ISO_MEMBERS, RTL9300_FRONT_PORTS);
++	err = rtl9300_tbl_write(sw, &rtl9300_tbl_port_iso, RTL9300_CPU_PORT,
++				&data, 1);
++out:
++	mutex_unlock(&sw->tbl_lock);
++	return err;
++}
++
++/* Every port forwards in MSTI 0, the spanning tree instance of all VLANs,
++ * whatever state the boot loader left. The entry has two bits per port:
++ * port p at bit 2 * (p + 3) of its two words taken as one 64-bit value,
++ * word 0 on top.
++ */
++static int rtl9300_setup_stp(struct rtl9300_sw *sw)
++{
++	u32 entry[2] = {};
++	int err;
++
++	for (int port = 0; port <= RTL9300_CPU_PORT; port++) {
++		unsigned int bit = 2 * (port + 3);
++
++		entry[1 - bit / 32] |= RTL9300_STP_FORWARDING << (bit % 32);
++	}
++
++	mutex_lock(&sw->tbl_lock);
++	err = rtl9300_tbl_write(sw, &rtl9300_tbl_msti, 0, entry,
++				ARRAY_SIZE(entry));
++	mutex_unlock(&sw->tbl_lock);
++	if (err)
++		return err;
++
++	/* As OpenWrt sets it */
++	return regmap_write(sw->map, RTL9300_ST_CTRL, 0);
++}
++
++/* Nothing is learned, so every frame from a port is unknown unicast,
++ * broadcast or multicast and reaches the CPU through the isolation. A frame
++ * from a new source address, or one past the learning limit, is forwarded,
++ * whatever the boot loader set for those. Entries the boot loader learned
++ * are removed.
++ */
++static int rtl9300_setup_learning(struct rtl9300_sw *sw)
++{
++	u32 val;
++	int err;
++
++	for (int port = 0; port <= RTL9300_CPU_PORT; port++) {
++		u32 mask = RTL9300_L2_PORT_SALRN_MASK(port);
++
++		err = regmap_update_bits(sw->map, RTL9300_L2_PORT_SALRN(port),
++					 mask,
++					 field_prep(mask,
++						    RTL9300_L2_SALRN_DISABLED));
++		if (err)
++			return err;
++
++		/* Action 0 forwards */
++		err = regmap_clear_bits(sw->map,
++					RTL9300_L2_PORT_NEW_SA_FWD(port),
++					RTL9300_L2_NEW_SA_FWD_MASK(port));
++		if (err)
++			return err;
++
++		err = regmap_clear_bits(sw->map,
++					RTL9300_L2_LRN_PORT_CONSTRT_CTRL(port),
++					RTL9300_L2_LRN_PORT_CONSTRT_ACT);
++		if (err)
++			return err;
++	}
++
++	err = regmap_clear_bits(sw->map, RTL9300_L2_LRN_CONSTRT_CTRL,
++				RTL9300_L2_LRN_CONSTRT_ACT);
++	if (err)
++		return err;
++
++	err = regmap_write(sw->map, RTL9300_L2_UNKN_UC_FLD_PMSK,
++			   RTL9300_ALL_PORTS);
++	if (err)
++		return err;
++
++	err = regmap_write(sw->map, RTL9300_L2_BC_FLD_PMSK, RTL9300_ALL_PORTS);
++	if (err)
++		return err;
++
++	for (int port = 0; port <= RTL9300_CPU_PORT; port++) {
++		err = regmap_write(sw->map, RTL9300_L2_TBL_FLUSH_CTRL_PORT,
++				   FIELD_PREP(RTL9300_L2_TBL_FLUSH_PORT, port));
++		if (err)
++			return err;
++
++		err = regmap_write(sw->map, RTL9300_L2_TBL_FLUSH_CTRL,
++				   RTL9300_L2_TBL_FLUSH_START |
++				   RTL9300_L2_TBL_FLUSH_CMP_PORT);
++		if (err)
++			return err;
++
++		err = regmap_read_poll_timeout(sw->map,
++					       RTL9300_L2_TBL_FLUSH_CTRL, val,
++					       !(val &
++						 RTL9300_L2_TBL_FLUSH_START),
++					       20, 10000);
++		if (err)
++			return err;
++	}
++
++	return 0;
++}
++
++/* Every port is a member of every VLAN, without ingress or egress
++ * filtering, and frames keep their tags as they are, so that VLANs neither
++ * restrict nor change what reaches the CPU:
++ *
++ * - 0x8100 is the only TPID a port takes for a tag, an inner one. No port
++ *   takes one for an outer tag, so S-tagged frames pass as untagged frames
++ *   with their tags in the payload.
++ * - VID 0, which untagged frames get, is untagged on every port, and every
++ *   other VID is tagged. So a priority tag (VID 0) is probably lost.
++ */
++static int rtl9300_setup_vlan(struct rtl9300_sw *sw)
++{
++	static const u32 entry[2] = {
++		FIELD_PREP_CONST(RTL9300_VLAN_MEMBERS, RTL9300_ALL_PORTS),
++		0,	/* profile 0, filtering database 0 */
++	};
++	u32 untag_all = FIELD_PREP(RTL9300_UNTAG_MEMBERS, RTL9300_ALL_PORTS);
++	struct regmap *map = sw->map;
++	u32 untag_none = 0;
++	int err = 0;
++
++	mutex_lock(&sw->tbl_lock);
++	for (u32 vid = 0; vid < VLAN_N_VID; vid++) {
++		err = rtl9300_tbl_write(sw, &rtl9300_tbl_vlan, vid, entry,
++					ARRAY_SIZE(entry));
++		if (err)
++			break;
++
++		err = rtl9300_tbl_write(sw, &rtl9300_tbl_untag, vid,
++					vid ? &untag_none : &untag_all, 1);
++		if (err)
++			break;
++	}
++	mutex_unlock(&sw->tbl_lock);
++	if (err)
++		return err;
++
++	/* The TPID pairs as OpenWrt sets them; only the inner TPID of the
++	 * first pair is used
++	 */
++	for (int n = 0; n < RTL9300_VLAN_TPIDS; n++) {
++		err = regmap_write(map, RTL9300_VLAN_TAG_TPID_CTRL(n),
++				   (u32)ETH_P_8021AD << 16 | ETH_P_8021Q);
++		if (err)
++			return err;
++	}
++
++	for (int port = 0; port <= RTL9300_CPU_PORT; port++) {
++		err = regmap_write(map, RTL9300_VLAN_PORT_ITAG_TPID_CMP(port),
++				   BIT(0));
++		if (err)
++			return err;
++
++		err = regmap_write(map, RTL9300_VLAN_PORT_OTAG_TPID_CMP(port),
++				   0);
++		if (err)
++			return err;
++
++		/* Forwarding follows the inner tag, the only one there is */
++		err = regmap_clear_bits(map, RTL9300_VLAN_PORT_FWD(port),
++					RTL9300_VLAN_PORT_FWD_OTAG);
++		if (err)
++			return err;
++
++		err = regmap_write(map, RTL9300_VLAN_PORT_AFT(port),
++				   RTL9300_VLAN_PORT_AFT_ALL);
++		if (err)
++			return err;
++
++		/* VID 0 for untagged frames, as inner and outer PVID */
++		err = regmap_update_bits(map, RTL9300_VLAN_PORT_PB_VLAN(port),
++					 RTL9300_VLAN_PORT_PB_VLAN_ALL, 0);
++		if (err)
++			return err;
++
++		err = regmap_write(map, RTL9300_VLAN_PORT_TAG_STS_CTRL(port),
++				   FIELD_PREP(RTL9300_VLAN_EGR_OTAG_STS,
++					      RTL9300_VLAN_TAG_STS_UNTAG) |
++				   FIELD_PREP(RTL9300_VLAN_EGR_ITAG_STS,
++					      RTL9300_VLAN_TAG_STS_TAGGED));
++		if (err)
++			return err;
++
++		err = regmap_clear_bits(map, RTL9300_VLAN_PORT_IGR_FLTR(port),
++					RTL9300_VLAN_PORT_IGR_FLTR_MASK(port));
++		if (err)
++			return err;
++	}
++
++	err = regmap_clear_bits(map, RTL9300_VLAN_PORT_EGR_FLTR,
++				RTL9300_ALL_PORTS);
++	if (err)
++		return err;
++
++	/* Unknown L2, IPv4 and IPv6 multicast floods to all ports */
++	for (int word = 2; word <= 4; word++) {
++		err = regmap_write(map, RTL9300_VLAN_PROFILE_SET(0, word),
++				   RTL9300_ALL_PORTS);
++		if (err)
++			return err;
++	}
++
++	return 0;
++}
++
++/* Link-local frames (01-80-c2-00-00-xx) go to the CPU only */
++static int rtl9300_setup_traps(struct rtl9300_sw *sw)
++{
++	static const u32 port_regs[] = {
++		RTL9300_RMA_BPDU_CTRL(0),
++		RTL9300_RMA_LLDP_CTRL(0),
++		RTL9300_RMA_EAPOL_CTRL(0),
++	};
++	int err;
++
++	err = regmap_write(sw->map, RTL9300_RMA_CTRL(0),
++			   RTL9300_RMA_CTRL_0_TRAP_ALL);
++	if (err)
++		return err;
++
++	for (int n = 1; n <= 2; n++) {
++		err = regmap_write(sw->map, RTL9300_RMA_CTRL(n),
++				   RTL9300_RMA_CTRL_TRAP_ALL);
++		if (err)
++			return err;
++	}
++
++	for (unsigned int i = 0; i < ARRAY_SIZE(port_regs); i++) {
++		for (int port = 0; port < RTL9300_NUM_PORTS; port++) {
++			u32 reg, mask, trap;
++
++			reg = port_regs[i] + 4 * (port / 10);
++			mask = RTL9300_RMA_PORT_ACT_MASK(port);
++			trap = field_prep(mask, RTL9300_RMA_ACT_TRAP);
++			err = regmap_update_bits(sw->map, reg, mask, trap);
++			if (err)
++				return err;
++		}
++	}
++
++	return 0;
++}
++
++/* Sets the switch up for ports that are interfaces of their own and
++ * forward nothing between them. The MACs stay off until their link is up.
++ */
++static int rtl9300_setup(struct rtl9300_sw *sw)
++{
++	int err;
++
++	for (int port = 0; port < RTL9300_NUM_PORTS; port++) {
++		err = regmap_clear_bits(sw->map, RTL9300_MAC_L2_PORT_CTRL(port),
++					RTL9300_MAC_L2_PORT_TXRX_EN);
++		if (err)
++			return err;
++	}
++
++	err = rtl9300_setup_isolation(sw);
++	if (err)
++		return err;
++
++	err = rtl9300_setup_stp(sw);
++	if (err)
++		return err;
++
++	err = rtl9300_setup_learning(sw);
++	if (err)
++		return err;
++
++	err = rtl9300_setup_vlan(sw);
++	if (err)
++		return err;
++
++	return rtl9300_setup_traps(sw);
++}
++
+ static int rtl9300_check_model(struct rtl9300_sw *sw)
+ {
+ 	u32 val, model, letter;
+@@ -74,11 +458,19 @@ static int rtl9300_probe(struct platform_device *pdev)
+ 		return dev_err_probe(dev, PTR_ERR(sw->map),
+ 				     "no switch register map\n");
+ 
++	err = devm_mutex_init(dev, &sw->tbl_lock);
++	if (err)
++		return err;
++
+ 	err = rtl9300_check_model(sw);
+ 	if (err)
+ 		return dev_err_probe(dev, err,
+ 				     "failed to read the chip model\n");
+ 
++	err = rtl9300_setup(sw);
++	if (err)
++		return dev_err_probe(dev, err, "failed to set up the switch\n");
++
+ 	platform_set_drvdata(pdev, sw);
+ 
+ 	return 0;
+diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
+index 28996ed733c..c74e02ecba3 100644
+--- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
++++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
+@@ -16,4 +16,110 @@
+ #define   RTL9300_MODEL_NAME_ID			GENMASK(31, 16)
+ #define   RTL9300_MODEL_NAME_LETTER		GENMASK(15, 11)
+ 
++/* MAC of each port, 64 bytes apart */
++#define RTL9300_MAC_L2_PORT_CTRL(port)		(0x3268 + 64 * (port))
++#define   RTL9300_MAC_L2_PORT_TXRX_EN		GENMASK(1, 0)
++
++/* Per-port SA learning, two bits per port */
++#define RTL9300_L2_PORT_SALRN(port)		(0x8fec + 4 * ((port) / 16))
++#define   RTL9300_L2_PORT_SALRN_MASK(port)	\
++	(GENMASK(1, 0) << (2 * ((port) % 16)))
++#define   RTL9300_L2_SALRN_DISABLED		2
++
++/* What happens to a frame from a new source address, three bits per port,
++ * and to one past the learning limit, globally and per port
++ */
++#define RTL9300_L2_PORT_NEW_SA_FWD(port)	(0x8ff4 + 4 * ((port) / 10))
++#define   RTL9300_L2_NEW_SA_FWD_MASK(port)	\
++	(GENMASK(2, 0) << (3 * ((port) % 10)))
++#define RTL9300_L2_LRN_CONSTRT_CTRL		0x909c
++#define   RTL9300_L2_LRN_CONSTRT_ACT		GENMASK(1, 0)
++#define RTL9300_L2_LRN_PORT_CONSTRT_CTRL(port)	(0x90a4 + 4 * (port))
++#define   RTL9300_L2_LRN_PORT_CONSTRT_ACT	GENMASK(2, 0)
++
++#define RTL9300_L2_UNKN_UC_FLD_PMSK		0x9064
++#define RTL9300_L2_BC_FLD_PMSK			0x9068
++
++/* Removes the learned entries of a port from the L2 table */
++#define RTL9300_L2_TBL_FLUSH_CTRL		0x9404
++#define   RTL9300_L2_TBL_FLUSH_START		BIT(30)
++#define   RTL9300_L2_TBL_FLUSH_CMP_PORT		BIT(26)
++#define RTL9300_L2_TBL_FLUSH_CTRL_PORT		0x9408
++#define   RTL9300_L2_TBL_FLUSH_PORT		GENMASK(16, 11)
++
++/* Spanning tree control */
++#define RTL9300_ST_CTRL				0x8798
++
++/* VLAN handling of each port */
++#define RTL9300_VLAN_PORT_AFT(port)		(0x8260 + 4 * (port))
++#define   RTL9300_VLAN_PORT_AFT_ALL		GENMASK(3, 0)
++#define RTL9300_VLAN_PORT_PB_VLAN(port)		(0x82d8 + 4 * (port))
++#define   RTL9300_VLAN_PORT_PB_VLAN_ALL		GENMASK(27, 0)
++#define RTL9300_VLAN_PORT_FWD(port)		(0x834c + 4 * (port))
++#define   RTL9300_VLAN_PORT_FWD_OTAG		GENMASK(3, 0)
++#define RTL9300_VLAN_PORT_IGR_FLTR(port)	(0x83c0 + 4 * ((port) / 16))
++#define   RTL9300_VLAN_PORT_IGR_FLTR_MASK(port)	\
++	(GENMASK(1, 0) << (2 * ((port) % 16)))
++#define RTL9300_VLAN_PORT_EGR_FLTR		0x83c8
++#define RTL9300_VLAN_PORT_TAG_STS_CTRL(port)	(0xce24 + 4 * (port))
++#define   RTL9300_VLAN_EGR_OTAG_STS		GENMASK(7, 6)
++#define   RTL9300_VLAN_EGR_ITAG_STS		GENMASK(5, 4)
++#define   RTL9300_VLAN_TAG_STS_UNTAG		1
++#define   RTL9300_VLAN_TAG_STS_TAGGED		2
++
++/* The four TPID pairs, and which of them a port takes for an inner and
++ * for an outer tag, one bit each
++ */
++#define RTL9300_VLAN_TAG_TPID_CTRL(n)		(0xc7ac + 4 * (n))
++#define RTL9300_VLAN_TPIDS			4
++#define RTL9300_VLAN_PORT_ITAG_TPID_CMP(port)	(0x327c + 64 * (port))
++#define RTL9300_VLAN_PORT_OTAG_TPID_CMP(port)	(0x3280 + 64 * (port))
++
++/* VLAN profile n, five words; words 2-4 hold the unknown multicast
++ * flood masks for L2, IPv4 and IPv6
++ */
++#define RTL9300_VLAN_PROFILE_SET(n, word)	(0x9c60 + 20 * (n) + 4 * (word))
++
++/* Reserved multicast (01-80-c2-00-00-xx): two action bits per address
++ * in CTRL_0..2, three bits per port for BPDU, LLDP and EAPOL
++ */
++#define RTL9300_RMA_CTRL(n)			(0x9e60 + 4 * (n))
++#define   RTL9300_RMA_CTRL_0_TRAP_ALL		GENMASK(31, 2)
++#define   RTL9300_RMA_CTRL_TRAP_ALL		GENMASK(31, 0)
++#define RTL9300_RMA_BPDU_CTRL(port)		(0x9e7c + 4 * ((port) / 10))
++#define RTL9300_RMA_LLDP_CTRL(port)		(0x9efc + 4 * ((port) / 10))
++#define RTL9300_RMA_EAPOL_CTRL(port)		(0x9f08 + 4 * ((port) / 10))
++#define   RTL9300_RMA_PORT_ACT_MASK(port)	\
++	(GENMASK(2, 0) << (3 * ((port) % 10)))
++#define   RTL9300_RMA_ACT_TRAP			2
++
++/* Table access. A command sets the execute bit, which stays set until it
++ * has completed, with the type of the table and the index of the entry;
++ * the data registers hold the entry. Block 0 has the VLAN, MSTI and port
++ * isolation tables, block 2 the untag sets of the VLANs.
++ */
++#define RTL9300_TBL_ACCESS_CTRL_0		0xb340
++#define   RTL9300_TBL_CTRL_0_EXEC		BIT(17)
++#define   RTL9300_TBL_CTRL_0_WRITE		BIT(16)
++#define   RTL9300_TBL_CTRL_0_TYPE		GENMASK(15, 12)
++#define RTL9300_TBL_ACCESS_DATA_0		0xb344
++#define RTL9300_TBL_ACCESS_CTRL_2		0xce04
++#define   RTL9300_TBL_CTRL_2_EXEC		BIT(15)
++#define   RTL9300_TBL_CTRL_2_WRITE		BIT(14)
++#define   RTL9300_TBL_CTRL_2_TYPE		GENMASK(13, 12)
++#define RTL9300_TBL_ACCESS_DATA_2		0xce08
++/* The index field of both blocks */
++#define RTL9300_TBL_CTRL_INDEX			GENMASK(11, 0)
++
++/* Block 0 */
++#define RTL9300_TBL_VLAN			1
++#define   RTL9300_VLAN_MEMBERS			GENMASK(31, 3)
++#define RTL9300_TBL_MSTI			4
++#define   RTL9300_STP_FORWARDING		3U
++#define RTL9300_TBL_PORT_ISO			6
++#define   RTL9300_PORT_ISO_MEMBERS		GENMASK(31, 3)
++/* Block 2 */
++#define RTL9300_TBL_UNTAG			0
++#define   RTL9300_UNTAG_MEMBERS			GENMASK(31, 3)
++
+ #endif /* _RTL9300_REGS_H_ */
