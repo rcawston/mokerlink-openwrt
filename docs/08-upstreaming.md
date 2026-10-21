@@ -14,18 +14,18 @@ to Linux was withdrawn after a review pointed that out.
 
 ## Status
 
-As of 19 October 2026:
+As of 21 October 2026:
 
 | Submission | Where | State |
 |---|---|---|
 | PSE core fix | netdev, `[PATCH net]` | [v1](https://lore.kernel.org/netdev/20261018182005.1193-1-ross@r-sc.ca/) and [v2](https://lore.kernel.org/netdev/20261019220835.613-1-ross@r-sc.ca/) sent. v2 moves the retry of the power domain out of `_pse_pi_disable()` into its callers, as Kory Maincent asked, and keeps it after `pse_disable_pi_pol()`, as netdev's AI review found that leaving it out keeps PIs off whose budget wasn't needed; the priorities need a separate patch |
 | PSE core fix | OpenWrt, generic pending patch | [openwrt/openwrt#25994](https://github.com/openwrt/openwrt/pull/25994), updated to v2, in quilt's format, which its review asked for |
-| switch link change fix | OpenWrt | [openwrt/openwrt#25995](https://github.com/openwrt/openwrt/pull/25995); Markus Stockhausen asked to keep the MAC link change for ports with in-band status, and not to look at the PHY of an SFP module in the interrupt handler, which the update does |
+| switch link change fix | OpenWrt | [openwrt/openwrt#25995](https://github.com/openwrt/openwrt/pull/25995), merged on 21 October 2026 (`906c981d2c3b`) after the update Markus Stockhausen asked for: the MAC link change stays for ports with in-band status, and the interrupt handler doesn't look at the PHY of an SFP module. `patches/0003-*` goes when `OPENWRT_COMMIT` is moved past it |
 | RTL9300 port LEDs (`leds`) | linux-leds | [sent and withdrawn](https://lore.kernel.org/all/20261018194339.132-1-ross@r-sc.ca/): Andrew Lunn asked for port LEDs in the switch driver's port nodes, and Markus Stockhausen, who keeps OpenWrt's RTL930x switch driver, has no time to take it upstream yet |
 | PoE LEDs in OpenWrt | OpenWrt | through [openwrt/openwrt#25341](https://github.com/openwrt/openwrt/pull/25341) (software-controlled LEDs in the realtek switch driver), tested on this board; the board's LED nodes follow once it is merged |
 | shared-SCL I²C (`i2c`) | linux-i2c | [sent and withdrawn](https://lore.kernel.org/all/20261018194315.945-1-ross@r-sc.ca/): `i2c-gpio` does it |
-| board.json PoE default | netifd | [openwrt/netifd#97](https://github.com/openwrt/netifd/pull/97) |
-| the board | OpenWrt | [openwrt/openwrt#26042](https://github.com/openwrt/openwrt/pull/26042), without the PoE LEDs; depends on openwrt/netifd#97 |
+| board.json PoE default | netifd | [openwrt/netifd#97](https://github.com/openwrt/netifd/pull/97), merged on 20 October 2026 (`06fc90458560`); OpenWrt's netifd package doesn't include it yet |
+| the board | OpenWrt | [openwrt/openwrt#26042](https://github.com/openwrt/openwrt/pull/26042), without the PoE LEDs; needs an OpenWrt netifd package update that includes openwrt/netifd#97 |
 | PSE priority choices in the web UI | LuCI | [openwrt/luci#9141](https://github.com/openwrt/luci/pull/9141) |
 | RTL8239 PSE (`pse`), PSE LED trigger names (`pse-led-triggers`) | netdev, linux-leds | not sent; wait for the PSE series they depend on ([Dependencies](#dependencies)) |
 
@@ -36,7 +36,7 @@ As of 19 October 2026:
 | RTL8239 PSE: binding, driver | `realtek: add Realtek RTL8239 PSE driver` (`831-*`, `kmod-pse-realtek-rtl8239`) | `pse` series: net-next, netdev |
 | RTL9300 port LEDs: binding, switch binding, driver | not in the board pull request: the PoE LEDs follow with openwrt/openwrt#25341's software-controlled LEDs in the switch driver. This repository's own build keeps `832-*` and `kmod-leds-rtl9300-port` until then | `leds` series: leds tree, linux-leds (the switch binding patch also to netdev); withdrawn, see the status |
 | PSE LED trigger names in `leds/common.yaml` | not needed | `pse-led-triggers`: with the PSE LED trigger series |
-| board.json default for netifd's `pse` option | `base-files: add a uci-defaults function for the PSE default` (`patches/0004-*`), in the board pull request; netifd itself: `device: add a board.json default for the pse option`, a pull request to [openwrt/netifd](https://github.com/openwrt/netifd) (`netifd TREE`) | none |
+| board.json default for netifd's `pse` option | `base-files: add a uci-defaults function for the PSE default` (`patches/0004-*`), in the board pull request; netifd itself: `device: add a board.json default for the pse option`, merged in [openwrt/netifd#97](https://github.com/openwrt/netifd/pull/97) (`netifd TREE`) | none |
 | the device | `realtek: rtl930x: add support for MokerLink POE-10G07110GSM` | none |
 | PSE core fix: a PI disabled with software power control is not enabled again by the retry of its power domain | `generic: pse-pd: don't enable a PI again while disabling it`: this repository's `835-*` as `generic/pending-6.18/898-*`, a separate pull request (`openwrt TREE pse-fix`) | `pse-fix`: net tree as a fix (`Fixes: ffef61d6d273`), netdev; made against mainline |
 | link change fix in the switch driver | `realtek: dsa: let phylib read the PHY on a port link change` (`patches/0003-*`, a patch to OpenWrt's own driver), a separate pull request (`openwrt TREE dsa-fix`) | none |
@@ -57,9 +57,10 @@ package), so this repository adds one, in three parts:
   default. The default is filled in where netifd parses a device's UCI
   settings, so that it applies again when a change to the section
   restarts the device, and when a device without a section is claimed.
-  The build carries it as a patch to OpenWrt's netifd package; upstream
-  it is a pull request to netifd, after which OpenWrt's netifd package
-  needs a bump.
+  The build carries it as a patch to OpenWrt's netifd package. netifd
+  has it since openwrt/netifd#97 (`06fc90458560`); the patch goes once
+  OpenWrt's netifd package is bumped past that and the pinned OpenWrt
+  commit includes the bump.
 - base-files gets `ucidef_set_network_device_pse PORT 0|1`. It writes a
   JSON boolean, which netifd's typed lookup needs; the existing
   `ucidef_set_network_device_gro` writes a string, so netifd never applies
@@ -67,7 +68,8 @@ package), so this repository adds one, in three parts:
 - the device's case in `realtek_setup_poe()` sets it for lan1-lan7.
 
 Without the netifd change, the default is ignored and the ports stay off,
-so the board pull request names the netifd pull request it depends on.
+so the board pull request needs an OpenWrt netifd package that includes
+openwrt/netifd#97.
 The alternative, if reviewers prefer it, is to leave the supply out of
 the device tree upstream: the ports then run in auto mode, on and without
 a budget, as in the stock firmware.
@@ -207,7 +209,8 @@ scripts/make-upstream.py netifd ~/netifd --signoff
 
 Push the branch to your fork of openwrt/netifd and open the pull request
 there, mentioning Carlo Szelinsky, who added netifd's PSE options, and
-Robert Marko, who merged them.
+Robert Marko, who merged them. This is done: it is openwrt/netifd#97,
+merged on 20 October 2026.
 
 ### Linux
 
