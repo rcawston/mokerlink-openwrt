@@ -10,7 +10,7 @@ index 81817857706..d0043d5982c 100644
 +rtl9300-switch-y := rtl9300_main.o rtl9300_nic.o rtl9300_port.o \
 +		    rtl9300_stats.o
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
-index 1c3f4c73176..3730452132e 100644
+index 1832a42ce40..1abb24ec757 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
 @@ -18,6 +18,7 @@
@@ -21,7 +21,7 @@ index 1c3f4c73176..3730452132e 100644
  
  /* Front ports 0-27, and the port the DMA engine of the switch sits on */
  #define RTL9300_NUM_PORTS		28
-@@ -81,12 +82,49 @@ struct rtl9300_nic {
+@@ -82,12 +83,49 @@ struct rtl9300_nic {
  	struct timer_list tx_timer;
  };
  
@@ -71,7 +71,7 @@ index 1c3f4c73176..3730452132e 100644
  };
  
  struct rtl9300_sw {
-@@ -100,8 +138,24 @@ struct rtl9300_sw {
+@@ -101,8 +139,24 @@ struct rtl9300_sw {
  	struct rtl9300_port *ports[RTL9300_NUM_PORTS];
  	/* The ports whose interface is up, changed under the TX lock */
  	unsigned long open_ports;
@@ -97,10 +97,10 @@ index 1c3f4c73176..3730452132e 100644
  int rtl9300_ports_init(struct rtl9300_sw *sw);
  void rtl9300_ports_unregister(struct rtl9300_sw *sw);
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
-index 9c9e97367bf..2bc0ac289ca 100644
+index 969b11e9f2e..913ad0e88a3 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
-@@ -466,6 +466,10 @@ static int rtl9300_probe(struct platform_device *pdev)
+@@ -477,6 +477,10 @@ static int rtl9300_probe(struct platform_device *pdev)
  	if (err)
  		return err;
  
@@ -108,10 +108,10 @@ index 9c9e97367bf..2bc0ac289ca 100644
 +	if (err)
 +		return err;
 +
- 	/* Before the hardware is touched, so that waiting is cheap */
- 	err = rtl9300_ports_check(sw);
+ 	err = rtl9300_quiesce(sw);
  	if (err)
-@@ -492,6 +496,7 @@ static int rtl9300_probe(struct platform_device *pdev)
+ 		return dev_err_probe(dev, err, "failed to stop the switch\n");
+@@ -509,6 +513,7 @@ static int rtl9300_probe(struct platform_device *pdev)
  		return dev_err_probe(dev, err, "failed to create the ports\n");
  	}
  
@@ -119,19 +119,19 @@ index 9c9e97367bf..2bc0ac289ca 100644
  	platform_set_drvdata(pdev, sw);
  
  	return 0;
-@@ -505,6 +510,7 @@ static void rtl9300_remove(struct platform_device *pdev)
+@@ -522,6 +527,7 @@ static void rtl9300_remove(struct platform_device *pdev)
  	if (!sw)
  		return;
  
 +	rtl9300_stats_stop(sw);
+ 	rtl9300_nic_stop_poll(sw);
  	rtl9300_ports_unregister(sw);
  	rtl9300_nic_exit(sw);
- 	rtl9300_ports_free(sw);
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
-index d87bccacc6b..e178776e531 100644
+index 4e242fce710..ca33ecb3a21 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
-@@ -293,6 +293,10 @@ static const struct ethtool_ops rtl9300_port_ethtool_ops = {
+@@ -297,6 +297,10 @@ static const struct ethtool_ops rtl9300_port_ethtool_ops = {
  	.nway_reset = rtl9300_port_nway_reset,
  	.get_pauseparam = rtl9300_port_get_pauseparam,
  	.set_pauseparam = rtl9300_port_set_pauseparam,
@@ -142,7 +142,7 @@ index d87bccacc6b..e178776e531 100644
  };
  
  static bool rtl9300_node_available(struct device_node *np,
-@@ -513,6 +517,8 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
+@@ -520,6 +524,8 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
  	if (err)
  		goto err_free;
  
@@ -152,7 +152,7 @@ index d87bccacc6b..e178776e531 100644
  	config->dev = &ndev->dev;
  	config->type = PHYLINK_NETDEV;
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
-index 24b02862080..8d7ad94a350 100644
+index 3cf3df8a718..1859e9c6299 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
 @@ -19,6 +19,10 @@

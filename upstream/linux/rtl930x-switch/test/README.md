@@ -27,8 +27,20 @@ scripts/build-rtl930x-test-image.sh
   doesn't program the SerDes yet, and mainline's MDIO driver sets only
   the polling bit of each port.
 - **The PHYs** have no mainline driver (RTL8261BE, RTL8264B), so the
-  generic Clause 45 driver binds. Step 3 of the test is the first to show
-  whether that is enough on top of what U-Boot set up.
+  generic Clause 45 driver binds. On top of what U-Boot set up, that is
+  enough for 2.5 Gb/s and 100 Mb/s links, but not for 1 Gb/s (first run,
+  21 October): the generic driver can't read the link partner's
+  1000BASE-T ability, which these PHYs keep in their vendor registers, so
+  it takes a 1 Gb/s link for 100 Mb/s, the MAC reports 1 Gb/s, and the
+  driver disables the port. net-next's RTL8261C/D support reads it
+  (`rtl8261x_read_status`), but this board's PHY IDs, 0x001ccaf3 (RTL8261N,
+  the RTL8261BE) and 0x001cc813 (RTL8264B), aren't in net-next; OpenWrt's
+  pending `742-net-phy-realtek-add-5G-and-10G-PHY-support.patch` has them.
+  So the image carries `realtek-phy-rtl8261n-rtl8264b.patch`, which is not
+  part of the series: entries for those IDs with net-next's RTL8261
+  status, feature and autonegotiation functions, and no reset or
+  firmware, as U-Boot has set the PHYs up. Step 2 reports the driver that
+  bound; the cover letter names it.
 - **No PoE driver.** Step 2 still shows that ethtool's PSE lookup reaches
   the PHY of a port that is down ("No PSE is attached", not "No PHY").
   Powering a PD from a down port needs a build with the RTL8239 driver
@@ -67,7 +79,7 @@ the console (`cat`) when it is done, together with `dmesg`.
 | 1 | the driver binds; lan1-lan7 exist; the SFP port is skipped with its message; no warning, lockdep or DMA-API report |
 | 2 | the 7 PHYs attached (from the kernel log, as there are no phydev links in sysfs) and their driver; with every port down, ethtool's PSE lookup finds the PHY, and the DMA engine raises next to no interrupts (no storm) |
 | 3 | each port links with the host, at the speeds the host can set |
-| 4 | ping and iperf3 TCP both ways and UDP; the interface and ethtool standard statistics; how many interrupts the DMA engine raised while sending UDP, which shows whether the TX done interrupt fires |
+| 4 | ping, and on the host the length of the switch's frames (98 bytes for a 56-byte ping, not 102, which would mean the engine sends the FCS bytes it is given); iperf3 TCP both ways and UDP; the interface and ethtool standard statistics; how many interrupts the DMA engine raised while sending UDP, which shows whether the TX done interrupt fires |
 | 5 | VLAN 100 tagged frames both ways; tagged and untagged frames unchanged (tcpdump -e on the host). By hand, also priority-tagged (VID 0) and 802.1ad frames |
 | 6 | MTU 9000 with an 8972-byte ping with DF from the host; MTU 12262 accepted |
 | 7 | isolation: the host can't reach a device on another switch port |

@@ -1,5 +1,5 @@
 diff --git a/drivers/net/ethernet/realtek/rtl9300/Kconfig b/drivers/net/ethernet/realtek/rtl9300/Kconfig
-index 9ea36e5e2bc..a0e173a81c0 100644
+index 3b9955cacb0..0630e619b66 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/Kconfig
 +++ b/drivers/net/ethernet/realtek/rtl9300/Kconfig
 @@ -4,6 +4,7 @@ config RTL9300_SWITCH
@@ -9,9 +9,9 @@ index 9ea36e5e2bc..a0e173a81c0 100644
 +	select NET_DEVLINK
  	select PAGE_POOL
  	select PHYLINK
- 	help
+ 	select REALTEK_PHY
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
-index 3730452132e..a43f9c55541 100644
+index 1abb24ec757..f7cc8ce0da5 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
 @@ -19,6 +19,7 @@
@@ -22,7 +22,7 @@ index 3730452132e..a43f9c55541 100644
  
  /* Front ports 0-27, and the port the DMA engine of the switch sits on */
  #define RTL9300_NUM_PORTS		28
-@@ -122,6 +123,7 @@ struct rtl9300_port {
+@@ -123,6 +124,7 @@ struct rtl9300_port {
  	struct phylink *phylink;
  	struct phylink_config phylink_config;
  	unsigned int index;
@@ -30,7 +30,7 @@ index 3730452132e..a43f9c55541 100644
  	/* MIB counters since the port was created, and the last readings */
  	u64 mib[RTL9300_MIB_COUNT];
  	u64 mib_last[RTL9300_MIB_COUNT];
-@@ -141,6 +143,9 @@ struct rtl9300_sw {
+@@ -142,6 +144,9 @@ struct rtl9300_sw {
  	/* Serialises the MIB counters of the ports */
  	struct mutex stats_lock;
  	struct delayed_work stats_work;
@@ -41,7 +41,7 @@ index 3730452132e..a43f9c55541 100644
  
  void rtl9300_port_stats_init(struct rtl9300_port *port);
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
-index 2bc0ac289ca..bafb3c6a736 100644
+index 913ad0e88a3..617391e75a3 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
 @@ -18,6 +18,7 @@
@@ -52,7 +52,7 @@ index 2bc0ac289ca..bafb3c6a736 100644
  #include <linux/if_vlan.h>
  #include <linux/lockdep.h>
  #include <linux/mfd/syscon.h>
-@@ -439,6 +440,14 @@ static int rtl9300_check_model(struct rtl9300_sw *sw)
+@@ -450,6 +451,14 @@ static int rtl9300_check_model(struct rtl9300_sw *sw)
  	return 0;
  }
  
@@ -67,7 +67,7 @@ index 2bc0ac289ca..bafb3c6a736 100644
  static int rtl9300_probe(struct platform_device *pdev)
  {
  	struct device *dev = &pdev->dev;
-@@ -452,6 +461,17 @@ static int rtl9300_probe(struct platform_device *pdev)
+@@ -463,6 +472,17 @@ static int rtl9300_probe(struct platform_device *pdev)
  	sw->dev = dev;
  	sw->info = of_device_get_match_data(dev);
  
@@ -85,7 +85,7 @@ index 2bc0ac289ca..bafb3c6a736 100644
  	/* The switch node is the syscon whose regmap the child nodes use */
  	sw->map = syscon_node_to_regmap(dev->of_node);
  	if (IS_ERR(sw->map))
-@@ -498,6 +518,7 @@ static int rtl9300_probe(struct platform_device *pdev)
+@@ -515,6 +535,7 @@ static int rtl9300_probe(struct platform_device *pdev)
  
  	rtl9300_stats_start(sw);
  	platform_set_drvdata(pdev, sw);
@@ -93,19 +93,19 @@ index 2bc0ac289ca..bafb3c6a736 100644
  
  	return 0;
  }
-@@ -510,6 +531,7 @@ static void rtl9300_remove(struct platform_device *pdev)
+@@ -527,6 +548,7 @@ static void rtl9300_remove(struct platform_device *pdev)
  	if (!sw)
  		return;
  
 +	devlink_unregister(sw->devlink);
  	rtl9300_stats_stop(sw);
+ 	rtl9300_nic_stop_poll(sw);
  	rtl9300_ports_unregister(sw);
- 	rtl9300_nic_exit(sw);
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
-index e178776e531..828f67631da 100644
+index ca33ecb3a21..2d90d195db7 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
-@@ -472,6 +472,24 @@ int rtl9300_ports_check(struct rtl9300_sw *sw)
+@@ -479,6 +479,24 @@ int rtl9300_ports_check(struct rtl9300_sw *sw)
  	return err;
  }
  
@@ -130,7 +130,7 @@ index e178776e531..828f67631da 100644
  static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
  			       u32 index, phy_interface_t mode)
  {
-@@ -544,17 +562,25 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
+@@ -551,17 +569,25 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
  		goto err_destroy;
  	}
  
@@ -157,7 +157,7 @@ index e178776e531..828f67631da 100644
  err_disconnect:
  	rtnl_lock();
  	phylink_disconnect_phy(pl);
-@@ -622,6 +648,8 @@ void rtl9300_ports_unregister(struct rtl9300_sw *sw)
+@@ -627,6 +653,8 @@ void rtl9300_ports_unregister(struct rtl9300_sw *sw)
  		phylink_disconnect_phy(port->phylink);
  		rtnl_unlock();
  		phylink_destroy(port->phylink);

@@ -5,10 +5,12 @@ carries a CPU tag with forwarding type "physical", which sends the
 frame to the ports of its destination mask without an L2 lookup and
 regardless of the spanning tree state, so it reaches exactly the port
 the frame is for. The engine puts the FCS into the last four bytes of
-the buffer, whatever they hold, as OpenWrt's driver shows when it
-reuses the bytes of its DSA tag for that. So the buffer takes them from
-the tailroom, without writing to the frame, which a clone shares, and
-only frames shorter than the minimum are padded.
+the buffer, as OpenWrt's driver shows when it reuses the bytes of its
+DSA tag for that. So the buffer takes them from the tailroom, which is
+zeroed where the frame owns its buffer; a clone shares its buffer, so
+there they are left for the engine to overwrite. Only frames shorter
+than the minimum are padded, and frames longer than the switch takes
+are dropped.
 
 The TX done interrupt schedules the NAPI context, which frees the
 frames the hardware has sent. OpenWrt never enables that interrupt and
@@ -19,7 +21,7 @@ every tick, as stmmac's TX coalescing timer does, so that sent frames
 are freed in time whether the interrupt comes or not, and a lost
 trigger doesn't leave frames in the ring.
 
-The control register is read back until it shows the engine enabled
-before the transmit is triggered, as OpenWrt's driver does, because
-its reads sometimes come back empty and writing that value back would
-stop the engine. The timer only takes a quick look.
+A transmit is triggered by writing the control register as a whole,
+not by reading it back and setting the trigger as OpenWrt's driver
+does: its reads sometimes come back empty, and writing such a value
+back would stop the engine.

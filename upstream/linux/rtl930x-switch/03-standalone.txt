@@ -3,7 +3,9 @@ net: ethernet: realtek: rtl9300: set the switch up for standalone ports
 Before there are any ports, the switch has to be set up so that each
 port is an interface of its own: every frame a port receives goes to
 the CPU, and nothing is forwarded between two ports in hardware. Where
-the boot loader may have left something else, it is overwritten.
+the boot loader may have left something else in what is set up here, it
+is overwritten. Port mirroring, ACLs, trunks and routing, which the
+driver doesn't use, are left as they are and taken to be off.
 
 - The port isolation table lets each front port forward only to the
   CPU port, and the CPU port to all of them.

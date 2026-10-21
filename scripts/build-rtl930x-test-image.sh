@@ -3,7 +3,8 @@
 # series, for the MokerLink POE-10G07110GSM (about 15 minutes):
 #
 #   - the kernel, with the test configuration and the test device tree
-#     appended (upstream/linux/rtl930x-switch/test/)
+#     appended (upstream/linux/rtl930x-switch/test/), and for the test only
+#     the PHY driver entries the board needs for 1 Gb/s links
 #   - an initramfs with a static busybox, ethtool and iperf3, and the test
 #     script, which names the ports lan1-lan8 at boot
 #   - as a uImage for the vendor U-Boot, with the MokerLink magic
@@ -77,11 +78,19 @@ echo "==> initramfs"
 install -m 0755 "$TEST/init" "$ROOT/init"
 install -m 0755 "$TEST/rtl9300-switch-test" "$ROOT/usr/sbin/"
 "${CROSS}strip" "$ROOT/bin/busybox" "$ROOT/sbin/ethtool" "$ROOT/usr/bin/iperf3"
+# The kernel opens /dev/console for init before init mounts devtmpfs. A
+# directory can't hold the device node without root, a cpio list can
+echo 'nod /dev/console 0600 0 0 c 5 1' >"$OUT/initramfs.list"
 
 echo "==> kernel"
+# PHY driver entries the board needs for 1 Gb/s links, for the test only
+PHY_PATCH=$TEST/realtek-phy-rtl8261n-rtl8264b.patch
+git -C "$NET" apply "$PHY_PATCH"
+# The tree goes back to the series alone however the script ends
+trap 'git -C "$NET" apply -R "$PHY_PATCH"' EXIT
 make -s -C "$NET" O="$KBUILD" ARCH=mips CROSS_COMPILE="$CROSS" allnoconfig
 cat "$TEST/config" - >"$KBUILD/test.config" <<EOF
-CONFIG_INITRAMFS_SOURCE="$ROOT"
+CONFIG_INITRAMFS_SOURCE="$ROOT $OUT/initramfs.list"
 CONFIG_CMDLINE_BOOL=y
 CONFIG_CMDLINE="console=ttyS0,115200"
 CONFIG_CMDLINE_OVERRIDE=y
@@ -114,8 +123,9 @@ python3 "$REPO_ROOT/scripts/uimage-remagic.py" \
 	"$OUT/uImage-rtl930x-switch-test-stdmagic.bin" 0x83800000 \
 	"$OUT/uImage-rtl930x-switch-test.bin"
 git -C "$NET" log --oneline -12 >"$OUT/series.txt"
+echo "test only, not a commit: $(basename "$PHY_PATCH")" >>"$OUT/series.txt"
 cp "$KBUILD/.config" "$OUT/kernel.config"
-rm -rf "$ROOT" "$OUT/vmlinux-dtb.bin.gz"
+rm -rf "$ROOT" "$OUT/initramfs.list" "$OUT/vmlinux-dtb.bin.gz"
 
 ls -l "$OUT"
 echo "load 0x$load, entry 0x$entry"

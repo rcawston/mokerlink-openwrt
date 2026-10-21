@@ -40,14 +40,17 @@ How the ports work:
   which turns the polling of the port on in the MDIO driver. So the MAC
   is left unforced, and mac_link_up enables it only after checking that
   the MAC reports the link phylib does, as Andrew suggested on the MDIO
-  driver. Pause is forced to what phylink resolved.
+  driver; a MAC that disagrees stays off with an error, though phylink
+  still reports the link up. Pause is forced to what phylink resolved.
 - The PHY is attached when the port is created, not when the interface is
   opened, as DSA does, so that ethtool's PSE control works on a port that
   is down.
 - The ports forward nothing between them: each one forwards only to the
   CPU port, nothing is learned, every port forwards in the one spanning
   tree instance, and VLANs neither filter nor change what reaches the
-  CPU.
+  CPU, apart from priority tags (VID 0), which are probably lost in both
+  directions. Port mirroring, ACLs, trunks and routing, which the driver
+  doesn't use, are left as they are and taken to be off.
 - All ports share one TX ring of the DMA engine, so their queues stop
   together when it is full. OpenWrt never uses the TX done interrupt, so
   while frames are in the ring a timer also kicks the engine and the poll
@@ -70,9 +73,12 @@ Merge path: all patches through net-next. The series changes no binding
 and depends on nothing outside net-next; the device tree of the
 MokerLink POE-10G07110GSM goes to the MIPS tree separately.
 
-Testing: not built or run yet. The results of the CI builds (W=1 and
-sparse, for MIPS and, compile tested, for x86_64) and of the hardware
-test on a MokerLink POE-10G07110GSM (RTL9303) go here before this is
-posted.
+Testing: the results of the CI builds of this version (W=1 and sparse,
+for MIPS and, compile tested, for x86_64) and of the hardware test on a
+MokerLink POE-10G07110GSM (RTL9303) go here before this is posted. The
+hardware test image adds PHY driver entries for the board's RTL8261N
+and RTL8264B, which net-next lacks and which are not part of this
+series: without them, phylib's generic Clause 45 driver binds and takes
+a 1 Gb/s link for 100 Mb/s.
 
 [1] https://lore.kernel.org/netdev/c19eb8d0-f89b-4909-bf14-dfffcdc7c1a6@lunn.ch/

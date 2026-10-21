@@ -28,7 +28,7 @@ As of 20 October 2026:
 | the board | OpenWrt | [openwrt/openwrt#26042](https://github.com/openwrt/openwrt/pull/26042), without the PoE LEDs; depends on openwrt/netifd#97 |
 | PSE priority choices in the web UI | LuCI | [openwrt/luci#9141](https://github.com/openwrt/luci/pull/9141) |
 | RTL8239 PSE (`pse`), PSE LED trigger names (`pse-led-triggers`) | netdev, linux-leds | not sent; wait for the PSE series they depend on ([Dependencies](#dependencies)) |
-| RTL930x switch driver (`rtl930x-switch`) | netdev, `[PATCH net-next]` | not sent: 9 patches, checkpatch-clean, not yet built (CI) or run on the board. First the coordination with Markus Stockhausen, Chris Packham and Jonas Jelonek, by email (draft in `build/upstream/linux/rtl930x-switch/`, not in the repository); the design is in its `DESIGN.md` |
+| RTL930x switch driver (`rtl930x-switch`) | netdev, `[PATCH net-next]` | not sent: 9 patches. The CI builds (W=1 and sparse) passed before the fixes from a second review; a first board run linked at 2.5 and 0.1 Gb/s but not at 1 Gb/s, which needs a PHY driver for the board's RTL8261N and RTL8264B (the test image adds one, outside the series). First the coordination with Markus Stockhausen, Chris Packham and Jonas Jelonek, by email (draft in `build/upstream/linux/rtl930x-switch/`, not in the repository); the design is in its `DESIGN.md` |
 
 ## What goes where
 

@@ -1,12 +1,13 @@
 diff --git a/drivers/net/ethernet/realtek/rtl9300/Kconfig b/drivers/net/ethernet/realtek/rtl9300/Kconfig
-index e5b9bc093cf..9ea36e5e2bc 100644
+index e5b9bc093cf..3b9955cacb0 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/Kconfig
 +++ b/drivers/net/ethernet/realtek/rtl9300/Kconfig
-@@ -5,6 +5,7 @@ config RTL9300_SWITCH
+@@ -5,6 +5,8 @@ config RTL9300_SWITCH
  	depends on OF
  	select MFD_SYSCON
  	select PAGE_POOL
 +	select PHYLINK
++	select REALTEK_PHY
  	help
  	  This driver supports the Ethernet switch built into the Realtek
  	  RTL9301, RTL9302B, RTL9302C and RTL9303 SoCs. Each switch port is
@@ -21,7 +22,7 @@ index 4087c6daece..81817857706 100644
 -rtl9300-switch-y := rtl9300_main.o rtl9300_nic.o
 +rtl9300-switch-y := rtl9300_main.o rtl9300_nic.o rtl9300_port.o
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
-index 03eb06181b7..8e3ed3ee582 100644
+index 8f15ace5aa4..adcea2458ca 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300.h
 @@ -11,6 +11,7 @@
@@ -40,7 +41,7 @@ index 03eb06181b7..8e3ed3ee582 100644
  
  struct rtl9300_info {
  	const char *name;
-@@ -61,8 +63,9 @@ struct rtl9300_nic {
+@@ -62,8 +64,9 @@ struct rtl9300_nic {
  	bool rx_discard;
  
  	/* TX: the frames the hardware still owns, between tx_tail and
@@ -52,7 +53,7 @@ index 03eb06181b7..8e3ed3ee582 100644
  	 */
  	spinlock_t tx_lock;
  	struct sk_buff *tx_skb[RTL9300_TX_RING_SIZE];
-@@ -70,9 +73,18 @@ struct rtl9300_nic {
+@@ -71,9 +74,18 @@ struct rtl9300_nic {
  	unsigned int tx_len[RTL9300_TX_RING_SIZE];
  	unsigned int tx_head;
  	unsigned int tx_tail;
@@ -71,7 +72,7 @@ index 03eb06181b7..8e3ed3ee582 100644
  struct rtl9300_sw {
  	struct device *dev;
  	struct regmap *map;
-@@ -80,11 +92,22 @@ struct rtl9300_sw {
+@@ -81,11 +93,24 @@ struct rtl9300_sw {
  	/* Serialises the table access registers */
  	struct mutex tbl_lock;
  	struct rtl9300_nic nic;
@@ -86,7 +87,9 @@ index 03eb06181b7..8e3ed3ee582 100644
 +void rtl9300_ports_unregister(struct rtl9300_sw *sw);
 +void rtl9300_ports_free(struct rtl9300_sw *sw);
 +
++int rtl9300_nic_quiesce(struct rtl9300_sw *sw);
  int rtl9300_nic_init(struct rtl9300_sw *sw, int irq);
++void rtl9300_nic_stop_poll(struct rtl9300_sw *sw);
  void rtl9300_nic_exit(struct rtl9300_sw *sw);
  netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
  			     struct net_device *ndev, unsigned int port);
@@ -95,14 +98,50 @@ index 03eb06181b7..8e3ed3ee582 100644
  
  #endif /* _RTL9300_H_ */
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
-index 75bfc38d22f..9c9e97367bf 100644
+index 75bfc38d22f..969b11e9f2e 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
-@@ -466,6 +466,11 @@ static int rtl9300_probe(struct platform_device *pdev)
+@@ -378,10 +378,10 @@ static int rtl9300_setup_traps(struct rtl9300_sw *sw)
+ 	return 0;
+ }
+ 
+-/* Sets the switch up for ports that are interfaces of their own and
+- * forward nothing between them. The MACs stay off until their link is up.
++/* Turns off what the boot loader may have left running, the MACs of the
++ * ports and the DMA engine, before the probe waits for anything
+  */
+-static int rtl9300_setup(struct rtl9300_sw *sw)
++static int rtl9300_quiesce(struct rtl9300_sw *sw)
+ {
+ 	int err;
+ 
+@@ -392,6 +392,17 @@ static int rtl9300_setup(struct rtl9300_sw *sw)
+ 			return err;
+ 	}
+ 
++	return rtl9300_nic_quiesce(sw);
++}
++
++/* Sets the switch up for ports that are interfaces of their own and
++ * forward nothing between them. The MACs, turned off by rtl9300_quiesce(),
++ * stay off until their link is up.
++ */
++static int rtl9300_setup(struct rtl9300_sw *sw)
++{
++	int err;
++
+ 	err = rtl9300_setup_isolation(sw);
+ 	if (err)
+ 		return err;
+@@ -466,6 +477,15 @@ static int rtl9300_probe(struct platform_device *pdev)
  	if (err)
  		return err;
  
-+	/* Before the hardware is touched, so that waiting is cheap */
++	err = rtl9300_quiesce(sw);
++	if (err)
++		return dev_err_probe(dev, err, "failed to stop the switch\n");
++
++	/* Before the switch is set up, so that waiting is cheap */
 +	err = rtl9300_ports_check(sw);
 +	if (err)
 +		return err;
@@ -110,12 +149,14 @@ index 75bfc38d22f..9c9e97367bf 100644
  	err = rtl9300_check_model(sw);
  	if (err)
  		return dev_err_probe(dev, err,
-@@ -480,6 +485,13 @@ static int rtl9300_probe(struct platform_device *pdev)
+@@ -480,6 +500,15 @@ static int rtl9300_probe(struct platform_device *pdev)
  		return dev_err_probe(dev, err,
  				     "failed to set up the DMA engine\n");
  
 +	err = rtl9300_ports_init(sw);
 +	if (err) {
++		rtl9300_nic_stop_poll(sw);
++		rtl9300_ports_unregister(sw);
 +		rtl9300_nic_exit(sw);
 +		rtl9300_ports_free(sw);
 +		return dev_err_probe(dev, err, "failed to create the ports\n");
@@ -124,10 +165,11 @@ index 75bfc38d22f..9c9e97367bf 100644
  	platform_set_drvdata(pdev, sw);
  
  	return 0;
-@@ -493,7 +505,9 @@ static void rtl9300_remove(struct platform_device *pdev)
+@@ -493,7 +522,10 @@ static void rtl9300_remove(struct platform_device *pdev)
  	if (!sw)
  		return;
  
++	rtl9300_nic_stop_poll(sw);
 +	rtl9300_ports_unregister(sw);
  	rtl9300_nic_exit(sw);
 +	rtl9300_ports_free(sw);
@@ -135,7 +177,7 @@ index 75bfc38d22f..9c9e97367bf 100644
  
  /* The DMA engine has to stop before a kernel started with kexec takes
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c
-index 18a07ac93c6..6dd8e266261 100644
+index 393a7287fc2..357c99d52f7 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c
 @@ -23,6 +23,7 @@
@@ -146,8 +188,8 @@ index 18a07ac93c6..6dd8e266261 100644
  #include <linux/netdevice.h>
  #include <linux/skbuff.h>
  #include <linux/timer.h>
-@@ -70,6 +71,8 @@
- #define RTL9300_TX_KICK_US		10
+@@ -65,6 +66,8 @@
+ 
  /* While frames are in the ring, the timer runs every tick */
  #define RTL9300_TX_TIMER_TICKS		1
 +/* The stopped queues wake once a quarter of the ring is free again */
@@ -155,14 +197,14 @@ index 18a07ac93c6..6dd8e266261 100644
  
  struct rtl9300_desc {
  	__be32 addr;
-@@ -226,22 +229,56 @@ static int rtl9300_rx_add(struct rtl9300_nic *nic, struct page *page,
+@@ -227,22 +230,60 @@ static int rtl9300_rx_add(struct rtl9300_nic *nic, struct page *page,
  	return 0;
  }
  
 -/* A complete frame, FCS included, from front port INDEX */
 +/* The interface of front port INDEX if it is up, or NULL. It stays
-+ * registered until this poll is done with it, since closing it comes
-+ * before the RCU grace period that unregistering waits for.
++ * registered while the poll runs: the poll stops before the ports are
++ * unregistered.
 + */
 +static struct net_device *rtl9300_rx_ndev(struct rtl9300_sw *sw,
 +					  unsigned int index)
@@ -201,7 +243,12 @@ index 18a07ac93c6..6dd8e266261 100644
  		return;
  	}
  
- 	if (pskb_trim(skb, skb->len - ETH_FCS_LEN)) {
+-	if (pskb_trim(skb, skb->len - ETH_FCS_LEN)) {
++	/* eth_type_trans() takes the header from the first buffer, which
++	 * holds it unless the hardware ever ends that one early
++	 */
++	if (pskb_trim(skb, skb->len - ETH_FCS_LEN) ||
++	    !pskb_may_pull(skb, ETH_HLEN)) {
 +		dev_dstats_rx_dropped(ndev);
  		kfree_skb_reason(skb, SKB_DROP_REASON_NOMEM);
  		return;
@@ -215,7 +262,7 @@ index 18a07ac93c6..6dd8e266261 100644
  }
  
  /* Receives up to BUDGET frames, and returns how many it took */
-@@ -294,6 +331,18 @@ static int rtl9300_rx(struct rtl9300_sw *sw, int budget)
+@@ -295,6 +336,18 @@ static int rtl9300_rx(struct rtl9300_sw *sw, int budget)
  		goto next;
  
  drop:
@@ -234,7 +281,7 @@ index 18a07ac93c6..6dd8e266261 100644
  		/* The rest of a frame that lost a buffer is dropped too */
  		if (nic->rx_skb) {
  			kfree_skb(nic->rx_skb);
-@@ -334,12 +383,44 @@ static void rtl9300_tx_init(struct rtl9300_nic *nic)
+@@ -335,12 +388,44 @@ static void rtl9300_tx_init(struct rtl9300_nic *nic)
  	nic->tx_tail = 0;
  }
  
@@ -282,7 +329,7 @@ index 18a07ac93c6..6dd8e266261 100644
  
  	while (nic->tx_tail != nic->tx_head) {
  		unsigned int i = nic->tx_tail & (RTL9300_TX_RING_SIZE - 1);
-@@ -355,6 +436,16 @@ static void rtl9300_tx_reclaim(struct rtl9300_sw *sw, int budget)
+@@ -356,6 +441,16 @@ static void rtl9300_tx_reclaim(struct rtl9300_sw *sw, int budget)
  		nic->tx_tail++;
  	}
  
@@ -299,7 +346,7 @@ index 18a07ac93c6..6dd8e266261 100644
  	spin_unlock(&nic->tx_lock);
  }
  
-@@ -435,14 +526,18 @@ netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
+@@ -424,14 +519,18 @@ netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
  			     struct net_device *ndev, unsigned int port)
  {
  	struct rtl9300_nic *nic = &sw->nic;
@@ -320,15 +367,15 @@ index 18a07ac93c6..6dd8e266261 100644
  		spin_unlock(&nic->tx_lock);
  		return NETDEV_TX_BUSY;
  	}
-@@ -451,6 +546,7 @@ netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
- 	 * whatever they hold, so they only have to be there: in the tailroom,
- 	 * which leaves the frame as it is, also when it is a clone
+@@ -446,6 +545,7 @@ netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
+ 	 * the tailroom. They are zeroed where the frame owns its buffer; a
+ 	 * clone shares it, so there they are left for the engine to overwrite.
  	 */
 +	bytes = skb->len;
  	if (skb_put_padto(skb, ETH_ZLEN))
  		goto drop_freed;
- 	if (skb_tailroom(skb) < ETH_FCS_LEN && skb_pad(skb, ETH_FCS_LEN))
-@@ -491,8 +587,16 @@ netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
+ 	if (skb_tailroom(skb) < ETH_FCS_LEN) {
+@@ -490,8 +590,16 @@ netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
  	if (!timer_pending(&nic->tx_timer))
  		mod_timer(&nic->tx_timer, jiffies + RTL9300_TX_TIMER_TICKS);
  
@@ -345,7 +392,7 @@ index 18a07ac93c6..6dd8e266261 100644
  	return NETDEV_TX_OK;
  
  drop:
-@@ -504,6 +608,44 @@ netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
+@@ -503,6 +611,44 @@ netdev_tx_t rtl9300_nic_xmit(struct rtl9300_sw *sw, struct sk_buff *skb,
  	return NETDEV_TX_OK;
  }
  
@@ -390,12 +437,80 @@ index 18a07ac93c6..6dd8e266261 100644
  static void rtl9300_nic_irq_enable(struct rtl9300_sw *sw)
  {
  	regmap_set_bits(sw->map, RTL9300_DMA_IF_INTR_RX_RUNOUT_MSK, BIT(0));
+@@ -721,6 +867,22 @@ static void rtl9300_nic_stop(struct rtl9300_sw *sw)
+ 		dev_err(sw->dev, "failed to reset the DMA engine\n");
+ }
+ 
++/**
++ * rtl9300_nic_quiesce - stop the DMA engine as the boot loader left it
++ * @sw: the switch
++ *
++ * Masks the interrupts of the engine and turns it off, without the reset
++ * of rtl9300_nic_init(), so that it is quiet while the probe waits.
++ *
++ * Return: 0 or a negative error.
++ */
++int rtl9300_nic_quiesce(struct rtl9300_sw *sw)
++{
++	rtl9300_nic_irq_disable_all(sw);
++
++	return regmap_write(sw->map, RTL9300_DMA_IF_CTRL, 0);
++}
++
+ int rtl9300_nic_init(struct rtl9300_sw *sw, int irq)
+ {
+ 	struct rtl9300_nic *nic = &sw->nic;
+@@ -765,7 +927,9 @@ int rtl9300_nic_init(struct rtl9300_sw *sw, int irq)
+ 		goto err_napi;
+ 	}
+ 
+-	/* Whatever the boot loader left running stops here */
++	/* rtl9300_quiesce() turned the engine off; the reset also stops the
++	 * CPU port and empties the queues
++	 */
+ 	rtl9300_nic_irq_disable_all(sw);
+ 	err = rtl9300_nic_reset(sw);
+ 	if (err)
+@@ -809,17 +973,29 @@ int rtl9300_nic_init(struct rtl9300_sw *sw, int irq)
+ 	return err;
+ }
+ 
++/**
++ * rtl9300_nic_stop_poll - stop handing frames to the ports
++ * @sw: the switch
++ *
++ * Called before the ports are unregistered, so that no frame reaches a
++ * port once it is gone, also none that GRO held. Then rtl9300_nic_exit()
++ * stops the engine.
++ */
++void rtl9300_nic_stop_poll(struct rtl9300_sw *sw)
++{
++	napi_disable(&sw->nic.napi);
++}
++
+ void rtl9300_nic_exit(struct rtl9300_sw *sw)
+ {
+ 	struct rtl9300_nic *nic = &sw->nic;
+ 
+ 	timer_shutdown_sync(&nic->tx_timer);
+ 
+-	/* napi_disable() returns once the poll has given NAPI up, which can
+-	 * be before it has unmasked the interrupts again; the poll runs with
+-	 * BH off, so it is done after an RCU grace period
++	/* rtl9300_nic_stop_poll() returns once the poll has given NAPI up,
++	 * which can be before it has unmasked the interrupts again; the poll
++	 * runs with BH off, so it is done after an RCU grace period
+ 	 */
+-	napi_disable(&nic->napi);
+ 	synchronize_net();
+ 	rtl9300_nic_irq_disable_all(sw);
+ 	free_irq(nic->irq, sw);
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
 new file mode 100644
-index 00000000000..544eeda0f94
+index 00000000000..0b5f13e90d8
 --- /dev/null
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
-@@ -0,0 +1,599 @@
+@@ -0,0 +1,604 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Realtek RTL930x switch: the front ports as network interfaces
@@ -532,8 +647,11 @@ index 00000000000..544eeda0f94
 +
 +	/* The polling has to give the MAC the link phylib reports. It may
 +	 * lag behind phylib for a moment, and its link bit latches a loss
-+	 * of link, so read it until it agrees or the time is up. A MAC that
-+	 * doesn't agree stays off until the link goes down and up again.
++	 * of link, so read it until it agrees or the time is up; that sleeps
++	 * with phylink's locks held, but only while the two disagree. A MAC
++	 * that doesn't agree stays off until the link goes down and up
++	 * again; mac_link_up can't fail, so phylink still reports the link
++	 * as up, and the error is what tells.
 +	 */
 +	ret = read_poll_timeout(rtl9300_mac_state, err,
 +				err || (mac_speed == speed &&
@@ -655,6 +773,7 @@ index 00000000000..544eeda0f94
 +
 +static const struct ethtool_ops rtl9300_port_ethtool_ops = {
 +	.get_link = ethtool_op_get_link,
++	.get_ts_info = ethtool_op_get_ts_info,
 +	.get_link_ksettings = rtl9300_port_get_link_ksettings,
 +	.set_link_ksettings = rtl9300_port_set_link_ksettings,
 +	.nway_reset = rtl9300_port_nway_reset,
@@ -750,6 +869,15 @@ index 00000000000..544eeda0f94
 +		return -ENODEV;
 +	}
 +
++	/* Before the PHY, as rtl9300_ports_check() doesn't wait for the PHY
++	 * of such a port
++	 */
++	if (!rtl9300_port_mode_supported(*mode)) {
++		dev_info(dev, "port %u: %s not supported\n", *index,
++			 phy_modes(*mode));
++		return -ENODEV;
++	}
++
 +	err = rtl9300_port_find_phy(sw, np);
 +	if (err == -EPROBE_DEFER) {
 +		/* rtl9300_ports_check() gave up waiting for it */
@@ -763,12 +891,6 @@ index 00000000000..544eeda0f94
 +	if (err) {
 +		/* SerDes ports without a PHY need the PCS, which comes later */
 +		dev_info(dev, "port %u: no PHY, not supported yet\n", *index);
-+		return -ENODEV;
-+	}
-+
-+	if (!rtl9300_port_mode_supported(*mode)) {
-+		dev_info(dev, "port %u: %s not supported\n", *index,
-+			 phy_modes(*mode));
 +		return -ENODEV;
 +	}
 +
@@ -927,8 +1049,9 @@ index 00000000000..544eeda0f94
 + * rtl9300_ports_init - create the network interfaces of the ports
 + * @sw: the switch
 + *
-+ * On failure, the ports created so far are unregistered, but not freed:
-+ * that is for rtl9300_ports_free() once the DMA engine is stopped.
++ * On failure, the ports created so far stay registered: the caller
++ * unregisters them once the poll of the DMA engine is stopped, and frees
++ * them with rtl9300_ports_free() once the engine is.
 + *
 + * Return: 0 or a negative error.
 + */
@@ -956,9 +1079,6 @@ index 00000000000..544eeda0f94
 +	}
 +
 +	of_node_put(ports_np);
-+
-+	if (err)
-+		rtl9300_ports_unregister(sw);
 +
 +	return err;
 +}
@@ -996,7 +1116,7 @@ index 00000000000..544eeda0f94
 +	}
 +}
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
-index 0e68fbee517..24b02862080 100644
+index 63d0c58e6c2..3cf3df8a718 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
 @@ -35,12 +35,28 @@

@@ -454,11 +454,20 @@ SerDes) stays separate from the switchdev glue.
     its lock with the MDIO, I2C and reboot children. The children are
     created at boot because of `simple-mfd`; the switch driver doesn't
     populate them again.
+  - Turns off the port MACs and the NIC (its interrupts masked,
+    `DMA_IF_CTRL` written as 0) before it can defer, in case the boot
+    loader left them running.
   - Checks `MODEL_NAME_INFO` (`0x0004`) against the compatible.
   - Resets the NIC (`RST_GLB_CTRL_0` bits 1-2 with OpenWrt's settle
     delays), sets up the CPU port (`MAC_L2_PORT_CTRL(28)`, its forced
     1000/full mode, and the maximum lengths in both directions), and
     maps every trap reason to an RX ring.
+  - Points the rings it doesn't use (RX 1-31, TX 1) at one ring entry
+    the hardware doesn't own, so that nothing the boot loader left in
+    them is used.
+  - `DMA_IF_CTRL` is only ever written as a whole (0 to stop, the
+    enables to start, the enables and the trigger to send), never read:
+    its reads sometimes come back empty (OpenWrt).
 - **RX:**
   - One or two rings to start (OpenWrt uses two of 128), more later for
     priorities. Buffers come from a page_pool; frames that span
@@ -473,14 +482,18 @@ SerDes) stays separate from the switchdev glue.
 - **TX:**
   - One hardware ring, shared by all port netdevs under one spinlock, as
     in every comparable driver. The descriptor gets forwarding type
-    "physical", `IGNORE_STP` and `BIT(port)` as the destination mask,
-    and the priority.
-  - The engine puts the FCS into the last four bytes of the buffer,
-    whatever they hold (OpenWrt reuses its DSA tag's bytes for it), so
-    they come from the tailroom without being written; only frames below
-    the minimum are padded, and TCP's clones aren't copied.
-  - Before the trigger, `DMA_IF_CTRL` is read until it reads back
-    correctly, as OpenWrt does.
+    "physical", `IGNORE_STP` and `BIT(port)` as the destination mask; a
+    priority comes later.
+  - The engine puts the FCS into the last four bytes of the buffer
+    (OpenWrt reuses its DSA tag's bytes for it), so they come from the
+    tailroom: zeroed where the skb owns its head, and left as they are
+    in a clone's shared head, which isn't written (header-only TCP
+    segments, frames a packet tap or a flood also holds). TCP's data
+    segments get a head of their own anyway, as the core segments or
+    linearises them for a port without SG. Only frames below the
+    minimum are padded, and frames above the CPU port's limit are
+    dropped. Test 4 checks on the host that frames arrive at their own
+    length, not 4 bytes longer.
   - A full ring stops the queues of all open ports, and they wake
     together once a quarter of the ring is free (lan966x and ocelot stop
     and wake all ports too). Completions are reclaimed in NAPI, and in
@@ -493,10 +506,10 @@ SerDes) stays separate from the switchdev glue.
     fires, and with every port down to show that it doesn't storm.
   - The open ports are a bitmask changed under the TX lock in
     `ndo_open`/`ndo_stop`; RX delivers only to open ports, and stop and
-    wake touch only them, so nothing reaches a netdev that isn't
-    registered or is already gone (closing comes before the RCU grace
-    period that unregistering waits for). `IFF_TX_SKB_SHARING` is
-    cleared, as padding for the FCS changes the skb.
+    wake touch only them. NAPI is disabled before the netdevs are
+    unregistered (as lan966x does), so no frame, also none GRO held,
+    reaches a netdev that is gone. `IFF_TX_SKB_SHARING` is cleared, as
+    padding for the FCS changes the skb.
 - **Descriptors:** `__be32`/`__be16` fields with explicit conversions.
   On this big-endian-only SoC they compile to nothing, and the code
   stays sparse-clean and correct under `COMPILE_TEST`. Rings live in
@@ -553,8 +566,9 @@ SerDes) stays separate from the switchdev glue.
       (`driver_deferred_probe_check_state()`), after which a missing
       PHY costs only its port; the NVMEM cell of a port's MAC address is
       waited for the same way, and a port whose cell never comes gets a
-      random address. All of it happens before the hardware is touched,
-      so a deferred probe costs nothing.
+      random address. All of it happens before the switch is set up
+      (the probe only turns the port MACs and the DMA engine off first),
+      so a deferred probe costs next to nothing.
     - a PHY that fails to attach also costs only its port.
   - **The MDIO bus can defer too:** with `CONFIG_PSE_CONTROLLER`, a PHY
     whose node has `pses` returns `-EPROBE_DEFER` until its PSE driver

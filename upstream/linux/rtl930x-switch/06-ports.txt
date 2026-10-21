@@ -13,27 +13,36 @@ which turns the polling of the port on in the MDIO driver. So the MAC
 is left unforced, and mac_link_up only enables it, after checking that
 the MAC reports the link phylib does, as Andrew Lunn suggested for this
 hardware: a MAC that disagrees stays off with an error, rather than
-passing traffic at the wrong speed. Pause is forced to what phylink
+passing traffic at the wrong speed; mac_link_up can't fail, so phylink
+still reports the link as up. Pause is forced to what phylink
 resolved, as OpenWrt does.
 
-The PHY is attached when the port is created, not when the interface
-is opened, as DSA does: a PHY's PSE control has to work while its
-interface is down, and ethtool finds it through the attached PHY. As
-with DSA, the PHY's sysfs links to the interface are missing, as the
-interface isn't registered yet when the PHY is attached.
+The PHY is attached when the port is created, not when the interface is
+opened, as DSA does: a PHY's PSE control has to work while its interface
+is down, and ethtool finds it through the attached PHY. As with DSA, the
+PHY's sysfs links to the interface are missing, as the interface isn't
+registered yet when the PHY is attached. Also as with DSA, the drivers
+of the board's PHYs, and any firmware they load, have to be there when
+the switch probes: built in, with the firmware in the initramfs, or all
+as modules. The driver selects REALTEK_PHY, for the Realtek PHYs that
+RTL930x boards are built with, so that a built-in switch gets a built-in
+PHY driver rather than the generic one.
 
 fw_devlink does not follow phy-handle, and the MDIO controller is a
 child of the switch, so the driver defers its probe itself until the
 PHYs of the ports, and the NVMEM cells of their MAC addresses, are
-there, before it touches the hardware. A PHY that isn't there by the
-deferred probe timeout, or that fails to attach, costs only its port,
-and so does a PHY on a disabled MDIO bus; a missing NVMEM cell gives
-the port a random address. Ports without a PHY, such as SFP cages, need
-the SerDes and PCS setup that comes in a later series, and are skipped
-for now; so are interface modes other than SGMII, QSGMII, USXGMII and
-10G-QXGMII. The SerDes of the supported modes are used as the boot
-loader set them up.
+there, before it sets the hardware up; it only turns the MACs and the
+DMA engine off first, in case the boot loader left them running. A PHY
+that isn't there by the deferred probe timeout, or that fails to attach,
+costs only its port, and so does a PHY on a disabled MDIO bus; a missing
+NVMEM cell gives the port a random address. Ports without a PHY, such as
+SFP cages, need the SerDes and PCS setup that comes in a later series,
+and are skipped for now; so are interface modes other than SGMII,
+QSGMII, USXGMII and 10G-QXGMII. The SerDes of the supported modes are
+used as the boot loader set them up.
 
 All ports share the one TX ring, so when it is full the queues of all
 open ports stop, as with lan966x and ocelot, and they wake together
-once a quarter of the ring is free again.
+once a quarter of the ring is free again. They also share the NAPI
+context, which stops before the ports are unregistered, so that the
+frames GRO holds reach their ports while those are still there.
