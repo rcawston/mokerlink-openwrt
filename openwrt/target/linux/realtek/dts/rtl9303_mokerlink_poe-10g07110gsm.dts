@@ -115,7 +115,8 @@
 		regulator-min-microvolt = <54000000>;
 		regulator-max-microvolt = <54000000>;
 		regulator-always-on;
-		regulator-power-budget-milliwatt = <260000>;
+		/* TEST ONLY: 120 W for the PSE priority test, not for main */
+		regulator-power-budget-milliwatt = <120000>;
 	};
 
 	/*

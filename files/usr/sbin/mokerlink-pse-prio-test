@@ -1,0 +1,346 @@
+#!/bin/sh
+# mokerlink-pse-prio-test [OUTPUT_FILE]
+#
+# Guided test of the PSE priority fix (patches 836 and 837), for the test
+# firmware of branch test-pse-prio. Its PoE budget is 120 W, so that two
+# PDs of class 7 (75 W each) don't fit together. Needs those two and one PD
+# of class 4 (30 W):
+#
+#   port 1 (lan1): class 7 PD "A", priority 1
+#   port 2 (lan2): class 7 PD "B", priority 0, the highest
+#   port 3 (lan3): class 4 PD "C", priority 2, the lowest
+#
+# Ports 1-3 are on the same RTL8239: the PSE core only turns off ports of
+# the chip that reports the event. Records everything in one report, with
+# PASS or FAIL for each step:
+#
+#   1. a port of higher priority gets the budget: B turns A off, and A
+#      comes back when B is unplugged. Before the fix, this recursed until
+#      the kernel stack overflowed.
+#   2. only the ports needed are turned off: B turns A off, and C stays on
+#   3. nothing is turned off when that can't make room: with A first, B
+#      waits, and C stays on
+#
+# Each step waits up to 30 s for the ports to get where they should, then
+# watches them for 10 s. It fails if a port went on or off more than once,
+# or a PD that must stay on was turned off or lost its link.
+#
+# Prepare: flash the test firmware, and plug nothing into ports 1-7 except
+# the PC, on port 4-7. If the switch reboots during the test, note the step:
+# the report in /tmp is lost. Flash the normal firmware when it is done:
+# the test one has only 120 W.
+
+OUT=${1:-/tmp/mokerlink-pse-prio-test-$(date +%Y%m%d-%H%M%S).txt}
+TL=/tmp/mokerlink-pse-prio-timeline.$$
+PORTS="lan1 lan2 lan3"
+BUDGET=120000
+FAILS=0
+
+say() { echo "$*" | tee -a "$OUT"; }
+section() { printf '\n========== %s ==========\n' "$*" | tee -a "$OUT"; }
+run() { printf '\n$ %s\n' "$*" >>"$OUT"; "$@" >>"$OUT" 2>&1; }
+ask() { # prompt; waits for Enter, returns 1 on "s" (skip)
+	local a
+	printf '\n>>> %s\n    Enter when done, s + Enter to skip: ' "$*"
+	read -r a </dev/tty
+	echo ">>> $* [${a:-done}]" >>"$OUT"
+	[ "$a" != s ]
+}
+note() { # question; records the typed answer
+	local a
+	printf '\n??? %s\n    answer + Enter: ' "$*" >/dev/tty
+	read -r a </dev/tty
+	echo "??? $* [$a]" >>"$OUT"
+}
+
+poe_reg() { # sysfs directory of the PoE supply
+	local r
+	for r in /sys/class/regulator/regulator.*; do
+		[ "$(cat "$r/name" 2>/dev/null)" = poe ] && { echo "$r"; return 0; }
+	done
+	return 1
+}
+
+allotted() { cat "$REG/power_requested_milliwatt" 2>/dev/null; }
+
+pse() { # port: one-line PSE state
+	ethtool --show-pse "$1" 2>/dev/null | sed -n \
+		-e 's/.*Admin State: /admin /p' -e 's/.*Detection Status: /status /p' \
+		-e 's/.*Power Class: /class /p' -e 's/.*Actual Power: /mW /p' \
+		-e 's/^[[:space:]]*Priority: /prio /p' | tr '\n' ' '
+}
+
+prio() { # port: its priority
+	ethtool --show-pse "$1" 2>/dev/null | sed -n 's/^[[:space:]]*Priority: //p'
+}
+
+on() { # port: delivering power
+	ethtool --show-pse "$1" 2>/dev/null | grep -q 'Detection Status: delivering'
+}
+
+delivering() { # the ports of PORTS (or the ones given) that deliver power
+	local p s=
+	for p in ${1:-$PORTS}; do
+		on "$p" && s="$s $p"
+	done
+	echo "${s# }"
+}
+
+uptime_s() { cut -d. -f1 /proc/uptime; }
+uptime_f() { cut -d' ' -f1 /proc/uptime; }
+
+# Once a second, until killed: a line in TL for each change of the ports of
+# lan1-3 that deliver power or of the allotment, "uptime on: lan1 lan3 | mW"
+sampler() {
+	local s last=
+	while :; do
+		s="$(delivering) | $(allotted)"
+		if [ "$s" != "$last" ]; then
+			echo "$(uptime_f) on: $s" >>"$TL"
+			last=$s
+		fi
+		sleep 1
+	done
+}
+
+# changes SINCE: for each of lan1-3, how often it went on or off since
+# uptime SINCE, as "lan1 1 lan2 0 lan3 0"
+changes() {
+	awk -v s="$1" -v ports="$PORTS" '
+	{
+		split("", cur)
+		for (i = 3; i <= NF && $i != "|"; i++)
+			cur[$i] = 1
+		if ($1 >= s) {
+			for (j = 1; j <= n; j++)
+				if ((P[j] in cur) != (P[j] in prev))
+					cnt[P[j]]++
+		}
+		split("", prev)
+		for (k in cur)
+			prev[k] = 1
+	}
+	BEGIN { n = split(ports, P, " ") }
+	END {
+		for (j = 1; j <= n; j++)
+			printf "%s %d ", P[j], cnt[P[j]] + 0
+	}' "$TL"
+}
+
+link_downs() { # port since: number of "Link is Down" of the port since uptime "since"
+	dmesg | awk -v p="$1: Link is Down" -v s="$2" '
+		index($0, p) { t = substr($0, 2, index($0, "]") - 2) + 0; if (t >= s) n++ }
+		END { print n + 0 }'
+}
+
+pass() { say "PASS: $*"; }
+fail() { say "FAIL: $*"; FAILS=$((FAILS + 1)); }
+
+# check STEP T0 "PORTS ON" MW [STEADY]: waits up to 30 s for exactly PORTS
+# ON of lan1-3 to deliver power ("" for none), with MW mW allotted ("-" for
+# any), then watches that for 10 s. Since uptime T0, each port must have
+# gone on or off at most once, and the PDs of STEADY must have stayed on,
+# without their link going down. Sets GOT_MW to the allotment.
+check() {
+	local step="$1" t0="$2" want="$3" mw="$4" steady="$5" end got a ok=1 p c n
+	end=$(($(uptime_s) + 30))
+	while :; do
+		got=$(delivering)
+		a=$(allotted)
+		[ "$got" = "$want" ] && { [ "$mw" = - ] || [ "$a" = "$mw" ]; } && break
+		if [ "$(uptime_s)" -ge $end ]; then
+			ok=0
+			say "  after 30 s on: ${got:-none}, allotted $a mW"
+			break
+		fi
+		sleep 1
+	done
+	GOT_MW=$a
+	if [ $ok = 1 ]; then
+		sleep 10
+		got=$(delivering)
+		a=$(allotted)
+		if [ "$got" != "$want" ] || [ "$a" != "$GOT_MW" ]; then
+			ok=0
+			say "  10 s later on: ${got:-none}, allotted $a mW"
+		fi
+	fi
+
+	c=$(changes "$t0")
+	# shellcheck disable=SC2086 # "lan1 1 lan2 0 ..." into pairs
+	set -- $c
+	while [ $# -ge 2 ]; do
+		[ "$2" -gt 1 ] && { ok=0; say "  $1 went on or off $2 times"; }
+		shift 2
+	done
+	for p in $steady; do
+		if awk -v p="$p" -v s="$t0" '$1 >= s {
+			for (i = 3; i <= NF && $i != "|"; i++)
+				if ($i == p) next
+			found = 1; exit
+		} END { exit !found }' "$TL"; then
+			ok=0
+			say "  $p was turned off"
+		fi
+		n=$(link_downs "$p" "$t0")
+		[ "$n" -gt 0 ] && { ok=0; say "  $p: its link went down $n times"; }
+	done
+
+	{
+		echo "  timeline since $t0 (uptime, ports delivering, allotted mW):"
+		awk -v s="$t0" '$1 >= s { print "    " $0 }' "$TL"
+		for p in $PORTS; do
+			echo "  $p: $(pse "$p")"
+		done
+		echo "  changes: $c"
+	} >>"$OUT"
+
+	if [ $ok = 1 ]; then
+		pass "$step: on: ${want:-none}, allotted $GOT_MW mW"
+	else
+		fail "$step: expected on: ${want:-none}, allotted $mw mW"
+	fi
+	[ $ok = 1 ]
+}
+
+linked() { # port: whether the PD on it has a link, for the restart check
+	if [ "$(cat "/sys/class/net/$1/carrier" 2>/dev/null)" = 1 ]; then
+		say "  $1 has a link: a restart of its PD shows as the link going down"
+	else
+		say "  $1 has no link: a restart of its PD that is quicker than a second may not show, so watch it"
+	fi
+}
+
+stop() { # why: the test can't go on with these PDs
+	say "$*"
+	say "Stopping here."
+	finish
+	exit 1
+}
+
+finish() {
+	section "after the test"
+	for p in $PORTS; do
+		[ -n "$(eval echo "\$PRIO_$p")" ] &&
+			run ethtool --set-pse "$p" prio "$(eval echo "\$PRIO_$p")"
+		say "$p: $(pse "$p")"
+	done
+	section "timeline"
+	cat "$TL" >>"$OUT"
+	section "kernel log"
+	run sh -c "dmesg | grep -iE 'pse|rtl8239|budget|regulator|BUG|WARNING|Call Trace|Link is' | tail -80"
+	run dmesg
+	if [ $FAILS = 0 ]; then
+		say "All steps passed."
+	else
+		say "Steps failed: $FAILS."
+	fi
+	echo
+	echo "Report: $OUT"
+	echo "Copy it off the switch with: scp -O root@<switch-ip>:$OUT ."
+	echo "Then flash the normal firmware: this one has only 120 W."
+}
+
+: >"$OUT"
+: >"$TL"
+section "system"
+run cat /etc/openwrt_release
+run uname -a
+run sh -c "dmesg | grep -iE 'rtl8239|pse'"
+
+REG=$(poe_reg) || { say "no poe regulator"; exit 1; }
+b=$(cat "$REG/power_budget_milliwatt" 2>/dev/null)
+say "PoE budget $b mW, allotted $(allotted) mW"
+if [ "$b" != $BUDGET ]; then
+	say "This needs the test firmware of branch test-pse-prio, with a budget of $BUDGET mW."
+	exit 1
+fi
+
+for p in $PORTS; do
+	ethtool --show-pse "$p" 2>/dev/null | grep -q 'Admin State: enabled' ||
+		run ethtool --set-pse "$p" c33-pse-admin-control enable
+	eval "PRIO_$p=$(prio "$p")"
+done
+while [ -n "$(delivering "$PORTS lan4 lan5 lan6 lan7")" ] || [ "$(allotted)" != 0 ]; do
+	say "Delivering: $(delivering "$PORTS lan4 lan5 lan6 lan7"), allotted $(allotted) mW"
+	ask "Unplug all PDs from ports 1-7" || exit 1
+	sleep 3
+done
+
+section "priorities"
+run ethtool --set-pse lan1 prio 1
+run ethtool --set-pse lan2 prio 0
+run ethtool --set-pse lan3 prio 2
+for p in $PORTS; do
+	say "$p: $(pse "$p")"
+done
+
+sampler &
+SAMPLER=$!
+trap 'kill $SAMPLER 2>/dev/null; rm -f "$TL"' EXIT
+trap 'exit 1' INT TERM
+sleep 2
+
+section "1: a port of higher priority gets the budget"
+t0=$(uptime_f)
+ask "Plug class 7 PD A into port 1" || stop "Skipped."
+check "1.1 A on port 1 gets power" "$t0" lan1 - ||
+	stop "A must get power on port 1 for the test."
+A=$GOT_MW
+linked lan1
+
+t0=$(uptime_f)
+ask "Plug class 7 PD B into port 2" || stop "Skipped."
+if ! check "1.2 B on port 2 turns A off" "$t0" lan2 -; then
+	[ "$(delivering)" = "lan1 lan2" ] &&
+		stop "A and B fit together in $BUDGET mW: the test needs PDs of class 7 or 8, of over 60 W each."
+	stop "The rest of the test needs this step."
+fi
+B=$GOT_MW
+[ $((A + B)) -gt $BUDGET ] ||
+	stop "A ($A mW) and B ($B mW) fit together in $BUDGET mW: the test needs PDs of over 60 W each."
+
+t0=$(uptime_f)
+ask "Unplug B from port 2" || stop "Skipped."
+check "1.3 A gets power again" "$t0" lan1 "$A"
+
+section "2: only the ports needed are turned off"
+t0=$(uptime_f)
+ask "Plug class 4 PD C into port 3" || stop "Skipped."
+check "2.1 C on port 3 gets power, A stays on" "$t0" "lan1 lan3" - lan1 ||
+	stop "A and C must both get power for the rest of the test."
+C=$((GOT_MW - A))
+linked lan3
+[ $((B + C)) -le $BUDGET ] ||
+	stop "B ($B mW) and C ($C mW) don't fit together in $BUDGET mW: the test needs C of class 4 or lower."
+
+t0=$(uptime_f)
+ask "Plug B into port 2 again, and watch C on port 3" || stop "Skipped."
+check "2.2 B turns A off, C stays on" "$t0" "lan2 lan3" $((B + C)) lan3
+note "Did C on port 3 stay on all the time, without restarting? (y/n)"
+
+t0=$(uptime_f)
+ask "Unplug B from port 2" || stop "Skipped."
+check "2.3 A gets power again, C stays on" "$t0" "lan1 lan3" $((A + C)) lan3
+
+section "3: nothing is turned off when that can't make room"
+t0=$(uptime_f)
+run ethtool --set-pse lan1 prio 0
+run ethtool --set-pse lan2 prio 1
+for p in $PORTS; do
+	say "$p: $(pse "$p")"
+done
+check "3.1 A first now, nothing changes" "$t0" "lan1 lan3" $((A + C)) "lan1 lan3"
+
+t0=$(uptime_f)
+ask "Plug B into port 2 again, and watch C on port 3" || stop "Skipped."
+sleep 5   # for B's classification, as nothing is to change
+check "3.2 B waits, A and C stay on" "$t0" "lan1 lan3" $((A + C)) "lan1 lan3"
+note "Did C on port 3 stay on all the time, without restarting? (y/n)"
+
+t0=$(uptime_f)
+ask "Unplug A from port 1" || stop "Skipped."
+check "3.3 B gets power, C stays on" "$t0" "lan2 lan3" $((B + C)) lan3
+
+ask "Unplug B and C" || true
+finish
