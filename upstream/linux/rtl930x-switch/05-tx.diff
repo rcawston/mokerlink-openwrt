@@ -58,7 +58,7 @@ index d6ab121101c..8f15ace5aa4 100644
  
  #endif /* _RTL9300_H_ */
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c
-index a42fea7f2ee..393a7287fc2 100644
+index d37f2d68393..b4bd513bb81 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c
 @@ -25,6 +25,7 @@
@@ -122,7 +122,7 @@ index a42fea7f2ee..393a7287fc2 100644
  /* Hands RX descriptor i to the hardware */
  static void rtl9300_rx_give(struct rtl9300_nic *nic, unsigned int i)
  {
-@@ -295,10 +320,194 @@ static int rtl9300_rx(struct rtl9300_sw *sw, int budget)
+@@ -295,10 +320,196 @@ static int rtl9300_rx(struct rtl9300_sw *sw, int budget)
  	return frames;
  }
  
@@ -192,11 +192,12 @@ index a42fea7f2ee..393a7287fc2 100644
 +		     RTL9300_DMA_IF_TXRX_EN | RTL9300_DMA_IF_TX_TRIGGER(0));
 +}
 +
-+/* The TX done interrupt is this driver's own reading of the interrupt
-+ * registers: OpenWrt never enables it, and frees sent frames from its RX
-+ * poll. So while frames are in the ring, a timer also kicks the engine,
-+ * in case a trigger was lost, and the poll, which frees what was sent, as
-+ * the TX coalescing timer of stmmac does.
++/* OpenWrt unmasked the TX done interrupts from 2021 until January 2026, but
++ * only acknowledged them, as it copies the frames it sends, and that bit 0
++ * is TX ring 0 is inferred from the RX registers. So while frames are in
++ * the ring, a timer also kicks the engine, in case a trigger was lost, and
++ * the poll, which frees what was sent, as the TX coalescing timer of stmmac
++ * does.
 + */
 +static void rtl9300_tx_timer(struct timer_list *t)
 +{
@@ -248,9 +249,10 @@ index a42fea7f2ee..393a7287fc2 100644
 +	if (skb->len + ETH_FCS_LEN > RTL9300_MAX_FRAME)
 +		goto drop;
 +
-+	/* The engine puts the FCS into the last four bytes of the buffer, in
-+	 * the tailroom. They are zeroed where the frame owns its buffer; a
-+	 * clone shares it, so there they are left for the engine to overwrite.
++	/* The engine sends the FCS in place of the last four bytes of the
++	 * buffer, which come from the tailroom, and only reads the buffer.
++	 * The bytes are zeroed where the frame owns its buffer; a clone
++	 * shares it, so there they stay as they are.
 +	 */
 +	if (skb_put_padto(skb, ETH_ZLEN))
 +		goto drop_freed;
@@ -316,8 +318,8 @@ index a42fea7f2ee..393a7287fc2 100644
 +	regmap_set_bits(sw->map, RTL9300_DMA_IF_INTR_TX_DONE_MSK, BIT(0));
  }
  
- /* Masks and acknowledges every interrupt of the DMA engine */
-@@ -315,20 +524,24 @@ static void rtl9300_nic_irq_disable_all(struct rtl9300_sw *sw)
+ /* Masks and acknowledges the interrupts of the DMA engine, and masks the L2
+@@ -319,20 +530,24 @@ static void rtl9300_nic_irq_disable_all(struct rtl9300_sw *sw)
  static irqreturn_t rtl9300_nic_irq(int irq, void *data)
  {
  	struct rtl9300_sw *sw = data;
@@ -344,7 +346,7 @@ index a42fea7f2ee..393a7287fc2 100644
  
  	napi_schedule(&sw->nic.napi);
  
-@@ -341,6 +554,7 @@ static int rtl9300_nic_poll(struct napi_struct *napi, int budget)
+@@ -345,6 +560,7 @@ static int rtl9300_nic_poll(struct napi_struct *napi, int budget)
  	struct rtl9300_sw *sw = rtl9300_nic_to_sw(nic);
  	int frames;
  
@@ -352,7 +354,7 @@ index a42fea7f2ee..393a7287fc2 100644
  	frames = rtl9300_rx(sw, budget);
  	if (frames < budget && napi_complete_done(napi, frames))
  		rtl9300_nic_irq_enable(sw);
-@@ -425,6 +639,11 @@ static int rtl9300_nic_setup(struct rtl9300_sw *sw)
+@@ -429,6 +645,11 @@ static int rtl9300_nic_setup(struct rtl9300_sw *sw)
  	if (err)
  		return err;
  
@@ -364,7 +366,7 @@ index a42fea7f2ee..393a7287fc2 100644
  	err = regmap_update_bits(sw->map, RTL9300_DMA_IF_RX_RING_SIZE(0),
  				 RTL9300_DMA_IF_RX_RING_FIELD(0),
  				 FIELD_PREP(RTL9300_DMA_IF_RX_RING_FIELD(0),
-@@ -522,6 +741,8 @@ int rtl9300_nic_init(struct rtl9300_sw *sw, int irq)
+@@ -526,6 +747,8 @@ int rtl9300_nic_init(struct rtl9300_sw *sw, int irq)
  	BUILD_BUG_ON(RTL9300_RX_FRAG_SIZE > PAGE_SIZE);
  
  	nic->irq = irq;
@@ -373,7 +375,7 @@ index a42fea7f2ee..393a7287fc2 100644
  
  	err = dma_set_mask_and_coherent(sw->dev, DMA_BIT_MASK(32));
  	if (err)
-@@ -550,6 +771,7 @@ int rtl9300_nic_init(struct rtl9300_sw *sw, int irq)
+@@ -554,6 +777,7 @@ int rtl9300_nic_init(struct rtl9300_sw *sw, int irq)
  	if (err)
  		goto err_pool;
  
@@ -381,7 +383,7 @@ index a42fea7f2ee..393a7287fc2 100644
  	err = rtl9300_rx_fill(nic);
  	if (err)
  		goto err_buffers;
-@@ -591,6 +813,8 @@ void rtl9300_nic_exit(struct rtl9300_sw *sw)
+@@ -595,6 +819,8 @@ void rtl9300_nic_exit(struct rtl9300_sw *sw)
  {
  	struct rtl9300_nic *nic = &sw->nic;
  
@@ -390,7 +392,7 @@ index a42fea7f2ee..393a7287fc2 100644
  	/* napi_disable() returns once the poll has given NAPI up, which can
  	 * be before it has unmasked the interrupts again; the poll runs with
  	 * BH off, so it is done after an RCU grace period
-@@ -602,6 +826,7 @@ void rtl9300_nic_exit(struct rtl9300_sw *sw)
+@@ -606,6 +832,7 @@ void rtl9300_nic_exit(struct rtl9300_sw *sw)
  
  	/* The engine is idle after this, so its buffers can go */
  	rtl9300_nic_stop(sw);

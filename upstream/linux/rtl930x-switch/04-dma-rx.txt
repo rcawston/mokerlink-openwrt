@@ -16,13 +16,14 @@ takes as many frames as fit at the longest frame the switch passes, 64,
 so that it can never overflow. The FCS is cut off, and until the ports
 become interfaces in a later patch, the frames are dropped.
 
-The engine is reset first, as the boot loader may have left it
-running, and stopped at shutdown too, so that it doesn't write into
-memory that a kernel started with kexec has taken over. Its control
-register is written as a whole, as OpenWrt stops the engine, because
-reads of it sometimes come back empty. The rings the driver doesn't
-use, RX rings 1 to 31 and, until the next patch, both TX rings, point
-at a ring entry the hardware doesn't own, so that the engine takes
-nothing the boot loader left in them. The descriptor layout, the ring
-handling and the reset with its settling times follow OpenWrt's
-rtl838x_eth.c.
+The engine is reset first, as the boot loader may have left it running,
+and stopped at shutdown too, so that it doesn't write into memory that a
+kernel started with kexec has taken over. Its control register is
+written as a whole, as OpenWrt stops the engine, because reads of it
+sometimes come back empty. The rings the driver doesn't use, RX rings 1
+to 31 and, until the next patch, both TX rings, point at a ring entry
+the hardware doesn't own, so that the engine takes nothing the boot
+loader left in them. The L2 notification interrupt next to those of the
+engine, which the driver doesn't use, is masked with them. The
+descriptor layout, the ring handling and the reset with its settling
+times follow OpenWrt's rtl838x_eth.c.

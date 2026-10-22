@@ -7,8 +7,9 @@
 # report (default /tmp/rtl9300-switch-test.txt), which ends with a summary
 # to paste into the cover letter.
 #
-#   1. probe: the driver bound, lan1-lan7 exist, lan8 (SFP) is skipped,
-#      and the kernel log has no warning, lockdep or DMA-API report
+#   1. probe: the driver bound, lan1-lan7 exist and share one switch ID,
+#      lan8 (SFP) is skipped, and the kernel log has no warning, lockdep or
+#      DMA-API report
 #   2. PHYs attached with every port down, and ethtool's PSE lookup finds
 #      the PHY ("No PSE", not "No PHY") while the port is down
 #   3. per port: link with the host at the speeds the host can do
@@ -126,6 +127,15 @@ if [ $ports -eq 7 ]; then
 else
 	fail "$ports of lan1-lan7 exist"
 	run ls -l /sys/class/net
+fi
+# The ID is the address of the first port with one in the DT, so it
+# should be the same at every boot
+ids=$(cat /sys/class/net/lan[1-7]/phys_switch_id 2>/dev/null | sort -u)
+names=$(cat /sys/class/net/lan[1-7]/phys_port_name 2>/dev/null | tr '\n' ' ')
+if [ -n "$ids" ] && [ "$(echo "$ids" | wc -l)" -eq 1 ]; then
+	pass "the ports share switch ID $ids (port names: $names)"
+else
+	fail "the ports don't share one switch ID: $ids"
 fi
 if [ ! -e /sys/class/net/lan8 ] && dmesg | grep -q 'port 27: .*not supported'; then
 	pass "the SFP port is skipped, with the message"

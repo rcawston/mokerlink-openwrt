@@ -89,7 +89,7 @@ index 00000000000..352d8b13ce6
 +#endif /* _RTL9300_H_ */
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
 new file mode 100644
-index 00000000000..b3918ae24bd
+index 00000000000..529df4bae31
 --- /dev/null
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
 @@ -0,0 +1,127 @@
@@ -101,8 +101,8 @@ index 00000000000..b3918ae24bd
 + * Ethernet switch with up to 28 ports. The switch is one register block,
 + * shared with the MDIO, I2C and reset drivers through a syscon, and it
 + * reaches the CPU through a DMA engine of its own on port 28, which this
-+ * driver runs. Every front port described in the device tree becomes a
-+ * network interface.
++ * driver runs. The front ports in the device tree that it supports become
++ * network interfaces.
 + *
 + * Realtek publishes no datasheet. The register layout and the order of the
 + * setup follow the OpenWrt realtek target (drivers/net/ethernet/realtek and

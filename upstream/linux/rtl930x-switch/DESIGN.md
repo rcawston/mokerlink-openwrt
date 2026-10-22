@@ -484,6 +484,15 @@ SerDes) stays separate from the switchdev glue.
     in every comparable driver. The descriptor gets forwarding type
     "physical", `IGNORE_STP` and `BIT(port)` as the destination mask; a
     priority comes later.
+  - The TX lock is taken with BH off, not with interrupts off, as the
+    xmit paths of lan966x and sparx5 take theirs. netconsole is an nbcon
+    console whose atomic write is marked unsafe, so it sends only from
+    task context (the printk thread), which can't interrupt a holder of
+    the lock on its own CPU. Only the last flush of a panic and the
+    Braille console send from
+    other contexts, best effort, as with every driver that locks this
+    way; taking the lock with interrupts off everywhere, or opting out of
+    netpoll, would cost more than those cases are worth.
   - The engine puts the FCS into the last four bytes of the buffer
     (OpenWrt reuses its DSA tag's bytes for it), so they come from the
     tailroom: zeroed where the skb owns its head, and left as they are
@@ -498,17 +507,25 @@ SerDes) stays separate from the switchdev glue.
     together once a quarter of the ring is free (lan966x and ocelot stop
     and wake all ports too). Completions are reclaimed in NAPI, and in
     xmit when the ring is full.
-  - The TX done interrupt (bit 0 of 0xe018/0xe024) is this driver's own
-    reading: OpenWrt never enables it and reclaims from its RX poll. So
-    while frames are in the ring, a timer kicks the engine and NAPI every
-    tick, as stmmac's TX coalescing timer does; the hardware test counts
-    the interrupts while sending UDP to show whether the interrupt
-    fires, and with every port down to show that it doesn't storm.
+  - The TX done interrupts (0xe018/0xe024): OpenWrt unmasked them from
+    27029277f9 (Birger Koblitz, January 2021) until ebea3d3826 (Markus
+    Stockhausen, January 2026), but only acknowledged them, as it copies
+    the frames it sends; that bit 0 is TX ring 0 is inferred from the RX
+    registers. So while frames are in the ring, a timer kicks the engine
+    and NAPI every tick, as stmmac's TX coalescing timer does; the
+    hardware test counts the interrupts while sending UDP to show
+    whether the interrupt fires, and with every port down to show that
+    it doesn't storm. The L2 notification interrupt (mask 0xe04c), which
+    OpenWrt names but never writes, is masked with the others.
   - The open ports are a bitmask changed under the TX lock in
     `ndo_open`/`ndo_stop`; RX delivers only to open ports, and stop and
-    wake touch only them. NAPI is disabled before the netdevs are
-    unregistered (as lan966x does), so no frame, also none GRO held,
-    reaches a netdev that is gone. `IFF_TX_SKB_SHARING` is cleared, as
+    wake touch only them. `ndo_stop` then disables and re-enables the
+    shared NAPI, so that a poll still running, and with it what GRO
+    holds, is done before the port is closed, and schedules the poll
+    once more for an interrupt that came in between. NAPI keeps running
+    while the netdevs are unregistered, as a sender blocked in
+    `tpacket_snd()` holds its netdev until NAPI has freed its frames;
+    it is disabled after them. `IFF_TX_SKB_SHARING` is cleared, as
     padding for the FCS changes the skb.
 - **Descriptors:** `__be32`/`__be16` fields with explicit conversions.
   On this big-endian-only SoC they compile to nothing, and the code
@@ -519,8 +536,12 @@ SerDes) stays separate from the switchdev glue.
     CPU port; the CPU row holds every port.
   - Every port forwards in MSTI 0 (the boot loader may leave it
     otherwise), and `ST_CTRL` is cleared, as OpenWrt does.
-  - SA learning is off on all ports and the CPU port; frames from new
-    source addresses and past the learning limit are forwarded.
+  - SA learning is off on all ports and the CPU port; frames the front
+    ports receive from new source addresses and past the learning limit
+    are forwarded (OpenWrt sets those two actions for the front ports
+    only). The per-port flush removes learned entries; whether it also
+    removes static ones is unknown, so the L2 table is taken to hold
+    none, as mirroring, ACLs, trunks and routing are taken to be off.
   - VLAN filtering is off. Tagged frames should then pass unchanged both
     ways, but the TX descriptor has no keep-tag bit, and the egress
     untag set and `VLAN_PORT_EGR_FLTR` may still apply. The code sets
@@ -621,7 +642,8 @@ SerDes) stays separate from the switchdev glue.
   without one. The mainline MDIO driver also turns polling off at probe
   for every port and never turns it on for a port without a PHY, so
   `MAC_LINK_STS` of the SFP port isn't fed either. Series 1 therefore
-  creates no netdev for a port that needs a PCS, and says so in the log.
+  creates no netdev for a port that needs a PCS (an interface mode it
+  doesn't run, or in-band status), and says so in the log.
   The PCS of series 2 and the polling question below decide how that
   port gets its link.
 - **The gap: polling setup.** Mainline's MDIO driver toggles only the
@@ -911,6 +933,9 @@ As written (`upstream/linux/rtl930x-switch/01-*` to `09-*`, cover letter
    - the forced MAC for PHY-less ports comes with series 2, where there
      is a port to run it on
 7. net: ethernet: realtek: rtl9300: support jumbo frames
+   - the MAC limit has room for two VLAN tags and the FCS; bit 28 of
+     `MAC_L2_PORT_MAX_LEN_CTRL` (whether tag bytes count, sense unknown)
+     stays as the boot loader left it, as in OpenWrt
 8. net: ethernet: realtek: rtl9300: report the MIB counters
    - the ethtool eth-mac, eth-ctrl, pause and RMON groups, with the
      32-bit counters added up once a minute and the eth-mac frame and
@@ -918,7 +943,8 @@ As written (`upstream/linux/rtl930x-switch/01-*` to `09-*`, cover letter
      interface statistics stay what passed through the CPU, with the
      frames lost on the way as rx_dropped
 9. net: ethernet: realtek: rtl9300: add devlink ports
-   - phys_port_name for udev, and the switch ID bridge offload will need
+   - phys_port_name for udev, and the switch ID bridge offload will need,
+     the MAC address of the first port with one (random without)
 
 - **Merge path:** all of it through net-next; no binding change, no
   other tree.

@@ -2,6 +2,8 @@ net: ethernet: realtek: rtl9300: add devlink ports
 
 Register a devlink port for each port, so that every interface has a
 physical port name, which udev can name the interfaces by, and all of
-them share one switch ID, which bridge offload needs later. The ID only
-has to set this switch apart from others on the system, so it is
-random.
+them share one switch ID, which bridge offload needs later. The ID is
+the MAC address of the first port the driver runs that has one of its
+own, which the probe already waits for, as lan966x and sparx5 take their
+base MAC address, so that it stays the same across boots for udev rules;
+without one it is random.

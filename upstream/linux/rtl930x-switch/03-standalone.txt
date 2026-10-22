@@ -1,20 +1,21 @@
 net: ethernet: realtek: rtl9300: set the switch up for standalone ports
 
 Before there are any ports, the switch has to be set up so that each
-port is an interface of its own: every frame a port receives goes to
-the CPU, and nothing is forwarded between two ports in hardware. Where
-the boot loader may have left something else in what is set up here, it
-is overwritten. Port mirroring, ACLs, trunks and routing, which the
-driver doesn't use, are left as they are and taken to be off.
+port is an interface of its own: every frame a port receives goes to the
+CPU, and nothing is forwarded between two ports in hardware. Where the
+boot loader may have left something else in what is set up here, it is
+overwritten. Port mirroring, ACLs, trunks and routing, which the driver
+doesn't use, are left as they are and taken to be off, and the L2 table
+is taken to hold no static entries.
 
 - The port isolation table lets each front port forward only to the
   CPU port, and the CPU port to all of them.
 - Every port forwards in MSTI 0, the spanning tree instance of all
   VLANs.
 - No port learns source addresses, so every frame is flooded, and the
-  isolation limits the flood of a port to the CPU. Frames from new
-  source addresses, and frames past the learning limit, are forwarded.
-  Entries the boot loader learned are removed.
+  isolation limits the flood of a port to the CPU. Frames that front
+  ports receive from new source addresses, or past the learning limit,
+  are forwarded. Entries the boot loader learned are removed.
 - Every port is a member of every VLAN, without ingress or egress
   filtering. 0x8100 is the only TPID taken for a tag, and VID 0, which
   untagged frames get, is the only one sent untagged, so frames keep

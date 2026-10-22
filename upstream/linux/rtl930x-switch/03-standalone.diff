@@ -29,7 +29,7 @@ index 352d8b13ce6..9e48cad17b2 100644
  
  #endif /* _RTL9300_H_ */
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
-index b3918ae24bd..86998c3fe09 100644
+index 529df4bae31..9ef8403ce1b 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
 @@ -18,6 +18,8 @@
@@ -41,7 +41,7 @@ index b3918ae24bd..86998c3fe09 100644
  #include <linux/mfd/syscon.h>
  #include <linux/module.h>
  #include <linux/of.h>
-@@ -27,6 +29,388 @@
+@@ -27,6 +29,393 @@
  #include "rtl9300.h"
  #include "rtl9300_regs.h"
  
@@ -180,9 +180,11 @@ index b3918ae24bd..86998c3fe09 100644
 +
 +/* Nothing is learned, so every frame from a port is unknown unicast,
 + * broadcast or multicast and reaches the CPU through the isolation. A frame
-+ * from a new source address, or one past the learning limit, is forwarded,
-+ * whatever the boot loader set for those. Entries the boot loader learned
-+ * are removed.
++ * a front port receives from a new source address, or past the learning
++ * limit, is forwarded, whatever the boot loader set for those; OpenWrt sets
++ * the two actions for the front ports only. Entries the boot loader learned
++ * are removed, and static entries, which the flush may keep, are taken to
++ * be absent.
 + */
 +static int rtl9300_setup_learning(struct rtl9300_sw *sw)
 +{
@@ -198,6 +200,9 @@ index b3918ae24bd..86998c3fe09 100644
 +						    RTL9300_L2_SALRN_DISABLED));
 +		if (err)
 +			return err;
++
++		if (port == RTL9300_CPU_PORT)
++			continue;
 +
 +		/* Action 0 forwards */
 +		err = regmap_clear_bits(sw->map,
@@ -430,7 +435,7 @@ index b3918ae24bd..86998c3fe09 100644
  static int rtl9300_check_model(struct rtl9300_sw *sw)
  {
  	u32 val, model, letter;
-@@ -74,11 +458,19 @@ static int rtl9300_probe(struct platform_device *pdev)
+@@ -74,11 +463,19 @@ static int rtl9300_probe(struct platform_device *pdev)
  		return dev_err_probe(dev, PTR_ERR(sw->map),
  				     "no switch register map\n");
  

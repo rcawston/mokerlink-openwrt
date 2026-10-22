@@ -1,9 +1,12 @@
 net: ethernet: realtek: rtl9300: support jumbo frames
 
 The switch passes frames of up to 12288 bytes. Each port's MAC drops
-received frames longer than its limit, which counts two VLAN tags and
-the FCS, so set that limit from the MTU of the port, and allow MTUs up
-to what fits the 12288 bytes.
+received frames longer than its limit, so set that limit from the MTU of
+the port, with room for two VLAN tags and the FCS, and allow MTUs up to
+what fits the 12288 bytes. Whether the MAC counts tag bytes is selected
+by a bit whose sense isn't known, so it is left as it is, as OpenWrt
+leaves it; if they aren't counted, tagged frames with up to eight bytes
+more than the MTU pass.
 
 The CPU port and the DMA engine already take frames of that length:
 its ring is sized for frames of the longest length, which span eight

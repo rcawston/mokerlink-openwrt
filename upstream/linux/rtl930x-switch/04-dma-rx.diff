@@ -89,10 +89,10 @@ index 9e48cad17b2..d6ab121101c 100644
 +
  #endif /* _RTL9300_H_ */
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
-index 86998c3fe09..75bfc38d22f 100644
+index 9ef8403ce1b..3cf0d9c5a43 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_main.c
-@@ -443,7 +443,7 @@ static int rtl9300_probe(struct platform_device *pdev)
+@@ -448,7 +448,7 @@ static int rtl9300_probe(struct platform_device *pdev)
  {
  	struct device *dev = &pdev->dev;
  	struct rtl9300_sw *sw;
@@ -101,7 +101,7 @@ index 86998c3fe09..75bfc38d22f 100644
  
  	sw = devm_kzalloc(dev, sizeof(*sw), GFP_KERNEL);
  	if (!sw)
-@@ -458,6 +458,10 @@ static int rtl9300_probe(struct platform_device *pdev)
+@@ -463,6 +463,10 @@ static int rtl9300_probe(struct platform_device *pdev)
  		return dev_err_probe(dev, PTR_ERR(sw->map),
  				     "no switch register map\n");
  
@@ -112,7 +112,7 @@ index 86998c3fe09..75bfc38d22f 100644
  	err = devm_mutex_init(dev, &sw->tbl_lock);
  	if (err)
  		return err;
-@@ -471,11 +475,36 @@ static int rtl9300_probe(struct platform_device *pdev)
+@@ -476,11 +480,36 @@ static int rtl9300_probe(struct platform_device *pdev)
  	if (err)
  		return dev_err_probe(dev, err, "failed to set up the switch\n");
  
@@ -149,7 +149,7 @@ index 86998c3fe09..75bfc38d22f 100644
  static const struct rtl9300_info rtl9301_info = {
  	.name = "RTL9301",
  	.model = 0x9301,
-@@ -507,6 +536,8 @@ MODULE_DEVICE_TABLE(of, rtl9300_of_match);
+@@ -512,6 +541,8 @@ MODULE_DEVICE_TABLE(of, rtl9300_of_match);
  
  static struct platform_driver rtl9300_driver = {
  	.probe = rtl9300_probe,
@@ -160,10 +160,10 @@ index 86998c3fe09..75bfc38d22f 100644
  		.of_match_table = rtl9300_of_match,
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c
 new file mode 100644
-index 00000000000..a42fea7f2ee
+index 00000000000..d37f2d68393
 --- /dev/null
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_nic.c
-@@ -0,0 +1,610 @@
+@@ -0,0 +1,614 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Realtek RTL930x switch: the DMA engine of the CPU port
@@ -467,12 +467,16 @@ index 00000000000..a42fea7f2ee
 +	regmap_set_bits(sw->map, RTL9300_DMA_IF_INTR_RX_DONE_MSK, BIT(0));
 +}
 +
-+/* Masks and acknowledges every interrupt of the DMA engine */
++/* Masks and acknowledges the interrupts of the DMA engine, and masks the L2
++ * notification interrupt next to them, which an earlier owner may have left
++ * on and the driver doesn't use
++ */
 +static void rtl9300_nic_irq_disable_all(struct rtl9300_sw *sw)
 +{
 +	regmap_write(sw->map, RTL9300_DMA_IF_INTR_RX_RUNOUT_MSK, 0);
 +	regmap_write(sw->map, RTL9300_DMA_IF_INTR_RX_DONE_MSK, 0);
 +	regmap_write(sw->map, RTL9300_DMA_IF_INTR_TX_DONE_MSK, 0);
++	regmap_write(sw->map, RTL9300_L2_NTFY_IF_INTR_MSK, 0);
 +	regmap_write(sw->map, RTL9300_DMA_IF_INTR_RX_RUNOUT_STS, U32_MAX);
 +	regmap_write(sw->map, RTL9300_DMA_IF_INTR_RX_DONE_STS, U32_MAX);
 +	regmap_write(sw->map, RTL9300_DMA_IF_INTR_TX_DONE_STS, U32_MAX);
@@ -775,10 +779,10 @@ index 00000000000..a42fea7f2ee
 +	free_netdev(nic->napi_dev);
 +}
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h b/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
-index c74e02ecba3..63d0c58e6c2 100644
+index c74e02ecba3..008e70ec1c9 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_regs.h
-@@ -16,9 +16,53 @@
+@@ -16,9 +16,55 @@
  #define   RTL9300_MODEL_NAME_ID			GENMASK(31, 16)
  #define   RTL9300_MODEL_NAME_LETTER		GENMASK(15, 11)
  
@@ -829,6 +833,8 @@ index c74e02ecba3..63d0c58e6c2 100644
 +#define RTL9300_DMA_IF_CTRL			0xe028
 +#define   RTL9300_DMA_IF_TXRX_EN		GENMASK(5, 4)
 +#define   RTL9300_DMA_IF_TX_TRIGGER(ring)	BIT(2 + (ring))
++/* The L2 notification interrupt, which the driver doesn't use */
++#define RTL9300_L2_NTFY_IF_INTR_MSK		0xe04c
  
  /* Per-port SA learning, two bits per port */
  #define RTL9300_L2_PORT_SALRN(port)		(0x8fec + 4 * ((port) / 16))

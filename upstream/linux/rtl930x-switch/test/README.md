@@ -76,7 +76,7 @@ the console (`cat`) when it is done, together with `dmesg`.
 
 | Step | Checks |
 |---|---|
-| 1 | the driver binds; lan1-lan7 exist; the SFP port is skipped with its message; no warning, lockdep or DMA-API report |
+| 1 | the driver binds; lan1-lan7 exist and share one switch ID (the same at every boot); the SFP port is skipped with its message; no warning, lockdep or DMA-API report |
 | 2 | the 7 PHYs attached (from the kernel log, as there are no phydev links in sysfs) and their driver; with every port down, ethtool's PSE lookup finds the PHY, and the DMA engine raises next to no interrupts (no storm) |
 | 3 | each port links with the host, at the speeds the host can set |
 | 4 | ping, and on the host the length of the switch's frames (98 bytes for a 56-byte ping, not 102, which would mean the engine sends the FCS bytes it is given); iperf3 TCP both ways and UDP; the interface and ethtool standard statistics; how many interrupts the DMA engine raised while sending UDP, which shows whether the TX done interrupt fires |

@@ -50,20 +50,23 @@ How the ports work:
   tree instance, and VLANs neither filter nor change what reaches the
   CPU, apart from priority tags (VID 0), which are probably lost in both
   directions. Port mirroring, ACLs, trunks and routing, which the driver
-  doesn't use, are left as they are and taken to be off.
+  doesn't use, are left as they are and taken to be off, and the L2
+  table is taken to hold no static entries.
 - All ports share one TX ring of the DMA engine, so their queues stop
-  together when it is full. OpenWrt never uses the TX done interrupt, so
-  while frames are in the ring a timer also kicks the engine and the poll
-  every tick, as stmmac's TX coalescing timer does.
+  together when it is full. OpenWrt only ever acknowledged the TX done
+  interrupts, as it copies the frames it sends, so while frames are in
+  the ring a timer also kicks the engine and the poll every tick, as
+  stmmac's TX coalescing timer does.
 - The RX ring holds 64 frames at any MTU: its counter must never let it
   overflow, even with frames of the longest length.
 
 What it relies on: the SerDes of the ports are used as the boot loader set
 them up, and the parts of the hardware polling setup that mainline's MDIO
 driver doesn't do yet (the MAC type of each port, the polling of SerDes
-ports) too. Ports without a PHY, such as SFP cages, need the PCS that
-comes with the SerDes series, and are skipped for now, as are interface
-modes other than SGMII, QSGMII, USXGMII and 10G-QXGMII.
+ports) too. Ports without a PHY, such as SFP cages, and ports with
+in-band status need the PCS that comes with the SerDes series, and are
+skipped for now, as are interface modes other than SGMII, QSGMII,
+USXGMII and 10G-QXGMII.
 
 There is no public datasheet. The register layout and the order of the
 setup follow OpenWrt's realtek target, by Birger Koblitz, Markus
