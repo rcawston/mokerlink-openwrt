@@ -98,7 +98,8 @@ EOF
 (cd "$NET" && ARCH=mips CROSS_COMPILE="$CROSS" scripts/kconfig/merge_config.sh \
 	-m -O "$KBUILD" "$KBUILD/.config" "$KBUILD/test.config" >/dev/null)
 make -s -C "$NET" O="$KBUILD" ARCH=mips CROSS_COMPILE="$CROSS" olddefconfig
-for sym in RTL9300_SWITCH MACH_REALTEK_RTL MIPS_RAW_APPENDED_DTB MDIO_REALTEK_RTL9300; do
+for sym in RTL9300_SWITCH MACH_REALTEK_RTL MIPS_RAW_APPENDED_DTB MDIO_REALTEK_RTL9300 \
+	COMPAT_32BIT_TIME; do
 	grep -q "^CONFIG_$sym=y" "$KBUILD/.config" ||
 		{ echo "CONFIG_$sym is not set in the test kernel" >&2; exit 1; }
 done

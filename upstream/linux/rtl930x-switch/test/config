@@ -10,6 +10,9 @@ CONFIG_HZ_250=y
 CONFIG_PRINTK=y
 CONFIG_BUG=y
 CONFIG_MULTIUSER=y
+# allnoconfig turns off the 32-bit time_t system calls, which the
+# userspace's sleep and iperf3 use
+CONFIG_COMPAT_32BIT_TIME=y
 CONFIG_PROC_FS=y
 CONFIG_SYSFS=y
 CONFIG_DEVTMPFS=y

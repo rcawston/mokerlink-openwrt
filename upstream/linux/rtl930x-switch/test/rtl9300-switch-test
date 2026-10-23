@@ -49,6 +49,17 @@ run() { printf '$ %s\n' "$*" >>"$OUT"; "$@" >>"$OUT" 2>&1; }
 pass() { PASS=$((PASS + 1)); say "PASS: $*"; }
 fail() { FAIL=$((FAIL + 1)); say "FAIL: $*"; }
 skip() { SKIP=$((SKIP + 1)); say "SKIP: $*"; }
+# Pings after a few unlogged ones that settle ARP, and succeeds only if
+# every counted request got its reply
+ping_all() { # count host [ping options]
+	pc=$1
+	ph=$2
+	shift 2
+	ping -c 3 -W 1 "$ph" >/dev/null 2>&1
+	out=$(ping -c "$pc" "$@" "$ph" 2>&1)
+	printf '$ ping -c %s %s %s\n%s\n' "$pc" "$*" "$ph" "$out" >>"$OUT"
+	echo "$out" | grep -q " $pc packets received"
+}
 ask() { # prompt; Enter goes on, s + Enter skips (returns 1)
 	printf '\n>>> %s\n    Enter when done, s + Enter to skip: ' "$*"
 	read -r a </dev/tty
@@ -108,6 +119,15 @@ addr() { # port: the switch side address
 	ip addr flush dev "$1"
 	ip addr add "192.168.$(num "$1").1/24" dev "$1"
 }
+
+# The image itself first: without the kernel's 32-bit time system calls,
+# sleep returns at once and iperf3 fails, and every wait here is void
+t=$(uptime_s)
+sleep 2
+if [ $(($(uptime_s) - t)) -lt 1 ]; then
+	echo "sleep doesn't wait: this test image is broken, use a newer one" >&2
+	exit 1
+fi
 
 section "1. probe"
 run uname -a
@@ -202,7 +222,7 @@ for n in 1 2 3 4 5 6 7; do
 		fail "$p has no link within 30 s"
 		run ethtool "$p"
 	fi
-	if yes_no "Test other speeds on $p (set them on the host with ethtool -s)?"; then
+	if yes_no "Test other speeds on $p (on the host: ethtool -s, or Speed & Duplex on Windows)?"; then
 		for s in 5000 2500 1000 100; do
 			ask "Set the host to $s Mb/s" || continue
 			sleep 3
@@ -226,7 +246,7 @@ if ask "Connect the host to $PORT at 192.168.$(num "$PORT").2/24 with iperf3 -s 
 	wait_carrier "$PORT" 30
 	addr "$PORT"
 	host=192.168.$(num "$PORT").2
-	if run ping -c 20 -i 0.2 "$host"; then pass "ping"; else fail "ping"; fi
+	if ping_all 20 "$host" -i 0.2; then pass "ping, 20 of 20"; else fail "ping lost replies"; fi
 	# The engine is taken to put the FCS into the last four bytes it is
 	# given; if it sent those and added its own, frames would grow by 4
 	if ask "Start a capture of ICMP on the host (Wireshark, or tcpdump -e -n icmp)"; then
@@ -247,7 +267,7 @@ if ask "Connect the host to $PORT at 192.168.$(num "$PORT").2/24 with iperf3 -s 
 	say "DMA engine interrupts while sending UDP: $((after - before)) (next to none means no TX done interrupt)"
 	run grep -r . "/sys/class/net/$PORT/statistics/"
 	if run ethtool -S "$PORT" --all-groups; then pass "ethtool standard statistics"; else fail "ethtool standard statistics"; fi
-	yes_no "Do the host's counters roughly match (ip -s link on both)?" &&
+	yes_no "Do the host's counters roughly match (ip -s link, or netstat -e on Windows)?" &&
 		pass "counters match the host's" || fail "counters do not match the host's"
 	log_problems traffic >>"$OUT" && fail "traffic: kernel log problems (in the report)"
 else
@@ -255,12 +275,12 @@ else
 fi
 
 section "5. VLAN-tagged frames on $PORT"
-if ask "On the host: ip link add link <nic> name <nic>.100 type vlan id 100; ip addr add 192.168.100.2/24 dev <nic>.100; ip link set <nic>.100 up"; then
+if ask "On the host: ip link add link <nic> name <nic>.100 type vlan id 100; ip addr add 192.168.100.2/24 dev <nic>.100; ip link set <nic>.100 up (Windows: VLAN ID 100 in the NIC's advanced properties, IP 192.168.100.2)"; then
 	ip link add link "$PORT" name "$PORT.100" type vlan id 100
 	ip addr add 192.168.100.1/24 dev "$PORT.100"
 	ip link set "$PORT.100" up
 	if run ping -c 10 192.168.100.2; then pass "ping over VLAN 100"; else fail "ping over VLAN 100"; fi
-	yes_no "Does tcpdump -e on the host show the frames from the switch with tag 100, and untagged ones without a tag?" &&
+	yes_no "Does tcpdump -e (or Wireshark) on the host show the frames from the switch with tag 100, and untagged ones without a tag?" &&
 		pass "tags pass unchanged" || fail "tags change on the way"
 	ip link del "$PORT.100"
 else
@@ -271,7 +291,7 @@ section "6. jumbo frames on $PORT"
 if ask "Set the host NIC to MTU 9000"; then
 	if ip link set "$PORT" mtu 9000; then
 		pass "MTU 9000 accepted"
-		ask "On the host: ping -M do -s 8972 -c 10 192.168.$(num "$PORT").1" &&
+		ask "On the host: ping -M do -s 8972 -c 10 192.168.$(num "$PORT").1 (Windows: ping -f -l 8972 -n 10 192.168.$(num "$PORT").1)" &&
 			{ yes_no "Did all 10 replies arrive?" && pass "8972-byte ping with DF" ||
 				fail "8972-byte ping with DF"; }
 		run ip link set "$PORT" mtu 12262 && pass "the largest MTU, 12262, is accepted" ||
@@ -288,9 +308,12 @@ section "7. isolation"
 if ask "Connect a second device to another port, up and with an address in the host's subnet; note its address"; then
 	printf '    its address: '
 	read -r other </dev/tty
-	ask "On the host: ping -c 5 $other, and arping -c 5 -I <nic> $other" &&
-		{ yes_no "Did both get no answer?" && pass "no frames between ports" ||
-			fail "frames pass between ports"; }
+	if ask "On the host: ping -c 5 $other, and arping -c 5 -I <nic> $other (Windows: ping -n 5 $other, then arp -a: no entry for it)"; then
+		yes_no "Did both get no answer?" && pass "no frames between ports" ||
+			fail "frames pass between ports"
+	else
+		skip "isolation"
+	fi
 else
 	skip "isolation"
 fi
@@ -317,7 +340,7 @@ if ask "Leave the host on $PORT with iperf3 -s running"; then
 	kill $traffic 2>/dev/null
 	addr "$PORT"
 	if [ $ok -eq 100 ]; then pass "100 of 100 cycles came back up, the slowest after $slowest s"; else fail "$ok of 100 cycles came back up"; fi
-	if run ping -c 5 "$host"; then pass "traffic after the cycles"; else fail "traffic after the cycles"; fi
+	if ping_all 5 "$host"; then pass "traffic after the cycles, 5 of 5"; else fail "traffic after the cycles lost replies"; fi
 	after=$(awk '/MemAvailable/ { print $2 }' /proc/meminfo)
 	say "MemAvailable $before kB before, $after kB after"
 	log_problems cycles >>"$OUT" && fail "cycles: kernel log problems (in the report)"
