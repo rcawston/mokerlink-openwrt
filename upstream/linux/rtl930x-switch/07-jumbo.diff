@@ -21,10 +21,10 @@ index 669b0e41200..ab3f0c66411 100644
  #define RTL9300_RX_RING_SIZE		512
  #define RTL9300_TX_RING_SIZE		64
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
-index d9ac29ea825..058897e93c0 100644
+index a68c5a241eb..7e57d68cbe2 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
-@@ -211,11 +211,44 @@ static int rtl9300_port_ioctl(struct net_device *ndev, struct ifreq *ifr,
+@@ -218,11 +218,44 @@ static int rtl9300_port_ioctl(struct net_device *ndev, struct ifreq *ifr,
  	return phylink_mii_ioctl(port->phylink, ifr, cmd);
  }
  
@@ -69,7 +69,7 @@ index d9ac29ea825..058897e93c0 100644
  	.ndo_set_mac_address = eth_mac_addr,
  	.ndo_validate_addr = eth_validate_addr,
  };
-@@ -489,6 +522,7 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
+@@ -496,6 +529,7 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
  	 */
  	ndev->needed_tailroom = ETH_FCS_LEN;
  	ndev->priv_flags &= ~IFF_TX_SKB_SHARING;
@@ -77,7 +77,7 @@ index d9ac29ea825..058897e93c0 100644
  
  	port = netdev_priv(ndev);
  	port->sw = sw;
-@@ -502,6 +536,10 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
+@@ -509,6 +543,10 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
  	if (err)
  		eth_hw_addr_random(ndev);
  

@@ -91,10 +91,10 @@ index 4b74d167550..26bebdddf2c 100644
  	rtl9300_ports_unregister(sw);
  	rtl9300_nic_exit(sw);
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
-index d610de64eb5..494f68f6bd9 100644
+index fa541b41f5c..83d1e6b4770 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
-@@ -447,6 +447,10 @@ static int rtl9300_port_parse(struct rtl9300_sw *sw, struct device_node *np,
+@@ -454,6 +454,10 @@ static int rtl9300_port_parse(struct rtl9300_sw *sw, struct device_node *np,
   * cheap. What doesn't come before the deferred probe timeout costs only
   * its port, or the port's MAC address.
   *
@@ -105,17 +105,42 @@ index d610de64eb5..494f68f6bd9 100644
   * Return: 0, -ENODEV without an ethernet-ports node, or -EPROBE_DEFER.
   */
  int rtl9300_ports_check(struct rtl9300_sw *sw)
-@@ -492,6 +496,9 @@ int rtl9300_ports_check(struct rtl9300_sw *sw)
+@@ -477,25 +481,27 @@ int rtl9300_ports_check(struct rtl9300_sw *sw)
+ 		    rtl9300_port_inband(np))
+ 			continue;
+ 
+-		ret = rtl9300_port_find_phy(sw, np);
++		/* Before the PHY, so that a missing PHY doesn't move the ID */
++		ret = of_get_mac_address(np, addr);
+ 		if (ret == -EPROBE_DEFER)
+ 			ret = driver_deferred_probe_check_state(dev);
+ 		if (ret == -EPROBE_DEFER) {
+ 			err = dev_err_probe(dev, ret,
+-					    "%pOF: waiting for the PHY\n",
++					    "%pOF: waiting for its MAC address\n",
  					    np);
  			break;
  		}
-+
+-		/* No PHY, or no more waiting for it: the port is skipped */
+-		if (ret)
+-			continue;
+ 
+-		ret = of_get_mac_address(np, addr);
 +		if (!ret && is_zero_ether_addr(sw->switch_id))
 +			ether_addr_copy(sw->switch_id, addr);
- 	}
- 
- 	of_node_put(ports_np);
-@@ -499,6 +506,24 @@ int rtl9300_ports_check(struct rtl9300_sw *sw)
++
++		/* Without its PHY, rtl9300_port_parse() skips the port */
++		ret = rtl9300_port_find_phy(sw, np);
+ 		if (ret == -EPROBE_DEFER)
+ 			ret = driver_deferred_probe_check_state(dev);
+ 		if (ret == -EPROBE_DEFER) {
+ 			err = dev_err_probe(dev, ret,
+-					    "%pOF: waiting for its MAC address\n",
++					    "%pOF: waiting for the PHY\n",
+ 					    np);
+ 			break;
+ 		}
+@@ -506,6 +512,24 @@ int rtl9300_ports_check(struct rtl9300_sw *sw)
  	return err;
  }
  
@@ -140,7 +165,7 @@ index d610de64eb5..494f68f6bd9 100644
  static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
  			       u32 index, phy_interface_t mode)
  {
-@@ -571,17 +596,25 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
+@@ -578,17 +602,25 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
  		goto err_destroy;
  	}
  
@@ -167,7 +192,7 @@ index d610de64eb5..494f68f6bd9 100644
  err_disconnect:
  	rtnl_lock();
  	phylink_disconnect_phy(pl);
-@@ -614,6 +647,10 @@ int rtl9300_ports_init(struct rtl9300_sw *sw)
+@@ -621,6 +653,10 @@ int rtl9300_ports_init(struct rtl9300_sw *sw)
  	if (!ports_np)
  		return -ENODEV;
  
@@ -178,7 +203,7 @@ index d610de64eb5..494f68f6bd9 100644
  	for_each_available_child_of_node_scoped(ports_np, np) {
  		phy_interface_t mode;
  		u32 index;
-@@ -648,6 +685,8 @@ void rtl9300_ports_unregister(struct rtl9300_sw *sw)
+@@ -655,6 +691,8 @@ void rtl9300_ports_unregister(struct rtl9300_sw *sw)
  		phylink_disconnect_phy(port->phylink);
  		rtnl_unlock();
  		phylink_destroy(port->phylink);

@@ -128,10 +128,10 @@ index d936ce2f1d2..4b74d167550 100644
  	rtl9300_nic_exit(sw);
  	rtl9300_ports_free(sw);
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
-index 058897e93c0..d610de64eb5 100644
+index 7e57d68cbe2..fa541b41f5c 100644
 --- a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
-@@ -301,6 +301,10 @@ static const struct ethtool_ops rtl9300_port_ethtool_ops = {
+@@ -308,6 +308,10 @@ static const struct ethtool_ops rtl9300_port_ethtool_ops = {
  	.nway_reset = rtl9300_port_nway_reset,
  	.get_pauseparam = rtl9300_port_get_pauseparam,
  	.set_pauseparam = rtl9300_port_set_pauseparam,
@@ -142,7 +142,7 @@ index 058897e93c0..d610de64eb5 100644
  };
  
  static bool rtl9300_node_available(struct device_node *np,
-@@ -540,6 +544,8 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
+@@ -547,6 +551,8 @@ static int rtl9300_port_create(struct rtl9300_sw *sw, struct device_node *np,
  	if (err)
  		goto err_free;
  
@@ -168,10 +168,10 @@ index 885d98b0605..96ca14ee6aa 100644
  #define   RTL9300_MAC_L2_PORT_TXRX_EN		GENMASK(1, 0)
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_stats.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_stats.c
 new file mode 100644
-index 00000000000..4683383d167
+index 00000000000..a1db6ff2445
 --- /dev/null
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_stats.c
-@@ -0,0 +1,305 @@
+@@ -0,0 +1,308 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Realtek RTL930x switch: the MIB counters of the ports
@@ -275,8 +275,11 @@ index 00000000000..4683383d167
 +
 +	if (!mib->wide) {
 +		err = regmap_read(sw->map, addr, &lo);
++		if (err)
++			return err;
++
 +		*val = lo;
-+		return err;
++		return 0;
 +	}
 +
 +	err = regmap_read(sw->map, addr - 4, &hi);

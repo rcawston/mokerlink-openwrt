@@ -482,10 +482,10 @@ index b4bd513bb81..3c489d24606 100644
  	if (err)
 diff --git a/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
 new file mode 100644
-index 00000000000..d9ac29ea825
+index 00000000000..a68c5a241eb
 --- /dev/null
 +++ b/drivers/net/ethernet/realtek/rtl9300/rtl9300_port.c
-@@ -0,0 +1,623 @@
+@@ -0,0 +1,630 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Realtek RTL930x switch: the front ports as network interfaces
@@ -528,9 +528,16 @@ index 00000000000..d9ac29ea825
 +{
 +	struct rtl9300_port *port = rtl9300_phylink_to_port(config);
 +
-+	/* The MAC follows the polling of its PHY, so nothing is forced */
-+	regmap_write(port->sw->map,
-+		     RTL9300_MAC_FORCE_MODE_CTRL(port->index), 0);
++	/* The MAC follows the polling of its PHY, so nothing is forced. The
++	 * other bits of the register, such as the media selection, stay as
++	 * they are, as OpenWrt leaves them.
++	 */
++	regmap_clear_bits(port->sw->map,
++			  RTL9300_MAC_FORCE_MODE_CTRL(port->index),
++			  RTL9300_MAC_FORCE_EN | RTL9300_MAC_FORCE_LINK |
++			  RTL9300_MAC_FORCE_DUPLEX | RTL9300_MAC_FORCE_SPEED |
++			  RTL9300_MAC_FORCE_TX_PAUSE |
++			  RTL9300_MAC_FORCE_RX_PAUSE | RTL9300_MAC_FORCE_FC_EN);
 +}
 +
 +static int rtl9300_mac_speed(u32 code)
