@@ -501,7 +501,8 @@ SerDes) stays separate from the switchdev glue.
     linearises them for a port without SG. Only frames below the
     minimum are padded, and frames above the CPU port's limit are
     dropped. Test 4 checks on the host that frames arrive at their own
-    length, not 4 bytes longer.
+    length, not 4 bytes longer: on the board, a 56-byte ping leaves as a
+    98-byte frame (23 October).
   - A full ring stops the queues of all open ports, and they wake
     together once a quarter of the ring is free (lan966x and ocelot stop
     and wake all ports too). Completions are reclaimed in NAPI, and in
@@ -511,10 +512,13 @@ SerDes) stays separate from the switchdev glue.
     Stockhausen, January 2026), but only acknowledged them, as it copies
     the frames it sends; that bit 0 is TX ring 0 is inferred from the RX
     registers. So while frames are in the ring, a timer kicks the engine
-    and NAPI every tick, as stmmac's TX coalescing timer does; the
-    hardware test counts the interrupts while sending UDP to show
-    whether the interrupt fires, and with every port down to show that
-    it doesn't storm. The L2 notification interrupt (mask 0xe04c), which
+    and NAPI every tick, as stmmac's TX coalescing timer does. On the
+    board the interrupt fires about once per frame while sending UDP
+    (24,919 interrupts for 24,897 datagrams) and the engine raises none
+    with every port down (23 October), so bit 0 is TX ring 0's TX done
+    after all. The timer stays as the fallback for a lost trigger; with
+    the interrupt shown to work, it could become a slower watchdog. The
+    L2 notification interrupt (mask 0xe04c), which
     OpenWrt names but never writes, is masked with the others.
   - The open ports are a bitmask changed under the TX lock in
     `ndo_open`/`ndo_stop`; RX delivers only to open ports, and stop and
@@ -1063,6 +1067,34 @@ test report can say exactly what the boot loader left set.
 | 8 | SFP+ (series 2) | not part of series 1, which has no PCS (section 6). For series 2: a 10G module links and passes traffic; a 1G module switches the lane to 1000BASE-X; module removal and insertion are handled |
 | 9 | Statistics | `ethtool -S` and the standard groups match the host's counters after test 3 |
 | 10 | Unbind and bind | the driver unbinds and binds again without warnings, and the ports come back |
+
+**Results, 21-23 October** (the cover letter's "Testing" says the same):
+
+- **Passed:** boot (test 1); links at 10 Gb/s on all seven ports, and
+  at 2.5 Gb/s, 1 Gb/s and 100 Mb/s on ports with each PHY, and the
+  carrier dropping about a second after a cable pull (2); ping on
+  lan1 and lan3, and iperf3 on lan1, TCP at 112 Mb/s from the switch and
+  156 Mb/s to it, UDP at 44 Mb/s from it unpaced, with the counters
+  matching the host's (3, 9); isolation, checked with a second NIC of
+  the host that saw nothing of the first NIC's ARP broadcasts, and VLAN
+  100 both ways (4); MTU 9000 with an 8972-byte ping with DF, MTU 12262
+  accepted (5); 100 of 100 down/up cycles, the slowest taking 7 s, with
+  MemAvailable unchanged (6); ethtool's PSE lookup of the PHY with every
+  port down (7); unbind and bind.
+- **Not covered yet:** 5 Gb/s; PSE with a powered device, as the test
+  image has no PSE controller; page_pool statistics; the SFP port
+  (series 2).
+- **Open:**
+  - 1,648 of 361,499 frames that lan1's MAC counted as received never
+    reached the driver while the host sent TCP to the switch, probably
+    frames that the full RX ring made the switch drop at the CPU port.
+    No counter the driver reports shows them yet.
+  - The switch ID changes at every boot on this board's test device
+    tree, which gives the ports no MAC addresses, so the driver falls
+    back to a random ID.
+  - UDP from the switch costs a system call, a TX done interrupt and a
+    poll per frame, which the 800 MHz CPU feels; fewer TX done
+    interrupts could help, later.
 
 What the cover letter may claim afterwards: exactly the tests that
 passed, on this board, booted from U-Boot after `rtk network on`, and

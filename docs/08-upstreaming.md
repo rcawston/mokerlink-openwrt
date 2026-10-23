@@ -14,21 +14,21 @@ to Linux was withdrawn after a review pointed that out.
 
 ## Status
 
-As of 20 October 2026:
+As of 23 October 2026:
 
 | Submission | Where | State |
 |---|---|---|
 | PSE core fix | netdev, `[PATCH net]` | [v1](https://lore.kernel.org/netdev/20261018182005.1193-1-ross@r-sc.ca/) and [v2](https://lore.kernel.org/netdev/20261019220835.613-1-ross@r-sc.ca/) sent. v2 moves the retry of the power domain out of `_pse_pi_disable()` into its callers, as Kory Maincent asked, and keeps it after `pse_disable_pi_pol()`, as netdev's AI review found that leaving it out keeps PIs off whose budget wasn't needed; the priorities need a separate patch |
 | PSE core fix | OpenWrt, generic pending patch | [openwrt/openwrt#25994](https://github.com/openwrt/openwrt/pull/25994), updated to v2, in quilt's format, which its review asked for |
-| switch link change fix | OpenWrt | [openwrt/openwrt#25995](https://github.com/openwrt/openwrt/pull/25995); Markus Stockhausen asked to keep the MAC link change for ports with in-band status, and not to look at the PHY of an SFP module in the interrupt handler, which the update does |
+| switch link change fix | OpenWrt | [openwrt/openwrt#25995](https://github.com/openwrt/openwrt/pull/25995), merged on 21 October, after the update Markus Stockhausen asked for: ports with in-band status keep the MAC link change, and the interrupt handler doesn't look at the PHY of an SFP module |
 | RTL9300 port LEDs (`leds`) | linux-leds | [sent and withdrawn](https://lore.kernel.org/all/20261018194339.132-1-ross@r-sc.ca/): Andrew Lunn asked for port LEDs in the switch driver's port nodes, and Markus Stockhausen, who keeps OpenWrt's RTL930x switch driver, has no time to take it upstream yet |
 | PoE LEDs in OpenWrt | OpenWrt | through [openwrt/openwrt#25341](https://github.com/openwrt/openwrt/pull/25341) (software-controlled LEDs in the realtek switch driver), tested on this board; the board's LED nodes follow once it is merged |
 | shared-SCL I²C (`i2c`) | linux-i2c | [sent and withdrawn](https://lore.kernel.org/all/20261018194315.945-1-ross@r-sc.ca/): `i2c-gpio` does it |
-| board.json PoE default | netifd | [openwrt/netifd#97](https://github.com/openwrt/netifd/pull/97) |
-| the board | OpenWrt | [openwrt/openwrt#26042](https://github.com/openwrt/openwrt/pull/26042), without the PoE LEDs; depends on openwrt/netifd#97 |
+| board.json PoE default | netifd | [openwrt/netifd#97](https://github.com/openwrt/netifd/pull/97), merged on 20 October |
+| the board | OpenWrt | [openwrt/openwrt#26042](https://github.com/openwrt/openwrt/pull/26042), without the PoE LEDs; needs OpenWrt's netifd package updated to a version with openwrt/netifd#97 |
 | PSE priority choices in the web UI | LuCI | [openwrt/luci#9141](https://github.com/openwrt/luci/pull/9141) |
 | RTL8239 PSE (`pse`), PSE LED trigger names (`pse-led-triggers`) | netdev, linux-leds | not sent; wait for the PSE series they depend on ([Dependencies](#dependencies)) |
-| RTL930x switch driver (`rtl930x-switch`) | netdev, `[PATCH net-next]` | not sent: 9 patches. The CI builds (W=1 and sparse) passed with the fixes from a second review; those from a third review wait for theirs; a first board run, before both, linked at 2.5 and 0.1 Gb/s but not at 1 Gb/s, which needs a PHY driver for the board's RTL8261N and RTL8264B (the test image adds one, outside the series). The design is in its `DESIGN.md` |
+| RTL930x switch driver (`rtl930x-switch`) | netdev, `[PATCH net-next]` | not sent: 9 patches. The CI builds (W=1 and sparse) pass, and the board test passed: 10 Gb/s on all seven copper ports, and 2.5 Gb/s, 1 Gb/s and 100 Mb/s on ports with each PHY (the cover letter's Testing section). Its 1 Gb/s links need PHY driver entries for the board's RTL8261N and RTL8264B, which go to net-next separately (`rtl8261n-rtl8264b`). The design is in its `DESIGN.md` |
 
 ## What goes where
 

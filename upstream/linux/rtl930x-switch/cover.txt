@@ -76,12 +76,31 @@ Merge path: all patches through net-next. The series changes no binding
 and depends on nothing outside net-next; the device tree of the
 MokerLink POE-10G07110GSM goes to the MIPS tree separately.
 
-Testing: the results of the CI builds of this version (W=1 and sparse,
-for MIPS and, compile tested, for x86_64) and of the hardware test on a
-MokerLink POE-10G07110GSM (RTL9303) go here before this is posted. The
-hardware test image adds PHY driver entries for the board's RTL8261N
-and RTL8264B, which net-next lacks and which are not part of this
-series: without them, phylib's generic Clause 45 driver binds and takes
-a 1 Gb/s link for 100 Mb/s.
+Testing:
+- Each patch builds with W=1 and sparse for MIPS; the series also builds
+  with W=1 and sparse for x86_64 (COMPILE_TEST).
+- On a MokerLink POE-10G07110GSM (RTL9303), booted from the vendor
+  U-Boot after "rtk network on", with lockdep and DMA-API debugging. The
+  test image adds PHY driver entries for the board's RTL8261N and
+  RTL8264B, which net-next lacks and which are not part of this series:
+  without them, phylib's generic Clause 45 driver binds and takes a
+  1 Gb/s link for 100 Mb/s. With them:
+  - all seven copper ports probe and attach their PHYs, and ethtool
+    finds each PHY for PSE while its port is down;
+  - links at 10 Gb/s on all seven ports, and at 2.5 Gb/s, 1 Gb/s and
+    100 Mb/s on ports with each PHY; the carrier drops about a second
+    after a cable pull, and comes back with the cable;
+  - ping, VLAN-tagged frames both ways, and an 8972-byte ping with DF at
+    MTU 9000; MTU 12262 is accepted;
+  - frames leave at their own length, and the port counters agree with
+    the host's;
+  - iperf3 TCP at 112 Mb/s from the switch and 156 Mb/s to it, and UDP
+    at 44 Mb/s from it (the CPU is an 800 MHz MIPS 34Kc);
+  - the TX done interrupt fires, about once per frame while sending
+    UDP, and the DMA engine raises no interrupt with every port down;
+  - an ARP broadcast from a host on one port reaches no other port;
+  - 100 down/up cycles of a port, and unbinding and binding the driver,
+    without lockdep or DMA-API reports.
+- Build-tested only on the RTL9301, RTL9302B and RTL9302C.
 
 [1] https://lore.kernel.org/netdev/c19eb8d0-f89b-4909-bf14-dfffcdc7c1a6@lunn.ch/

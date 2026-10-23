@@ -76,22 +76,27 @@ the console (`cat`) when it is done, together with `dmesg`.
 
 | Step | Checks |
 |---|---|
-| 1 | the driver binds; lan1-lan7 exist and share one switch ID (the same at every boot); the SFP port is skipped with its message; no warning, lockdep or DMA-API report |
+| 1 | the driver binds; lan1-lan7 exist and share one switch ID (the same at every boot when the ports have MAC addresses in the device tree, which the test device tree doesn't give them); the SFP port is skipped with its message; no warning, lockdep or DMA-API report |
 | 2 | the 7 PHYs attached (from the kernel log, as there are no phydev links in sysfs) and their driver; with every port down, ethtool's PSE lookup finds the PHY, and the DMA engine raises next to no interrupts (no storm) |
 | 3 | each port links with the host, at the speeds the host can set |
 | 4 | ping, and on the host the length of the switch's frames (98 bytes for a 56-byte ping, not 102, which would mean the engine sends the FCS bytes it is given); iperf3 TCP both ways and UDP; the interface and ethtool standard statistics; how many interrupts the DMA engine raised while sending UDP, which shows whether the TX done interrupt fires |
 | 5 | VLAN 100 tagged frames both ways; tagged and untagged frames unchanged (tcpdump -e on the host). By hand, also priority-tagged (VID 0) and 802.1ad frames |
 | 6 | MTU 9000 with an 8972-byte ping with DF from the host; MTU 12262 accepted |
-| 7 | isolation: the host can't reach a device on another switch port |
+| 7 | isolation, with every port up: the host can't reach a device on another switch port, or a second NIC of the host on another port sees nothing of the first NIC's ARP broadcasts |
 | 8 | 100 down/up cycles under traffic; traffic afterwards; MemAvailable before and after |
-| 9 | unbind and bind the driver |
+| 9 | unbind and bind the driver; the ports come back as lan1-lan7 |
 
 ## What the cover letter may say afterwards
 
 Exactly the steps that passed, on this board, booted from the vendor
 U-Boot after `rtk network on`, with the PHY driver that bound (step 2
 reports it), and "build-tested only" for RTL9301, RTL9302B and RTL9302C.
-Step 4's interrupt count shows whether the TX done interrupt fires. If it
-doesn't, only the timer frees sent frames, once a tick, which caps TX
-whenever the ring fills; then the series either drops the interrupt or
-the cover letter says so.
+Step 4's interrupt count shows whether the TX done interrupt fires. On
+this board it does, about once per frame while sending UDP (23 October).
+
+A Windows host works too: Speed & Duplex and Jumbo Packet in the NIC's
+advanced properties (`Set-NetAdapterAdvancedProperty`) for the speeds and
+MTU 9000, `Set-NetAdapter -VlanID 100` for VLAN 100, `ping -f -l 8972`
+for the jumbo ping, Wireshark for the frame length and for step 7 with a
+second NIC, `Get-NetAdapterStatistics` for the counters, and a Windows
+build of iperf3.

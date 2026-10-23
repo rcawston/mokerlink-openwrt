@@ -1,5 +1,6 @@
 #!/bin/sh
 # rtl9300-switch-test [-o REPORT] [PORT]
+# rtl9300-switch-test --name-ports
 #
 # Guided hardware test of the RTL930x switch driver series (CPU NIC and
 # standalone ports) on the MokerLink POE-10G07110GSM, booted from RAM with
@@ -24,6 +25,30 @@
 # The host: a Linux machine with a NIC at 192.168.<N>.2/24 for the port
 # under test, where N is the front port number (lan1: 192.168.1.2), and
 # "iperf3 -s" running. The switch side gets 192.168.<N>.1.
+#
+# --name-ports names the ports after the front panel, lan1-lan8; the
+# image's init does that at boot.
+
+# The driver names no interface; its devlink ports give each one a
+# physical port name, p<MAC port>. Front ports 1-8 are MAC ports 0, 8, 16,
+# 20, 24, 25, 26 and 27 on the MokerLink POE-10G07110GSM.
+name_ports() {
+	for dev in /sys/class/net/*; do
+		name=$(cat "$dev/phys_port_name" 2>/dev/null) || continue
+		case $name in
+		p0) lan=lan1 ;;
+		p8) lan=lan2 ;;
+		p16) lan=lan3 ;;
+		p20) lan=lan4 ;;
+		p24) lan=lan5 ;;
+		p25) lan=lan6 ;;
+		p26) lan=lan7 ;;
+		p27) lan=lan8 ;;
+		*) continue ;;
+		esac
+		ip link set dev "${dev##*/}" name "$lan"
+	done
+}
 
 OUT=/tmp/rtl9300-switch-test.txt
 if [ "$1" = -o ]; then
@@ -33,6 +58,10 @@ fi
 case $1 in
 -h | --help)
 	sed -n '2,/^$/s/^# \{0,1\}//p' "$0"
+	exit 0
+	;;
+--name-ports)
+	name_ports
 	exit 0
 	;;
 esac
@@ -305,18 +334,31 @@ else
 fi
 
 section "7. isolation"
-if ask "Connect a second device to another port, up and with an address in the host's subnet; note its address"; then
-	printf '    its address: '
-	read -r other </dev/tty
-	if ask "On the host: ping -c 5 $other, and arping -c 5 -I <nic> $other (Windows: ping -n 5 $other, then arp -a: no entry for it)"; then
-		yes_no "Did both get no answer?" && pass "no frames between ports" ||
-			fail "frames pass between ports"
-	else
-		skip "isolation"
-	fi
+# The other ports up too, so that their MACs would pass on whatever the
+# switch forwarded to them
+ip link set "$PORT" up
+addr "$PORT"
+others=
+for n in 1 2 3 4 5 6 7; do
+	p=lan$n
+	[ "$p" != "$PORT" ] && [ -d "/sys/class/net/$p" ] || continue
+	ip link set "$p" up
+	others="$others $p"
+done
+echo
+echo "    Either a second device on another port, with an address in the"
+echo "    host's subnet: ping it from the host (ping -c 5, then arping -c 5 -I"
+echo "    <nic>; Windows: ping -n 5, then arp -a). Or a second NIC of the host"
+echo "    on another port, without an address in that subnet: capture on it"
+echo "    (tcpdump -e, Wireshark) for frames from the first NIC's MAC address"
+echo "    while the host pings an unused address, 192.168.$(num "$PORT").99."
+if ask "Connect it, and do the pings"; then
+	yes_no "Did nothing reach the second device (no replies and no ARP entry, or nothing in the capture)?" &&
+		pass "no frames between ports" || fail "frames pass between ports"
 else
 	skip "isolation"
 fi
+for p in $others; do ip link set "$p" down; done
 
 section "8. 100 down/up cycles on $PORT"
 if ask "Leave the host on $PORT with iperf3 -s running"; then
@@ -354,8 +396,10 @@ if echo 1b000000.switch >"$DRIVER/unbind" 2>>"$OUT"; then
 	[ -e /sys/class/net/lan1 ] && fail "lan1 still exists after unbind" || pass "unbind removes the ports"
 	if echo 1b000000.switch >"$DRIVER/bind" 2>>"$OUT"; then
 		sleep 2
-		n=$(ls -d /sys/class/net/eth* 2>/dev/null | wc -l)
-		[ "$n" -eq 7 ] && pass "bind brings 7 ports back" || fail "bind brings $n ports back"
+		# The new interfaces get their front panel names back
+		name_ports
+		n=$(ls -d /sys/class/net/lan* 2>/dev/null | wc -l)
+		[ "$n" -eq 7 ] && pass "bind brings lan1-lan7 back" || fail "bind brings $n ports back"
 	else
 		fail "bind"
 	fi
