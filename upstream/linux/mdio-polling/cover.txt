@@ -1,0 +1,44 @@
+net: mdio: realtek-rtl9300: set up the hardware polling
+
+The MDIO controller of the Realtek Otto switches (RTL838x, RTL839x,
+RTL930x, RTL931x) polls the PHYs in hardware and sets the MACs from
+them. Since Markus Stockhausen's rework the driver turns the polling of
+a port off at probe and on when its PHY attaches. The rest of the
+polling setup it leaves to the boot loader, and many boot loaders do
+that only when their network is started, for example to load an image
+over TFTP [1]. This series sets it up in the driver, as OpenWrt's MDIO
+driver does:
+
+1. RTL839x: the global polling enable.
+2. RTL838x: medium detection on combo ports.
+3. RTL930x, RTL931x: whether a MAC takes its link from its PHY or its
+   SerDes, from the bus type.
+4. RTL930x, RTL931x: the status register of a bus and Realtek's Lite
+   modes, from a table of the PHYs these switches are used with.
+5. RTL930x, RTL931x: the 10G polling registers, from the same table.
+6. All four: the polling of ports without a PHY, which on the RTL93xx
+   also carries a SerDes's link state to its MAC.
+
+Daniel Golle's RFC [1] did 3 and 5 for the RTL930x, from
+phydev->supported and the PHY vendor, at PHY probe. Russell King
+objected to both, and suggested the attach callback this driver now
+has. This series sets the polling up from that callback. It takes the
+MAC type from the bus type rather than phydev->supported, and puts the
+rest in a short table of PHY models. Patch 4 explains why a table: only
+a small subset of PHYs is used with these switches, and any other PHY
+is left as the boot loader set it up.
+
+Settings that are shared, those of a bus and the 10G polling registers,
+are chosen by the first PHY that attaches and made again by every PHY
+like it; one that needs others gets a warning. Nothing is reset when a
+PHY detaches.
+
+The register layouts and the table come from OpenWrt's MDIO driver,
+mdio-realtek-otto.c, written by Markus Stockhausen, with the RTL8264B
+entry by Jonas Jelonek.
+
+Merge path: all patches through net-next. The series changes no binding.
+
+Testing: not built or run yet.
+
+[1] https://lore.kernel.org/netdev/680696024a8648535ce6dee771fe4de67802e0e8.1769053496.git.daniel@makrotopia.org/

@@ -1,0 +1,33 @@
+diff --git a/drivers/net/mdio/mdio-realtek-rtl9300.c b/drivers/net/mdio/mdio-realtek-rtl9300.c
+index eb7a6238dbd..94cb15714f6 100644
+--- a/drivers/net/mdio/mdio-realtek-rtl9300.c
++++ b/drivers/net/mdio/mdio-realtek-rtl9300.c
+@@ -171,6 +171,7 @@
+ #define RTL8390_SMI_PORT_POLLING_CTRL		0x03fc
+ #define RTL8390_SMI_GLB_CTRL			0x03f8
+ #define   RTL8390_SMI_FREQ_SEL			GENMASK(6, 5)
++#define   RTL8390_SMI_POLLING_EN		BIT(7)
+ 
+ #define RTL9300_NUM_BUSES			4
+ #define RTL9300_NUM_PAGES			4096
+@@ -811,6 +812,12 @@ static int otto_emdio_8390_set_bus_frequency(struct mii_bus *bus, u32 freq)
+ 	return regmap_update_bits(priv->regmap, RTL8390_SMI_GLB_CTRL, RTL8390_SMI_FREQ_SEL, val);
+ }
+ 
++static int otto_emdio_8390_setup_controller(struct otto_emdio_priv *priv)
++{
++	/* Only the RTL839x has a global polling enable, on top of the per-port bits */
++	return regmap_set_bits(priv->regmap, RTL8390_SMI_GLB_CTRL, RTL8390_SMI_POLLING_EN);
++}
++
+ static int otto_emdio_9300_set_bus_frequency(struct mii_bus *bus, u32 freq)
+ {
+ 	struct otto_emdio_priv *priv = otto_emdio_bus_to_priv(bus);
+@@ -1181,6 +1188,7 @@ static const struct otto_emdio_info otto_emdio_8390_info = {
+ 	.num_ports = RTL8390_NUM_PORTS,
+ 	.poll_ctrl = RTL8390_SMI_PORT_POLLING_CTRL,
+ 	.set_bus_frequency = otto_emdio_8390_set_bus_frequency,
++	.setup_controller = otto_emdio_8390_setup_controller,
+ 	.read_c22 = otto_emdio_8390_read_c22,
+ 	.read_c45 = otto_emdio_8390_read_c45,
+ 	.write_c22 = otto_emdio_8390_write_c22,

@@ -1,0 +1,9 @@
+net: mdio: realtek-rtl9300: detect the medium of RTL838x combo ports
+
+On the RTL838x, ports 24-27 can sit on a combo PHY such as the
+RTL8214FC, with a copper and a fibre medium. Only with bit 7 of
+SMI_GLB_CTRL (PHY_MAN_24_27) set does MAC_LINK_MEDIA_STS report which
+medium such a port uses.
+
+Set the bit when port 24 has a PHY, and clear it otherwise. OpenWrt's
+MDIO driver does the same: it takes a PHY on port 24 for a combo PHY.

@@ -1,0 +1,8 @@
+net: mdio: realtek-rtl9300: enable polling on RTL839x
+
+Unlike the other families, the RTL839x has a global enable for the
+hardware polling, bit 7 of SMI_GLB_CTRL, on top of the per-port bits
+that the driver sets when a PHY attaches. The driver never sets it, so
+the polling of an RTL839x depends on the boot loader having set it.
+
+Set it when the controller is set up, as OpenWrt's MDIO driver does.

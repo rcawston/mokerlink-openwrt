@@ -1,0 +1,30 @@
+net: mdio: realtek-rtl9300: set the MAC link source when a PHY attaches
+
+On the RTL930x and RTL931x, a MAC takes its link state either from its
+PHY, through the polling, or from its SerDes. Which one is a field of
+the MDIO controller:
+
+- RTL930x: SMI_MAC_TYPE_CTRL, with one field for each group of four
+  ports for ports 0-23 and one per port for ports 24-27, set to a 1G
+  PHY, a multi-gigabit PHY or the SerDes;
+- RTL931x: SMI_PHY_ABLTY_GET_SEL, one field per port, set to the PHY or
+  the SerDes.
+
+The driver leaves these to the boot loader. As Daniel Golle noted [1],
+many boot loaders set them up only when their network is started, for
+example to load an image over TFTP, and on a normal boot the MACs then
+don't follow their PHYs.
+
+Set every MAC to its SerDes at probe, and to its PHY when the PHY
+attaches. On the RTL930x the PHYs of a C45 bus are the multi-gigabit
+ones and those of a C22 bus 1G PHYs. That gives the same values as the
+table of PHY models in OpenWrt's MDIO driver, for every PHY in it,
+without knowing the model.
+
+The field stays when a PHY detaches: the polling of the port is off by
+then, and on the RTL930x the field can be shared with other ports. A
+switch driver has to set it itself for a link whose state comes from
+elsewhere, such as a PHY in an SFP module, which isn't on these buses;
+OpenWrt's DSA driver does that.
+
+Link: https://lore.kernel.org/netdev/680696024a8648535ce6dee771fe4de67802e0e8.1769053496.git.daniel@makrotopia.org/ [1]

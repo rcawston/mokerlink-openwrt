@@ -100,3 +100,25 @@ MTU 9000, `Set-NetAdapter -VlanID 100` for VLAN 100, `ping -f -l 8972`
 for the jumbo ping, Wireshark for the frame length and for step 7 with a
 second NIC, `Get-NetAdapterStatistics` for the counters, and a Windows
 build of iperf3.
+
+## The MDIO polling series
+
+The image also carries the MDIO polling series (`upstream/linux/mdio-polling`),
+with which the MDIO driver sets up the hardware polling itself instead of
+relying on U-Boot, and a test-only patch (`mdio-polling-dump.patch`) that logs
+the polling registers as U-Boot left them, before the driver changes them.
+With some ports cabled to the host:
+
+```sh
+rtl9300-mdio-test
+```
+
+| Step | Checks |
+|---|---|
+| 1 | U-Boot's values of the fields the driver sets (MAC type of ports 0, 8, 16, 20, 24-27; private polling of the PHY ports; the status register of buses 0-3), from the boot log, against the driver's; the 10G polling registers, which the driver leaves for these PHYs; no polling warnings from the driver |
+| 2 | the same fields as the driver set them, and the polling bits of the PHY ports and of the SFP port 27 |
+| 3 | the fields cleared with `devmem`, the switch driver unbound and bound: the MDIO driver sets them again when the PHYs attach, the cabled ports get their link back, and the kernel log has no MAC/PHY disagreement |
+
+The report is `/tmp/rtl9300-mdio-test.txt`. Step 3 is what stands in for a
+boot loader that didn't set the polling up: U-Boot always has, before a RAM
+boot.

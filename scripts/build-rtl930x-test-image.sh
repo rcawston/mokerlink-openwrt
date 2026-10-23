@@ -4,9 +4,10 @@
 #
 #   - the kernel, with the test configuration and the test device tree
 #     appended (upstream/linux/rtl930x-switch/test/), and for the test only
-#     the PHY driver entries the board needs for 1 Gb/s links
+#     the MDIO polling series, a log of the polling setup the boot loader
+#     left, and the PHY driver entries the board needs for 1 Gb/s links
 #   - an initramfs with a static busybox, ethtool and iperf3, and the test
-#     script, which names the ports lan1-lan8 at boot
+#     scripts; the switch driver's names the ports lan1-lan8 at boot
 #   - as a uImage for the vendor U-Boot, with the MokerLink magic
 #     (uImage-rtl930x-switch-test.bin) and the standard one (-stdmagic.bin)
 #
@@ -76,18 +77,32 @@ cp "$SRC/$IPERF/src/iperf3" "$ROOT/usr/bin/"
 
 echo "==> initramfs"
 install -m 0755 "$TEST/init" "$ROOT/init"
-install -m 0755 "$TEST/rtl9300-switch-test" "$ROOT/usr/sbin/"
+install -m 0755 "$TEST/rtl9300-switch-test" "$TEST/rtl9300-mdio-test" "$ROOT/usr/sbin/"
 "${CROSS}strip" "$ROOT/bin/busybox" "$ROOT/sbin/ethtool" "$ROOT/usr/bin/iperf3"
 # The kernel opens /dev/console for init before init mounts devtmpfs. A
 # directory can't hold the device node without root, a cpio list can
 echo 'nod /dev/console 0600 0 0 c 5 1' >"$OUT/initramfs.list"
 
 echo "==> kernel"
-# PHY driver entries the board needs for 1 Gb/s links, for the test only
-PHY_PATCH=$TEST/realtek-phy-rtl8261n-rtl8264b.patch
-git -C "$NET" apply "$PHY_PATCH"
+# On top of the switch series, for the test only: the MDIO polling series
+# (upstream/linux/mdio-polling), a patch that logs the polling registers
+# as the boot loader left them, and PHY driver entries the board needs for
+# 1 Gb/s links
+TEST_PATCHES="$(ls "$REPO_ROOT"/upstream/linux/mdio-polling/[0-9]*.diff)
+$TEST/mdio-polling-dump.patch
+$TEST/realtek-phy-rtl8261n-rtl8264b.patch"
+APPLIED=""
 # The tree goes back to the series alone however the script ends
-trap 'git -C "$NET" apply -R "$PHY_PATCH"' EXIT
+revert_test_patches() {
+	for p in $APPLIED; do
+		git -C "$NET" apply -R "$p"
+	done
+}
+trap revert_test_patches EXIT
+for p in $TEST_PATCHES; do
+	git -C "$NET" apply "$p"
+	APPLIED="$p $APPLIED"
+done
 make -s -C "$NET" O="$KBUILD" ARCH=mips CROSS_COMPILE="$CROSS" allnoconfig
 cat "$TEST/config" - >"$KBUILD/test.config" <<EOF
 CONFIG_INITRAMFS_SOURCE="$ROOT $OUT/initramfs.list"
@@ -99,7 +114,7 @@ EOF
 	-m -O "$KBUILD" "$KBUILD/.config" "$KBUILD/test.config" >/dev/null)
 make -s -C "$NET" O="$KBUILD" ARCH=mips CROSS_COMPILE="$CROSS" olddefconfig
 for sym in RTL9300_SWITCH MACH_REALTEK_RTL MIPS_RAW_APPENDED_DTB MDIO_REALTEK_RTL9300 \
-	COMPAT_32BIT_TIME; do
+	COMPAT_32BIT_TIME DEVMEM; do
 	grep -q "^CONFIG_$sym=y" "$KBUILD/.config" ||
 		{ echo "CONFIG_$sym is not set in the test kernel" >&2; exit 1; }
 done
@@ -124,7 +139,9 @@ python3 "$REPO_ROOT/scripts/uimage-remagic.py" \
 	"$OUT/uImage-rtl930x-switch-test-stdmagic.bin" 0x83800000 \
 	"$OUT/uImage-rtl930x-switch-test.bin"
 git -C "$NET" log --oneline -12 >"$OUT/series.txt"
-echo "test only, not a commit: $(basename "$PHY_PATCH")" >>"$OUT/series.txt"
+for p in $TEST_PATCHES; do
+	echo "test only, not a commit: $(basename "$(dirname "$p")")/$(basename "$p")"
+done >>"$OUT/series.txt"
 cp "$KBUILD/.config" "$OUT/kernel.config"
 rm -rf "$ROOT" "$OUT/initramfs.list" "$OUT/vmlinux-dtb.bin.gz"
 

@@ -1,0 +1,30 @@
+net: mdio: realtek-rtl9300: set up the polling of known PHYs
+
+Two more parts of the polling depend on the PHY model:
+
+- Realtek's 10G PHYs (RTL8261N, RTL8264 and RTL8264B) are polled
+  through their resolution register rather than the standard ones. The
+  polling does that for a whole bus: POLL_SEL in SMI_GLB_CTRL on the
+  RTL930x, PRVTE0_POLL in SMI_GLB_CTRL0 on the RTL931x.
+- Realtek's PHYs have proprietary 1G and 2.5G "Lite" modes. The RTL930x
+  polls for them on the ports set in SMI_PRVTE_POLLING_CTRL.
+
+The driver leaves these to the boot loader as well. Set them up when a
+PHY attaches, from a table of the PHYs used with these switches, which
+comes from OpenWrt's MDIO driver. A PHY that isn't in the table keeps
+what the boot loader set, as now, with a message.
+
+The first PHY that attaches to a bus chooses its status register, and
+every PHY like it sets it again, so a PHY that attaches again restores
+it. The PHYs of a bus are expected to be alike, and one that isn't gets
+a warning. On the RTL931x, two more bits per bus (PRVTE1_POLL and
+FMT_SEL_FRC) are cleared, as OpenWrt does for all the PHYs it knows.
+
+On an earlier RFC for this [1], Russell King asked whether only a small
+subset of PHYs is used with these switches, as a table of PHYs in the
+MDIO driver doesn't scale otherwise. It is a small subset: Realtek's own
+PHYs and, on a few 10G boards, Aquantia's; any other PHY is left as the
+boot loader set it up. As Russell suggested there, the setup happens
+when the PHY attaches, once its driver is bound.
+
+Link: https://lore.kernel.org/netdev/aXITnCLt945xHqaP@shell.armlinux.org.uk/ [1]

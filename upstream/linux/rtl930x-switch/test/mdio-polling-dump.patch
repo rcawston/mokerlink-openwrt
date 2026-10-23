@@ -1,0 +1,24 @@
+Test only: log the RTL930x polling registers as the boot loader left them,
+before the MDIO driver changes them. Not part of any series.
+
+diff --git a/drivers/net/mdio/mdio-realtek-rtl9300.c b/drivers/net/mdio/mdio-realtek-rtl9300.c
+index 83f822bf47a..96c7d29829f 100644
+--- a/drivers/net/mdio/mdio-realtek-rtl9300.c
++++ b/drivers/net/mdio/mdio-realtek-rtl9300.c
+@@ -1458,6 +1458,16 @@ static int otto_emdio_probe(struct platform_device *pdev)
+ 	if (IS_ERR(priv->regmap))
+ 		return PTR_ERR(priv->regmap);
+ 
++	/* Test only: the RTL930x polling setup as the boot loader left it */
++	if (of_device_is_compatible(dev->of_node, "realtek,rtl9301-mdio")) {
++		static const u32 regs[] = { 0xca00, 0xca04, 0xca10, 0xca90, 0xcbb4, 0xcbb8, 0xcbbc };
++		u32 val;
++
++		for (int i = 0; i < ARRAY_SIZE(regs); i++)
++			if (!regmap_read(priv->regmap, regs[i], &val))
++				dev_info(dev, "boot loader polling setup: %04x = %08x\n", regs[i], val);
++	}
++
+ 	err = otto_emdio_init_polling(priv);
+ 	if (err)
+ 		return err;

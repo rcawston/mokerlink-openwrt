@@ -1,0 +1,28 @@
+net: mdio: realtek-rtl9300: program the 10G polling registers
+
+C45 doesn't standardise full duplex, or 1000BASE-T full duplex in the
+advertisement and from the link partner, so the polling of a C45 PHY
+needs to be told in which register and bit to find them. Three
+registers do that, as MMD, register and bit: 10G_POLLING_REG0/9/10_CFG
+on the RTL930x, 10GPHY_POLLING_SEL2-4 on the RTL931x. They hold one
+setting for the whole switch.
+
+The driver leaves them to the boot loader. Set them from the first PHY
+in the table that needs them:
+
+- Realtek's 2.5G PHYs (RTL8221B, RTL8224 and RTL8226) mirror their C22
+  registers in MMD 31, at 0xa400 plus twice the register number. The
+  polling reads BMCR, CTRL1000 and STAT1000 there.
+- Aquantia's AQR113C and AQR813 have duplex in PMA/PMD control 1, and
+  the 1000BASE-T bits in two vendor registers of the AN MMD (0xc400 and
+  0xe820).
+
+Realtek's 10G PHYs are polled through their resolution register, and
+OpenWrt leaves these registers at their defaults for them; so does
+this. As with the status register, every PHY like the first sets the
+registers again, and one that isn't like it gets a warning.
+
+Daniel Golle's RFC [1] set up these registers for the RTL930x, from the
+PHY's vendor.
+
+Link: https://lore.kernel.org/netdev/680696024a8648535ce6dee771fe4de67802e0e8.1769053496.git.daniel@makrotopia.org/ [1]

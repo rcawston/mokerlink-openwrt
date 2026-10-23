@@ -1,0 +1,193 @@
+#!/bin/sh
+# rtl9300-mdio-test [-o REPORT]
+#
+# Hardware test of the MDIO polling series (upstream/linux/mdio-polling)
+# on the MokerLink POE-10G07110GSM, booted from RAM with the test image.
+# Every check prints PASS or FAIL and goes into the report (default
+# /tmp/rtl9300-mdio-test.txt). Cable as many ports as you like first:
+# step 3 checks that the ports with a link get it back.
+#
+#   1. the boot loader's setup, which the image logs at probe before the
+#      driver changes it, against what the driver sets
+#   2. the driver's setup of the board's ports: link source (MAC type),
+#      private polling, status register of each bus and polling bits
+#   3. without the boot loader's setup: the fields are cleared, the
+#      switch driver unbound and bound again, and the MDIO driver has to
+#      set them again; the ports that had a link get it back
+#
+# Ports 1-7 are MAC ports 0, 8, 16, 20, 24, 25 and 26: RTL8261N PHYs on
+# buses 1-3 and an RTL8264B on bus 0, all multi-gigabit PHYs with a
+# resolution register. Port 8 (MAC port 27) is the SFP cage, without a
+# PHY, so it is polled with the SerDes as its link source.
+
+OUT=/tmp/rtl9300-mdio-test.txt
+if [ "$1" = -o ]; then
+	OUT=$2
+	shift 2
+fi
+case $1 in
+-h | --help)
+	sed -n '2,/^$/s/^# \{0,1\}//p' "$0"
+	exit 0
+	;;
+esac
+DRIVER=/sys/bus/platform/drivers/rtl9300-switch
+BASE=$((0x1b000000))
+PASS=0
+FAIL=0
+: >"$OUT"
+
+say() { echo "$*" | tee -a "$OUT"; }
+section() { printf '\n========== %s ==========\n' "$*" | tee -a "$OUT"; }
+pass() { PASS=$((PASS + 1)); say "PASS: $*"; }
+fail() { FAIL=$((FAIL + 1)); say "FAIL: $*"; }
+mark() { echo "rtl9300-mdio-test mark $1" >/dev/kmsg; }
+since() { dmesg | sed -n "/rtl9300-mdio-test mark $1/,\$p"; }
+hex() { printf '0x%08x' "$1"; }
+
+rd() { echo $(($(devmem $((BASE + $1)) 32))); }
+wr() { devmem $((BASE + $1)) 32 "$2"; }
+field() { echo $((($1 >> $2) & ((1 << $3) - 1))); } # value shift width
+
+GLB=0xca00
+MAC_TYPE=0xca04
+PRVTE=0xca10
+POLL=0xca90
+
+# The MAC type field of each port: shift and width, and the expected value
+# (1 multi-gigabit PHY, 0 SerDes)
+MAC_FIELDS="0:0:2:1 8:4:2:1 16:8:2:1 20:10:2:1 24:12:3:1 25:15:3:1 26:18:3:1 27:21:3:0"
+PHY_PORTS="0 8 16 20 24 25 26"
+
+# Checks the driver's setup in the registers as they are now; $1 names the
+# moment in the messages
+check_setup() {
+	mt=$(rd $MAC_TYPE)
+	for f in $MAC_FIELDS; do
+		IFS=: read -r port shift width want <<EOF
+$f
+EOF
+		got=$(field "$mt" "$shift" "$width")
+		if [ "$got" -eq "$want" ]; then
+			pass "$1: MAC type of port $port is $got"
+		else
+			fail "$1: MAC type of port $port is $got, not $want"
+		fi
+	done
+	pv=$(rd $PRVTE)
+	gl=$(rd $GLB)
+	pc=$(rd $POLL)
+	for port in $PHY_PORTS; do
+		[ "$(field "$pv" "$port" 1)" -eq 1 ] && pass "$1: private polling on port $port" ||
+			fail "$1: no private polling on port $port"
+	done
+	for bus in 0 1 2 3; do
+		[ "$(field "$gl" $((20 + bus)) 1)" -eq 1 ] &&
+			pass "$1: bus $bus polls the resolution register" ||
+			fail "$1: bus $bus polls the standard registers"
+	done
+	for port in $PHY_PORTS 27; do
+		[ "$(field "$pc" "$port" 1)" -eq 1 ] && pass "$1: port $port is polled" ||
+			fail "$1: port $port is not polled"
+	done
+	say "$1: $GLB = $(hex "$gl"), $MAC_TYPE = $(hex "$mt"), $PRVTE = $(hex "$pv"), $POLL = $(hex "$pc")"
+}
+
+command -v devmem >/dev/null || { echo "no devmem in this image" >&2; exit 1; }
+[ -e /dev/mem ] || { echo "no /dev/mem: the test kernel needs CONFIG_DEVMEM" >&2; exit 1; }
+
+section "1. the boot loader's setup"
+log=$(dmesg | grep 'boot loader polling setup:')
+if [ -z "$log" ]; then
+	fail "the image doesn't log the boot loader's setup (test/mdio-polling-dump.patch)"
+else
+	echo "$log" >>"$OUT"
+	boot() { echo "$log" | sed -n "s/.*: ${1#0x} = \([0-9a-f]*\)\$/0x\1/p"; }
+	b_mt=$(($(boot $MAC_TYPE)))
+	b_pv=$(($(boot $PRVTE)))
+	b_gl=$(($(boot $GLB)))
+	for f in $MAC_FIELDS; do
+		IFS=: read -r port shift width want <<EOF
+$f
+EOF
+		got=$(field "$b_mt" "$shift" "$width")
+		[ "$got" -eq "$want" ] && pass "boot loader: MAC type of port $port is $got, as the driver sets" ||
+			fail "boot loader: MAC type of port $port is $got, the driver sets $want"
+	done
+	for port in $PHY_PORTS; do
+		[ "$(field "$b_pv" "$port" 1)" -eq 1 ] &&
+			pass "boot loader: private polling on port $port, as the driver sets" ||
+			fail "boot loader: no private polling on port $port, the driver sets it"
+	done
+	for bus in 0 1 2 3; do
+		[ "$(field "$b_gl" $((20 + bus)) 1)" -eq 1 ] &&
+			pass "boot loader: bus $bus polls the resolution register, as the driver sets" ||
+			fail "boot loader: bus $bus polls the standard registers, the driver sets the resolution register"
+	done
+	for r in 0xcbb4 0xcbb8 0xcbbc; do
+		say "10G polling register $r: boot loader $(boot $r), now $(hex "$(rd $r)") (the driver leaves it for these PHYs)"
+	done
+fi
+if dmesg | grep -q 'polling not set up for this PHY\|set up for another PHY type'; then
+	fail "the MDIO driver complained at boot:"
+	dmesg | grep 'polling not set up for this PHY\|set up for another PHY type' | tee -a "$OUT"
+else
+	pass "no polling warnings at boot"
+fi
+
+section "2. the driver's setup"
+check_setup "after boot"
+
+section "3. without the boot loader's setup"
+# The ports come up, and those with a cable get 10 s for their link
+for dev in /sys/class/net/lan*; do
+	ip link set dev "${dev##*/}" up 2>/dev/null
+done
+sleep 10
+linked=""
+for dev in /sys/class/net/lan*; do
+	[ "$(cat "$dev/carrier" 2>/dev/null)" = 1 ] && linked="$linked ${dev##*/}"
+done
+say "ports with a link:${linked:- none}"
+mark clear
+wr $MAC_TYPE 0
+wr $PRVTE 0
+wr $GLB $(($(rd $GLB) & ~0x00f00000))
+if [ "$(rd $MAC_TYPE)" -eq 0 ] && [ "$(rd $PRVTE)" -eq 0 ] &&
+	[ $(($(rd $GLB) & 0x00f00000)) -eq 0 ]; then
+	pass "the MAC types, private polling and status registers are cleared"
+else
+	fail "the fields didn't clear"
+fi
+if echo 1b000000.switch >"$DRIVER/unbind" 2>>"$OUT" &&
+	echo 1b000000.switch >"$DRIVER/bind" 2>>"$OUT"; then
+	sleep 2
+	/usr/sbin/rtl9300-switch-test --name-ports
+	pass "switch driver unbound and bound"
+	check_setup "after the rebind"
+	for port in $linked; do
+		i=0
+		while [ $i -lt 30 ] && [ "$(cat "/sys/class/net/$port/carrier" 2>/dev/null)" != 1 ]; do
+			ip link set dev "$port" up 2>/dev/null
+			sleep 1
+			i=$((i + 1))
+		done
+		if [ "$(cat "/sys/class/net/$port/carrier" 2>/dev/null)" = 1 ]; then
+			pass "$port has its link back after $i s: $(cat "/sys/class/net/$port/speed") Mb/s"
+		else
+			fail "$port has no link 30 s after the rebind"
+		fi
+	done
+	if since clear | grep -q 'but the MAC reports\|polling not set up for this PHY\|set up for another PHY type\|WARNING\|BUG'; then
+		fail "kernel log problems after the rebind:"
+		since clear | grep 'but the MAC reports\|polling not set up for this PHY\|set up for another PHY type\|WARNING\|BUG' | tee -a "$OUT"
+	else
+		pass "no kernel log problems after the rebind"
+	fi
+else
+	fail "unbind or bind of the switch driver"
+fi
+
+section "summary"
+say "PASS $PASS, FAIL $FAIL"
+say "Report: $OUT"

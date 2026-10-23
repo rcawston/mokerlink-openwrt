@@ -1,0 +1,12 @@
+net: mdio: realtek-rtl9300: poll the ports without a PHY
+
+The polling does more than read PHYs: on the RTL93xx it also hands the
+link state of a SerDes to its MAC. OpenWrt's DSA driver relies on that
+for its SFP ports, whose MACs take their link from the PCS. This driver
+turns the polling of all ports off at probe, and on again only for a
+port whose PHY attaches, so a port without a PHY is never polled.
+
+Take the ports of the ethernet-ports node without a phy-handle for
+ports driven by their SerDes, and turn their polling on at probe.
+OpenWrt's MDIO driver does so on all four families. A port with a fixed
+link, such as a CPU port, is left out, as the MAC driver forces it.

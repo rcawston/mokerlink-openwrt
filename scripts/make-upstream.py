@@ -18,14 +18,15 @@ openwrt  adds one pull request's commits to TREE, an openwrt.git checkout,
                   --link, the patch links to its submission to netdev
 netifd   adds the board.json default for the pse option to TREE, a
          netifd.git checkout, and writes it to build/upstream/netifd
-linux    adds one series (pse, leds, pse-led-triggers, pse-fix or
-         rtl930x-switch) as commits to TREE, a Linux checkout of the
-         subsystem tree it goes to, with MAINTAINERS entries, and writes it
-         with a cover letter and the subject prefix of that tree to
-         build/upstream/linux/SERIES. The Kconfig and Makefile hunks are
-         made against v6.18, the PSE core fix against mainline and the
-         switch driver against net-next; they are applied with a three-way
-         merge. Earlier patches in that directory are removed first.
+linux    adds one series (pse, leds, pse-led-triggers, pse-fix,
+         rtl930x-switch or mdio-polling) as commits to TREE, a Linux
+         checkout of the subsystem tree it goes to, with MAINTAINERS
+         entries, and writes it with a cover letter and the subject prefix
+         of that tree to build/upstream/linux/SERIES. The Kconfig and
+         Makefile hunks are made against v6.18, the PSE core fix against
+         mainline and the switch driver and MDIO polling against net-next;
+         they are applied with a three-way merge. Earlier patches in that
+         directory are removed first.
 patches  writes the kernel patches as OpenWrt carries them (OpenWrt's
          kernel context) to DIR, for review; no tree needed.
 
@@ -123,6 +124,18 @@ SERIES = {
             (f'{name}.txt', [], None, f'{name}.diff') for name in (
                 '01-vendor-menu', '02-driver', '03-standalone', '04-dma-rx',
                 '05-tx', '06-ports', '07-jumbo', '08-stats', '09-devlink')
+        ],
+    },
+    # The hardware polling setup of the existing MDIO driver, on net-next
+    'mdio-polling': {
+        'openwrt': None,
+        'list': 'netdev@vger.kernel.org',
+        'prefix': 'PATCH net-next',
+        'maintainers': None,
+        'patches': [
+            (f'{name}.txt', [], None, f'{name}.diff') for name in (
+                '01-rtl839x-polling', '02-rtl838x-combo', '03-link-source',
+                '04-phy-polling', '05-10g-polling', '06-serdes-ports')
         ],
     },
     # A fix for the net tree; in OpenWrt a generic pending patch

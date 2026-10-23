@@ -15,6 +15,7 @@ ip link set lo up
 
 echo
 echo "RTL930x switch driver test image. Run: rtl9300-switch-test -h"
+echo "MDIO polling series: rtl9300-mdio-test -h"
 echo
 
 exec setsid cttyhack /bin/sh -l

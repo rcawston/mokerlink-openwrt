@@ -1,12 +1,15 @@
 name: rtl930x-switch
 
-# The RTL930x switch driver series for netdev, built on the tip of net-next,
-# and a RAM-boot test image of it for the MokerLink POE-10G07110GSM
+# The RTL930x switch driver and MDIO polling series for netdev, built on the
+# tip of net-next, and a RAM-boot test image of both for the MokerLink
+# POE-10G07110GSM
 on:
   push:
     paths:
       - 'upstream/linux/rtl930x-switch/**'
+      - 'upstream/linux/mdio-polling/**'
       - 'scripts/check-rtl930x-switch.sh'
+      - 'scripts/check-mdio-polling.sh'
       - 'scripts/build-rtl930x-test-image.sh'
       - 'scripts/make-upstream.py'
       - '.github/workflows/rtl930x-switch.yml'
@@ -43,6 +46,11 @@ jobs:
           make -C "$RUNNER_TEMP/sparse" -j"$(nproc)" PREFIX="$HOME/.local" install
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      # First, as the switch series' check leaves its series applied in the
+      # shared clone for the test image
+      - name: Apply, checkpatch and build the MDIO polling series
+        run: scripts/check-mdio-polling.sh
+
       - name: Apply, checkpatch and build the series
         run: scripts/check-rtl930x-switch.sh
 
@@ -57,6 +65,8 @@ jobs:
           path: |
             build/check/rtl930x-switch/patches/
             build/check/rtl930x-switch/logs/
+            build/check/mdio-polling/patches/
+            build/check/mdio-polling/logs/
           if-no-files-found: ignore
 
       - name: Upload the test image
