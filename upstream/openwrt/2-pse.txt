@@ -5,10 +5,10 @@ RTL930x PoE switches, such as the MokerLink POE-10G07110GSM, drive
 directly over I2C without a PSE microcontroller. The chip needs Realtek
 firmware loaded at power-up; it is not redistributable and has to be
 copied from the vendor firmware of the device. The driver loads it as
-realtek/rtl8239-bt.bin when it is installed. When the PSE PIs have a
-supply with a power budget, the PSE core enforces it, with port
-priorities.
+realtek/rtl8239-bt.bin, or realtek/rtl8239c-bt.bin on an RTL8239C, when
+it is installed. When the PSE PIs have a supply with a power budget, the
+PSE core enforces it, with port priorities.
 
-Add the driver and its binding as a pending patch, and package it as
-kmod-pse-realtek-rtl8239, which keeps the installed firmware across
-sysupgrade.
+Add the driver and its binding as a pending patch, and package it with
+the other PSE drivers as kmod-pse-realtek-rtl8239, which keeps the
+installed firmware across sysupgrade.

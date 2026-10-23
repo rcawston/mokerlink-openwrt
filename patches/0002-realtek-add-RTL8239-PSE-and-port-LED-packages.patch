@@ -1,27 +1,31 @@
 realtek: add RTL8239 PSE and port LED kernel packages
 
-kmod-pse-realtek-rtl8239: Realtek RTL8239 PoE PSE controllers driven
-directly over I2C (drivers/net/pse-pd/realtek-rtl8239.c in files-6.18),
-with a keep.d entry that keeps their firmware across sysupgrade.
+kmod-pse-realtek-rtl8239, with the other PSE packages in
+package/kernel/linux/modules/pse-pd.mk: Realtek RTL8239 PoE PSE
+controllers driven directly over I2C (drivers/net/pse-pd/realtek-rtl8239.c
+in files-6.18), with a keep.d entry that keeps their firmware across
+sysupgrade (rtl8239-bt.bin, or rtl8239c-bt.bin on an RTL8239C).
 
 kmod-leds-rtl9300-port: RTL9300 switch port LEDs under software control,
 such as PoE status LEDs (drivers/leds/leds-rtl9300-port.c in files-6.18).
 
-diff --git a/target/linux/realtek/modules.mk b/target/linux/realtek/modules.mk
-index 57025004f9..8456d119a0 100644
---- a/target/linux/realtek/modules.mk
-+++ b/target/linux/realtek/modules.mk
-@@ -56,3 +56,41 @@ define KernelPackage/hasivo-mcu-sensor/description
+diff --git a/package/kernel/linux/modules/pse-pd.mk b/package/kernel/linux/modules/pse-pd.mk
+index 95294fde0f..9e55ec6050 100644
+--- a/package/kernel/linux/modules/pse-pd.mk
++++ b/package/kernel/linux/modules/pse-pd.mk
+@@ -161,3 +161,29 @@ define KernelPackage/pse-hasivo-hs104/description
  endef
  
- $(eval $(call KernelPackage,hasivo-mcu-sensor))
+ $(eval $(call KernelPackage,pse-hasivo-hs104))
 +
 +define KernelPackage/pse-realtek-rtl8239
++  SUBMENU:=$(PSE_MENU)
 +  TITLE:=Realtek RTL8239 PSE controller support
 +  KCONFIG:=CONFIG_PSE_REALTEK_RTL8239
++  DEPENDS:=@TARGET_realtek +kmod-i2c-core
 +  FILES:=$(LINUX_DIR)/drivers/net/pse-pd/realtek-rtl8239.ko
 +  AUTOLOAD:=$(call AutoProbe,realtek-rtl8239)
-+  $(call AddDepends/pse-pd,@TARGET_realtek +kmod-i2c-core)
++  $(call AddDepends/pse-pd)
 +endef
 +
 +define KernelPackage/pse-realtek-rtl8239/description
@@ -30,13 +34,23 @@ index 57025004f9..8456d119a0 100644
 + firmware is not included; see the driver.
 +endef
 +
-+# The firmware is copied in by the owner, so keep it across sysupgrade
++# The firmware is copied in by the owner, so keep it across sysupgrade:
++# rtl8239-bt.bin, or rtl8239c-bt.bin on an RTL8239C
 +define KernelPackage/pse-realtek-rtl8239/install
 +	$(INSTALL_DIR) $(1)/lib/upgrade/keep.d
 +	echo /lib/firmware/realtek/rtl8239-bt.bin > $(1)/lib/upgrade/keep.d/pse-realtek-rtl8239
++	echo /lib/firmware/realtek/rtl8239c-bt.bin >> $(1)/lib/upgrade/keep.d/pse-realtek-rtl8239
 +endef
 +
 +$(eval $(call KernelPackage,pse-realtek-rtl8239))
+diff --git a/target/linux/realtek/modules.mk b/target/linux/realtek/modules.mk
+index 57025004f9..9336cfa2cf 100644
+--- a/target/linux/realtek/modules.mk
++++ b/target/linux/realtek/modules.mk
+@@ -56,3 +56,19 @@ define KernelPackage/hasivo-mcu-sensor/description
+ endef
+ 
+ $(eval $(call KernelPackage,hasivo-mcu-sensor))
 +
 +define KernelPackage/leds-rtl9300-port
 +  SUBMENU:=$(LEDS_MENU)

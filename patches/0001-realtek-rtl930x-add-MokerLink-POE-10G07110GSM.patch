@@ -25,53 +25,21 @@ index b090ff269c..17307405c6 100644
  		ucidef_set_poe 240 "$(filter_port_list "$lan_list" "lan9 lan10")"
  		;;
 diff --git a/target/linux/realtek/base-files/etc/init.d/hwmon_fancontrol b/target/linux/realtek/base-files/etc/init.d/hwmon_fancontrol
-index cec1e8723b..3378987e2f 100755
+index 6c5a2db15a..a57e307f23 100644
 --- a/target/linux/realtek/base-files/etc/init.d/hwmon_fancontrol
 +++ b/target/linux/realtek/base-files/etc/init.d/hwmon_fancontrol
-@@ -121,6 +121,37 @@ linksys_lgs328mpc_v2() {
- 	echo 2 > "$path_to_hwmon/pwm1_enable"
- }
- 
-+mokerlink_poe_10g07110gsm() {
-+	# ADT7476 in its automatic mode, like the vendor firmware runs the fans:
-+	# all three PWM outputs follow the hottest of the three temperature
-+	# sensors, 50% up to 64C and full speed from 66C (the chip's smallest
-+	# range of 2C). Below 64C the fans keep running at 50% (stall_disable).
-+	local path_to_hwmon i
-+
-+	for i in 1 2 3 4 5 6 7 8 9 10; do
-+		path_to_hwmon="$(find /sys/bus/i2c/devices/0-002e/hwmon/ -type d -maxdepth 1 -mindepth 1 -name 'hwmon*' 2>/dev/null)"
-+		[ -n "$path_to_hwmon" ] && break
-+		sleep 1
-+	done
-+	if [ -z "$path_to_hwmon" ]; then
-+		logger -t hwmon_fancontrol "ADT7476 not found on i2c 0-002e, fans stay at full speed"
-+		return 1
-+	fi
-+
-+	for i in 1 2 3; do
-+		echo 64000 > "$path_to_hwmon/temp${i}_auto_point1_temp"
-+		echo 66000 > "$path_to_hwmon/temp${i}_auto_point2_temp"
-+	done
-+
-+	for i in 1 2 3; do
-+		echo 7 > "$path_to_hwmon/pwm${i}_auto_channels_temp"
-+		echo 128 > "$path_to_hwmon/pwm${i}_auto_point1_pwm"
-+		echo 255 > "$path_to_hwmon/pwm${i}_auto_point2_pwm"
-+		echo 1 > "$path_to_hwmon/pwm${i}_stall_disable"
-+		echo 2 > "$path_to_hwmon/pwm${i}_enable"
-+	done
-+}
-+
- boot() {
- 	case $(board_name) in
- 	plasmacloud,esx28|\
-@@ -137,5 +168,8 @@ boot() {
+@@ -175,5 +175,14 @@ boot() {
  	linksys,lgs328mpc-v2)
  		linksys_lgs328mpc_v2
  		;;
 +	mokerlink,poe-10g07110gsm)
-+		mokerlink_poe_10g07110gsm
++		# As the stock firmware runs the fans: duty 128 (50 %), also below
++		# 64 C, full speed at 66 C (the chip's smallest range), on all three
++		# outputs; critical at 100 C, the chip's default, which the stock
++		# firmware keeps.
++		adt747x_fancontrol 1 128 64000 66000 100000 96000 1
++		adt747x_fancontrol 2 128 64000 66000 100000 96000 1
++		adt747x_fancontrol 3 128 64000 66000 100000 96000 1
 +		;;
  	esac
  }

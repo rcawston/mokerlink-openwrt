@@ -374,7 +374,8 @@ remote diodes) are connected. The stock firmware (board table
 
 OpenWrt has the chip do this by itself. The device tree declares the bus
 and the chip (`adt7475` driver), and at boot the realtek target's
-`/etc/init.d/hwmon_fancontrol` puts the ADT7476 into its automatic mode,
+`/etc/init.d/hwmon_fancontrol` puts the ADT7476 into its automatic mode
+with `adt747x_fancontrol`, the target's function for ADT747x boards,
 through the driver's sysfs files:
 
 - all three PWM outputs follow the hottest of the three sensors
@@ -384,6 +385,12 @@ through the driver's sysfs files:
   (`tempN_auto_point2_temp` = 66000, the chip's smallest range of 2 °C)
 - 50 % rather than off below 64 °C (`pwmN_stall_disable` = 1; the chip's
   default would stop the fans there)
+- the critical limit (`tempN_crit` = 100000, `tempN_crit_hyst` = 96000)
+  at the chip's power-on value, which the stock firmware keeps
+
+OpenWrt main has `adt747x_fancontrol` since `46309f1396`; the pinned
+OpenWrt commit predates it, so `patches/0000-*` brings main's
+`hwmon_fancontrol` to the build until `OPENWRT_COMMIT` is moved past it.
 
 That is the stock behaviour, with a 2 °C ramp in place of the step at
 65 °C. No daemon is involved: the chip keeps controlling the fans if the

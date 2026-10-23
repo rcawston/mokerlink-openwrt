@@ -83,11 +83,15 @@ firmware the owner copied in.
 
 The fan control is part of the device commit: a case in the realtek
 target's `base-files/etc/init.d/hwmon_fancontrol` (in `patches/0001-*`),
-which programs a board's fan controller once at boot. The same file
-already puts the same ADT7476 into its automatic mode for the Plasma Cloud
-ESX28/PSX28; this board's case sets the stock behaviour (all outputs
-following the hottest sensor, 50 % up to 64 °C, full speed from 66 °C)
-and keeps the fans at 50 % below the start temperature rather than off.
+which programs a board's fan controller once at boot. It calls
+`adt747x_fancontrol`, which the same file already uses for the same chip
+on the Plasma Cloud ESX28/PSX28 and the Horaco ZX-SWTGW2C48NS, once for
+each of the three outputs: the stock behaviour (all outputs following the
+hottest sensor, 50 % up to 64 °C, full speed from 66 °C), the fans kept
+at 50 % below the start temperature rather than off, and the critical
+limit at the chip's power-on value. The pinned OpenWrt commit predates
+that function, so `patches/0000-*` backports it for this repository's
+build only.
 The device tree can't express any of this: the adt7475 binding allows a
 start duty only in a deprecated form.
 

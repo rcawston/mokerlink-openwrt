@@ -12,6 +12,9 @@ Specifications:
   port, 260 W in total
 - Fans: ADT7476 fan controller
 - Buttons: reset
+- LEDs: three per port on the switch's LED controller (orange and green
+  link/activity, green PoE), system LED
+- Power: internal AC power supply, 100-240 V
 - UART: header J4 (GND, TXD, RXD, 3V3), 115200 8N1
 
 The fan controller, the PoE chips and the SFP+ cage share one bit-banged
@@ -27,8 +30,16 @@ mode, three LEDs per port) instead of relying on the vendor U-Boot,
 which sets them up as part of "rtk network on"; the PoE LEDs (LED 2 of
 each port) have no hardware function and need software control, which
 follows with openwrt/openwrt#25341. At boot, hwmon_fancontrol puts the
-ADT7476 into its automatic mode with the vendor firmware's settings:
-50 %, and full speed when the hottest of its sensors reaches 66 C.
+ADT7476 into its automatic mode with the vendor firmware's settings,
+through adt747x_fancontrol(): 50 %, and full speed when the hottest of
+its sensors reaches 66 C, with the critical limit left at the chip's
+default of 100 C, as the vendor firmware leaves it.
+
+MAC addresses:
+- eth0, the lan interface and lan1: ethaddr in u-boot-env
+- lan2-lan8: ethaddr with the locally administered bit set, plus 1 to 7
+A missing ethaddr, or Realtek's default 00:e0:4c:00:00:xx, gives a
+random address instead.
 
 Installation from the vendor web UI:
 Upload the factory image (*-squashfs-factory.bix) on the firmware

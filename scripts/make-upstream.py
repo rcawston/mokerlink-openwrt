@@ -227,6 +227,8 @@ def check_clean(tree):
 
 
 def commit(tree, args, subject, body, paths):
+    if 'TODO' in body:
+        die(f'"{subject}": the commit message still has a TODO')
     git(tree, 'add', *paths)
     msg = f'{subject}\n\n{with_trailers(body, args)}\n'
     git(tree, '-c', f'user.name={args.name}', '-c', f'user.email={args.email}',
@@ -321,13 +323,15 @@ def upstream_dts(text):
 
 def openwrt_board(tree, args):
     patchdir = 'target/linux/realtek/patches-6.18'
-    modules = os.path.join(tree, 'target/linux/realtek/modules.mk')
+    # With the other PSE packages
+    modules_mk = 'package/kernel/linux/modules/pse-pd.mk'
+    modules = os.path.join(tree, modules_mk)
     for series, s in SERIES.items():
         if not s['openwrt']:
             continue
         number, kmod, msgfile = s['openwrt']
         n = len(s['patches'])
-        paths = ['target/linux/realtek/modules.mk']
+        paths = [modules_mk]
         for i in range(n):
             subject, text = openwrt_patch_text(args, series, i, n)
             name = f'{number}-{i + 1:02d}-{slug(subject)}.patch'

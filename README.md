@@ -98,7 +98,7 @@ Going back to stock is covered in [docs/04-recovery.md](docs/04-recovery.md).
 | Path | Contents |
 |---|---|
 | `openwrt/target/linux/realtek/dts/rtl9303_mokerlink_poe-10g07110gsm.dts` | Board description (device tree) |
-| `patches/` | OpenWrt changes: the board's image recipe, MAC address source, PoE default and fan control, kernel packages, a fix for the switch driver's link change reporting, and the uci-defaults function that the PoE default uses |
+| `patches/` | OpenWrt changes: the board's image recipe, MAC address source, PoE default and fan control, kernel packages, a fix for the switch driver's link change reporting, the uci-defaults function that the PoE default uses, and OpenWrt main's fan control function for the pinned OpenWrt |
 | `openwrt/package/network/config/netifd/patches/` | netifd change that reads the PoE default from board.json |
 | `openwrt/target/linux/realtek/files-6.18`, `patches-6.18/83x-*` | New kernel drivers with their bindings: RTL8239 PoE (`realtek-rtl8239`) and the PoE LEDs (`leds-rtl9300-port`), plus two binding patches for upstream (`833`, `834`) |
 | `files/` | Files added to the firmware: switch defaults and bring-up tools |
