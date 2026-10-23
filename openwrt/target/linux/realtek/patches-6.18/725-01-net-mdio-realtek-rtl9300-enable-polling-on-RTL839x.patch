@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ross Cawston <ross@r-sc.ca>
+Date: Fri, 23 Oct 2026 14:57:48 -0700
+Subject: [PATCH] net: mdio: realtek-rtl9300: enable polling on RTL839x
+
+Unlike the other families, the RTL839x has a global enable for the
+hardware polling, bit 7 of SMI_GLB_CTRL, on top of the per-port bits
+that the driver sets when a PHY attaches. The driver never sets it, so
+the polling of an RTL839x depends on the boot loader having set it.
+
+Set it when the controller is set up, as OpenWrt's MDIO driver does.
+---
+ drivers/net/mdio/mdio-realtek-rtl9300.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+--- a/drivers/net/mdio/mdio-realtek-rtl9300.c
++++ b/drivers/net/mdio/mdio-realtek-rtl9300.c
+@@ -172,6 +172,7 @@
+ #define RTL8390_SMI_PORT_POLLING_CTRL		0x03fc
+ #define RTL8390_SMI_GLB_CTRL			0x03f8
+ #define   RTL8390_SMI_FREQ_SEL			GENMASK(6, 5)
++#define   RTL8390_SMI_POLLING_EN		BIT(7)
+ 
+ #define RTL9300_NUM_BUSES			4
+ #define RTL9300_NUM_PAGES			4096
+@@ -812,6 +813,12 @@ static int otto_emdio_8390_set_bus_frequency(struct mii_bus *bus, u32 freq)
+ 	return regmap_update_bits(priv->regmap, RTL8390_SMI_GLB_CTRL, RTL8390_SMI_FREQ_SEL, val);
+ }
+ 
++static int otto_emdio_8390_setup_controller(struct otto_emdio_priv *priv)
++{
++	/* Only the RTL839x has a global polling enable, on top of the per-port bits */
++	return regmap_set_bits(priv->regmap, RTL8390_SMI_GLB_CTRL, RTL8390_SMI_POLLING_EN);
++}
++
+ static int otto_emdio_9300_set_bus_frequency(struct mii_bus *bus, u32 freq)
+ {
+ 	struct otto_emdio_priv *priv = otto_emdio_bus_to_priv(bus);
+@@ -1182,6 +1189,7 @@ static const struct otto_emdio_info otto_emdio_8390_info = {
+ 	.num_ports = RTL8390_NUM_PORTS,
+ 	.poll_ctrl = RTL8390_SMI_PORT_POLLING_CTRL,
+ 	.set_bus_frequency = otto_emdio_8390_set_bus_frequency,
++	.setup_controller = otto_emdio_8390_setup_controller,
+ 	.read_c22 = otto_emdio_8390_read_c22,
+ 	.read_c45 = otto_emdio_8390_read_c45,
+ 	.write_c22 = otto_emdio_8390_write_c22,

@@ -1,0 +1,134 @@
+Subject: [PATCH] realtek: use the upstream MDIO driver
+
+Switch the realtek subtargets from OpenWrt's own MDIO driver
+(mdio-realtek-otto) to the upstream one (mdio-realtek-rtl9300), which
+covers all four families since the backports 031-01..34. On top of
+those, the kernel carries the four upstream commits it lacked (031-35
+to 031-38) and a series for the hardware polling setup that OpenWrt's
+driver does and upstream's left to the boot loader (725-01 to 725-06,
+on its way to netdev).
+
+The upstream driver binds the RTL839x controller by its fallback
+compatible realtek,rtl8391-mdio, which rtl839x.dtsi didn't have.
+realtek,otto-mdio stays, as the DSA driver looks the controller up by
+it.
+
+OpenWrt's driver is only turned off here: its patch provides Makefile
+context for the SerDes and RTL960x MDIO patches.
+
+---
+diff --git a/target/linux/realtek/dts/rtl839x.dtsi b/target/linux/realtek/dts/rtl839x.dtsi
+index 90f6144..b1a87b8 100644
+--- a/target/linux/realtek/dts/rtl839x.dtsi
++++ b/target/linux/realtek/dts/rtl839x.dtsi
+@@ -229,7 +229,7 @@
+ 		};
+ 
+ 		mdio_ctrl: mdio-controller {
+-			compatible = "realtek,rtl8392-mdio", "realtek,otto-mdio";
++			compatible = "realtek,rtl8392-mdio", "realtek,rtl8391-mdio", "realtek,otto-mdio";
+ 			#address-cells = <1>;
+ 			#size-cells = <0>;
+ 
+diff --git a/target/linux/realtek/rtl838x/config-6.18 b/target/linux/realtek/rtl838x/config-6.18
+index 49d382d..377513a 100644
+--- a/target/linux/realtek/rtl838x/config-6.18
++++ b/target/linux/realtek/rtl838x/config-6.18
+@@ -129,10 +129,10 @@ CONFIG_MDIO_BITBANG=y
+ CONFIG_MDIO_BUS=y
+ CONFIG_MDIO_GPIO=y
+ CONFIG_MDIO_I2C=y
+-CONFIG_MDIO_REALTEK_OTTO=y
++# CONFIG_MDIO_REALTEK_OTTO is not set
+ CONFIG_MDIO_REALTEK_OTTO_AUX=y
+ CONFIG_MDIO_REALTEK_OTTO_SERDES=y
+-# CONFIG_MDIO_REALTEK_RTL9300 is not set
++CONFIG_MDIO_REALTEK_RTL9300=y
+ CONFIG_MDIO_SMBUS=y
+ CONFIG_MFD_CORE=y
+ # CONFIG_MFD_HASIVO_STC8 is not set
+diff --git a/target/linux/realtek/rtl839x/config-6.18 b/target/linux/realtek/rtl839x/config-6.18
+index d0c2217..4c64de2 100644
+--- a/target/linux/realtek/rtl839x/config-6.18
++++ b/target/linux/realtek/rtl839x/config-6.18
+@@ -130,10 +130,10 @@ CONFIG_MACH_REALTEK_RTL=y
+ CONFIG_MARVELL_PHY=y
+ CONFIG_MDIO_BUS=y
+ CONFIG_MDIO_I2C=y
+-CONFIG_MDIO_REALTEK_OTTO=y
++# CONFIG_MDIO_REALTEK_OTTO is not set
+ CONFIG_MDIO_REALTEK_OTTO_AUX=y
+ CONFIG_MDIO_REALTEK_OTTO_SERDES=y
+-# CONFIG_MDIO_REALTEK_RTL9300 is not set
++CONFIG_MDIO_REALTEK_RTL9300=y
+ CONFIG_MDIO_SMBUS=y
+ CONFIG_MFD_CORE=y
+ # CONFIG_MFD_HASIVO_STC8 is not set
+diff --git a/target/linux/realtek/rtl930x/config-6.18 b/target/linux/realtek/rtl930x/config-6.18
+index 74f0649..bd1329f 100644
+--- a/target/linux/realtek/rtl930x/config-6.18
++++ b/target/linux/realtek/rtl930x/config-6.18
+@@ -121,10 +121,10 @@ CONFIG_MACH_REALTEK_RTL=y
+ CONFIG_MARVELL_PHY=y
+ CONFIG_MDIO_BUS=y
+ CONFIG_MDIO_I2C=y
+-CONFIG_MDIO_REALTEK_OTTO=y
++# CONFIG_MDIO_REALTEK_OTTO is not set
+ CONFIG_MDIO_REALTEK_OTTO_AUX=y
+ CONFIG_MDIO_REALTEK_OTTO_SERDES=y
+-# CONFIG_MDIO_REALTEK_RTL9300 is not set
++CONFIG_MDIO_REALTEK_RTL9300=y
+ CONFIG_MDIO_SMBUS=y
+ CONFIG_MFD_CORE=y
+ # CONFIG_MFD_HASIVO_STC8 is not set
+diff --git a/target/linux/realtek/rtl930x_nand/config-6.18 b/target/linux/realtek/rtl930x_nand/config-6.18
+index c6c17ce..3a3d348 100644
+--- a/target/linux/realtek/rtl930x_nand/config-6.18
++++ b/target/linux/realtek/rtl930x_nand/config-6.18
+@@ -124,10 +124,10 @@ CONFIG_MACH_REALTEK_RTL=y
+ CONFIG_MARVELL_PHY=y
+ CONFIG_MDIO_BUS=y
+ CONFIG_MDIO_I2C=y
+-CONFIG_MDIO_REALTEK_OTTO=y
++# CONFIG_MDIO_REALTEK_OTTO is not set
+ CONFIG_MDIO_REALTEK_OTTO_AUX=y
+ CONFIG_MDIO_REALTEK_OTTO_SERDES=y
+-# CONFIG_MDIO_REALTEK_RTL9300 is not set
++CONFIG_MDIO_REALTEK_RTL9300=y
+ CONFIG_MDIO_SMBUS=y
+ CONFIG_MFD_CORE=y
+ # CONFIG_MFD_HASIVO_STC8 is not set
+diff --git a/target/linux/realtek/rtl931x/config-6.18 b/target/linux/realtek/rtl931x/config-6.18
+index 5e4d5b8..dcf736a 100644
+--- a/target/linux/realtek/rtl931x/config-6.18
++++ b/target/linux/realtek/rtl931x/config-6.18
+@@ -123,10 +123,10 @@ CONFIG_MACH_REALTEK_RTL=y
+ CONFIG_MARVELL_PHY=y
+ CONFIG_MDIO_BUS=y
+ CONFIG_MDIO_I2C=y
+-CONFIG_MDIO_REALTEK_OTTO=y
++# CONFIG_MDIO_REALTEK_OTTO is not set
+ CONFIG_MDIO_REALTEK_OTTO_AUX=y
+ CONFIG_MDIO_REALTEK_OTTO_SERDES=y
+-# CONFIG_MDIO_REALTEK_RTL9300 is not set
++CONFIG_MDIO_REALTEK_RTL9300=y
+ CONFIG_MDIO_SMBUS=y
+ CONFIG_MFD_CORE=y
+ # CONFIG_MFD_HASIVO_STC8 is not set
+diff --git a/target/linux/realtek/rtl931x_nand/config-6.18 b/target/linux/realtek/rtl931x_nand/config-6.18
+index 7384e56..3f32f7e 100644
+--- a/target/linux/realtek/rtl931x_nand/config-6.18
++++ b/target/linux/realtek/rtl931x_nand/config-6.18
+@@ -126,10 +126,10 @@ CONFIG_MACH_REALTEK_RTL=y
+ CONFIG_MARVELL_PHY=y
+ CONFIG_MDIO_BUS=y
+ CONFIG_MDIO_I2C=y
+-CONFIG_MDIO_REALTEK_OTTO=y
++# CONFIG_MDIO_REALTEK_OTTO is not set
+ CONFIG_MDIO_REALTEK_OTTO_AUX=y
+ CONFIG_MDIO_REALTEK_OTTO_SERDES=y
+-# CONFIG_MDIO_REALTEK_RTL9300 is not set
++CONFIG_MDIO_REALTEK_RTL9300=y
+ CONFIG_MDIO_SMBUS=y
+ CONFIG_MFD_CORE=y
+ # CONFIG_MFD_HASIVO_STC8 is not set

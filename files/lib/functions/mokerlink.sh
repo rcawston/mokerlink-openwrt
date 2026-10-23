@@ -16,7 +16,7 @@ mokerlink_phy_of_port() {
 	[ -f "$handle" ] || return 1
 	for dev in /sys/bus/mdio_bus/devices/*; do
 		cmp -s "$handle" "$dev/of_node/phandle" 2>/dev/null || continue
-		name=${dev##*/}                 # e.g. realtek-mdio-0:03
+		name=${dev##*/}                 # <bus>:<address>, e.g. 1b000000.switch:mdio-controller-0:03
 		PHY_DEV=$dev
 		PHY_BUS=${name%:*}
 		PHY_ADDR=$((0x${name##*:}))

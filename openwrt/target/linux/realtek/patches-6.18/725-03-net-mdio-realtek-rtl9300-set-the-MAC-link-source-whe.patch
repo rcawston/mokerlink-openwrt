@@ -1,0 +1,171 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ross Cawston <ross@r-sc.ca>
+Date: Fri, 23 Oct 2026 14:57:49 -0700
+Subject: [PATCH] net: mdio: realtek-rtl9300: set the MAC link source when a
+ PHY attaches
+
+On the RTL930x and RTL931x, a MAC takes its link state either from its
+PHY, through the polling, or from its SerDes. Which one is a field of
+the MDIO controller:
+
+- RTL930x: SMI_MAC_TYPE_CTRL, with one field for each group of four
+  ports for ports 0-23 and one per port for ports 24-27, set to a 1G
+  PHY, a multi-gigabit PHY or the SerDes;
+- RTL931x: SMI_PHY_ABLTY_GET_SEL, one field per port, set to the PHY or
+  the SerDes.
+
+The driver leaves these to the boot loader. As Daniel Golle noted [1],
+many boot loaders set them up only when their network is started, for
+example to load an image over TFTP, and on a normal boot the MACs then
+don't follow their PHYs.
+
+Set every MAC to its SerDes at probe, and to its PHY when the PHY
+attaches. On the RTL930x the PHYs of a C45 bus are the multi-gigabit
+ones and those of a C22 bus 1G PHYs. That gives the same values as the
+table of PHY models in OpenWrt's MDIO driver, for every PHY in it,
+without knowing the model.
+
+The field stays when a PHY detaches: the polling of the port is off by
+then, and on the RTL930x the field can be shared with other ports. A
+switch driver has to set it itself for a link whose state comes from
+elsewhere, such as a PHY in an SFP module, which isn't on these buses;
+OpenWrt's DSA driver does that.
+
+Link: https://lore.kernel.org/netdev/680696024a8648535ce6dee771fe4de67802e0e8.1769053496.git.daniel@makrotopia.org/ [1]
+---
+ drivers/net/mdio/mdio-realtek-rtl9300.c | 56 +++++++++++++++++++++++++
+ 1 file changed, 56 insertions(+)
+
+--- a/drivers/net/mdio/mdio-realtek-rtl9300.c
++++ b/drivers/net/mdio/mdio-realtek-rtl9300.c
+@@ -181,6 +181,10 @@
+ #define RTL9300_SMI_GLB_CTRL			0xca00
+ #define   RTL9300_GLB_CTRL_INTF_SEL(intf)	BIT(16 + (intf))
+ #define   RTL9300_SMI_FREQ_SEL(intf)		GENMASK((intf) * 2 + 9, (intf) * 2 + 8)
++#define RTL9300_SMI_MAC_TYPE_CTRL		0xca04
++#define   RTL9300_MAC_TYPE_SERDES		0
++#define   RTL9300_MAC_TYPE_MULTIGIG_PHY		1
++#define   RTL9300_MAC_TYPE_1G_PHY		3
+ #define RTL9300_SMI_PORT0_15_POLLING_SEL	0xca08
+ #define RTL9300_SMI_ACCESS_PHY_CTRL_0		0xcb70
+ #define RTL9300_SMI_ACCESS_PHY_CTRL_1		0xcb74
+@@ -228,6 +232,9 @@
+ #define RTL9310_SMI_PORT_ADDR_CTRL		0x0c74
+ #define RTL9310_SMI_PORT_POLLING_CTRL		0x0ccc
+ #define RTL9310_SMI_PORT_POLLING_SEL		0x0c9c
++#define RTL9310_SMI_PHY_ABLTY_GET_SEL		0x0cac
++#define   RTL9310_PHY_ABLTY_MDIO		0
++#define   RTL9310_PHY_ABLTY_SERDES		2
+ 
+ #define PHY_CTRL_CMD				BIT(0)
+ #define PHY_CTRL_MMD_DEVAD			GENMASK(20, 16)
+@@ -280,6 +287,7 @@ struct otto_emdio_info {
+ 	u16 num_pages;
+ 	u32 poll_ctrl;
+ 	int (*set_bus_frequency)(struct mii_bus *bus, u32 freq);
++	int (*set_link_source)(struct otto_emdio_priv *priv, int port, bool phy);
+ 	int (*setup_controller)(struct otto_emdio_priv *priv);
+ 	int (*read_c22)(struct mii_bus *bus, int port, int regnum, u32 *value);
+ 	int (*read_c45)(struct mii_bus *bus, int port, int dev_addr, int regnum, u32 *value);
+@@ -867,6 +875,25 @@ static int otto_emdio_9300_setup_controller(struct otto_emdio_priv *priv)
+ 	return 0;
+ }
+ 
++static int otto_emdio_9300_set_link_source(struct otto_emdio_priv *priv, int port, bool phy)
++{
++	u32 mask, type = RTL9300_MAC_TYPE_SERDES;
++
++	/* The PHYs on a C45 bus are the multi-gigabit ones, those on a C22 bus 1G PHYs */
++	if (phy)
++		type = priv->smi_bus_is_c45[priv->smi_bus[port]] ?
++		       RTL9300_MAC_TYPE_MULTIGIG_PHY : RTL9300_MAC_TYPE_1G_PHY;
++
++	/* Ports 0-23 have one field for each group of four ports, ports 24-27 one each */
++	if (port < 24)
++		mask = GENMASK(port / 4 * 2 + 1, port / 4 * 2);
++	else
++		mask = GENMASK((port - 24) * 3 + 14, (port - 24) * 3 + 12);
++
++	return regmap_update_bits(priv->regmap, RTL9300_SMI_MAC_TYPE_CTRL, mask,
++				  field_prep(mask, type));
++}
++
+ static int otto_emdio_9310_set_bus_frequency(struct mii_bus *bus, u32 freq)
+ {
+ 	struct otto_emdio_priv *priv = otto_emdio_bus_to_priv(bus);
+@@ -898,11 +925,21 @@ static int otto_emdio_9310_setup_controller(struct otto_emdio_priv *priv)
+ 	return 0;
+ }
+ 
++static int otto_emdio_9310_set_link_source(struct otto_emdio_priv *priv, int port, bool phy)
++{
++	u32 reg = RTL9310_SMI_PHY_ABLTY_GET_SEL + port / 16 * 4;
++	u32 mask = GENMASK(port % 16 * 2 + 1, port % 16 * 2);
++	u32 src = phy ? RTL9310_PHY_ABLTY_MDIO : RTL9310_PHY_ABLTY_SERDES;
++
++	return regmap_update_bits(priv->regmap, reg, mask, field_prep(mask, src));
++}
++
+ static int otto_emdio_notify_phy_attach(struct phy_device *phydev)
+ {
+ 	int port = otto_emdio_phy_to_port(phydev->mdio.bus, phydev->mdio.addr);
+ 	struct otto_emdio_chan *chan = phydev->mdio.bus->priv;
+ 	struct otto_emdio_priv *priv = chan->priv;
++	int err;
+ 
+ 	if (port < 0) {
+ 		/* All subsequent bus operations will fail */
+@@ -920,6 +957,12 @@ static int otto_emdio_notify_phy_attach(struct phy_device *phydev)
+ 		return -EOPNOTSUPP;
+ 	}
+ 
++	if (priv->info->set_link_source) {
++		err = priv->info->set_link_source(priv, port, true);
++		if (err)
++			return err;
++	}
++
+ 	return otto_emdio_set_port_polling(priv, port, true);
+ }
+ 
+@@ -939,6 +982,10 @@ static void otto_emdio_notify_phy_detach(struct phy_device *phydev)
+ 	scoped_guard(mutex, &priv->lock)
+ 		priv->page[port] = 0;
+ 
++	/*
++	 * The link source of the MAC stays as it is: on the RTL930x up to four ports share it, and
++	 * the MAC no longer follows the PHY once the polling is off.
++	 */
+ 	if (otto_emdio_set_port_polling(priv, port, false))
+ 		dev_err(bus->parent, "failed to disable polling for port %d\n", port);
+ }
+@@ -1108,6 +1155,13 @@ static int otto_emdio_init_polling(struct otto_emdio_priv *priv)
+ 		err = otto_emdio_set_port_polling(priv, port, false);
+ 		if (err)
+ 			return err;
++
++		/* Until its PHY attaches, a MAC takes its link state from its SerDes */
++		if (priv->info->set_link_source) {
++			err = priv->info->set_link_source(priv, port, false);
++			if (err)
++				return err;
++		}
+ 	}
+ 
+ 	return 0;
+@@ -1226,6 +1280,7 @@ static const struct otto_emdio_info otto_emdio_9300_info = {
+ 	.num_pages = RTL9300_NUM_PAGES,
+ 	.poll_ctrl = RTL9300_SMI_POLL_CTRL,
+ 	.set_bus_frequency = otto_emdio_9300_set_bus_frequency,
++	.set_link_source = otto_emdio_9300_set_link_source,
+ 	.setup_controller = otto_emdio_9300_setup_controller,
+ 	.read_c22 = otto_emdio_9300_read_c22,
+ 	.read_c45 = otto_emdio_9300_read_c45,
+@@ -1253,6 +1308,7 @@ static const struct otto_emdio_info otto_emdio_9310_info = {
+ 	.num_ports = RTL9310_NUM_PORTS,
+ 	.poll_ctrl = RTL9310_SMI_PORT_POLLING_CTRL,
+ 	.set_bus_frequency = otto_emdio_9310_set_bus_frequency,
++	.set_link_source = otto_emdio_9310_set_link_source,
+ 	.setup_controller = otto_emdio_9310_setup_controller,
+ 	.read_c22 = otto_emdio_9310_read_c22,
+ 	.read_c45 = otto_emdio_9310_read_c45,

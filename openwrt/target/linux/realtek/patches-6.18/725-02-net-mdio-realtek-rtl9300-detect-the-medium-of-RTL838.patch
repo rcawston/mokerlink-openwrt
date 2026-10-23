@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ross Cawston <ross@r-sc.ca>
+Date: Fri, 23 Oct 2026 14:57:48 -0700
+Subject: [PATCH] net: mdio: realtek-rtl9300: detect the medium of RTL838x
+ combo ports
+
+On the RTL838x, ports 24-27 can sit on a combo PHY such as the
+RTL8214FC, with a copper and a fibre medium. Only with bit 7 of
+SMI_GLB_CTRL (PHY_MAN_24_27) set does MAC_LINK_MEDIA_STS report which
+medium such a port uses.
+
+Set the bit when port 24 has a PHY, and clear it otherwise. OpenWrt's
+MDIO driver does the same: it takes a PHY on port 24 for a combo PHY.
+---
+ drivers/net/mdio/mdio-realtek-rtl9300.c | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/mdio/mdio-realtek-rtl9300.c
++++ b/drivers/net/mdio/mdio-realtek-rtl9300.c
+@@ -131,6 +131,7 @@
+ #define RTL8380_NUM_PORTS			28
+ #define RTL8380_SMI_GLB_CTRL			0xa100
+ #define   RTL8380_SMI_FREQ_SEL			BIT(1)
++#define   RTL8380_SMI_PHY_MAN_24_27		BIT(7)
+ #define   RTL8380_SMI_PHY_PATCH_DONE		BIT(15)
+ #define RTL8380_SMI_ACCESS_PHY_CTRL_0		0xa1b8
+ #define RTL8380_SMI_ACCESS_PHY_CTRL_1		0xa1bc
+@@ -767,11 +768,23 @@ static int otto_emdio_8380_set_bus_frequency(struct mii_bus *bus, u32 freq)
+ 
+ static int otto_emdio_8380_setup_controller(struct otto_emdio_priv *priv)
+ {
++	int err;
++
+ 	/*
+ 	 * PHY_PATCH_DONE enables PHY control via SoC. This is required for PHY access, including
+ 	 * patching and must be set before the PHYs are probed.
+ 	 */
+-	return regmap_set_bits(priv->regmap, RTL8380_SMI_GLB_CTRL, RTL8380_SMI_PHY_PATCH_DONE);
++	err = regmap_set_bits(priv->regmap, RTL8380_SMI_GLB_CTRL, RTL8380_SMI_PHY_PATCH_DONE);
++	if (err)
++		return err;
++
++	/*
++	 * Ports 24-27 may sit on a combo PHY (RTL8214FC) with a copper and a fibre medium. Only
++	 * with PHY_MAN_24_27 set does MAC_LINK_MEDIA_STS report which medium such a port uses.
++	 * Assume a combo PHY when port 24 has a PHY at all.
++	 */
++	return regmap_assign_bits(priv->regmap, RTL8380_SMI_GLB_CTRL, RTL8380_SMI_PHY_MAN_24_27,
++				  test_bit(24, priv->valid_ports));
+ }
+ 
+ static int otto_emdio_8390_set_bus_frequency(struct mii_bus *bus, u32 freq)

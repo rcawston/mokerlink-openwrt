@@ -116,6 +116,23 @@ plugged in, PoE devices in particular, take their own link down and up
 while they boot (a boot loader that links with flow control, then the
 operating system that links again); that is the device, not the port.
 
+## MDIO driver (branch `mdio-polling-openwrt`, under test)
+
+The MDIO controller polls the PHYs in hardware and sets the MACs from
+them. OpenWrt's realtek target builds its own MDIO driver
+(`mdio-realtek-otto`), which sets up that polling; the upstream driver
+(`mdio-realtek-rtl9300`), which OpenWrt also backports, leaves most of it
+to the boot loader. On this branch the firmware uses the upstream driver
+instead (`patches/0005-*.patch`), with the four net-next commits OpenWrt's
+kernel lacks (`031-35` to `031-38`) and the polling setup series that is
+on its way to netdev (`725-01` to `725-06`, from
+`upstream/linux/mdio-polling` on branch `rtl930x-switch`), all in
+`openwrt/target/linux/realtek/patches-6.18/`.
+
+The PHYs' device names change with it, from `realtek-mdio-N:AA` to the
+upstream driver's `<controller>-N:AA`; `mokerlink_phy_of_port` takes the
+bus from the name either way.
+
 ## SFP+ cage
 
 `lan8` (MAC port 27, SerDes 9) has an `sff,sfp` node: the module EEPROM is

@@ -1,0 +1,289 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ross Cawston <ross@r-sc.ca>
+Date: Fri, 23 Oct 2026 14:57:49 -0700
+Subject: [PATCH] net: mdio: realtek-rtl9300: set up the polling of known PHYs
+
+Two more parts of the polling depend on the PHY model:
+
+- Realtek's 10G PHYs (RTL8261N, RTL8264 and RTL8264B) are polled
+  through their resolution register rather than the standard ones. The
+  polling does that for a whole bus: POLL_SEL in SMI_GLB_CTRL on the
+  RTL930x, PRVTE0_POLL in SMI_GLB_CTRL0 on the RTL931x.
+- Realtek's PHYs have proprietary 1G and 2.5G "Lite" modes. The RTL930x
+  polls for them on the ports set in SMI_PRVTE_POLLING_CTRL.
+
+The driver leaves these to the boot loader as well. Set them up when a
+PHY attaches, from a table of the PHYs used with these switches, which
+comes from OpenWrt's MDIO driver. A PHY that isn't in the table keeps
+what the boot loader set, as now, with a message.
+
+The first PHY that attaches to a bus chooses its status register, and
+every PHY like it sets it again, so a PHY that attaches again restores
+it. The PHYs of a bus are expected to be alike, and one that isn't gets
+a warning. On the RTL931x, two more bits per bus (PRVTE1_POLL and
+FMT_SEL_FRC) are cleared, as OpenWrt does for all the PHYs it knows.
+
+On an earlier RFC for this [1], Russell King asked whether only a small
+subset of PHYs is used with these switches, as a table of PHYs in the
+MDIO driver doesn't scale otherwise. It is a small subset: Realtek's own
+PHYs and, on a few 10G boards, Aquantia's; any other PHY is left as the
+boot loader set it up. As Russell suggested there, the setup happens
+when the PHY attaches, once its driver is bound.
+
+Link: https://lore.kernel.org/netdev/aXITnCLt945xHqaP@shell.armlinux.org.uk/ [1]
+---
+ drivers/net/mdio/mdio-realtek-rtl9300.c | 160 +++++++++++++++++++++++-
+ 1 file changed, 159 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/mdio/mdio-realtek-rtl9300.c
++++ b/drivers/net/mdio/mdio-realtek-rtl9300.c
+@@ -180,12 +180,14 @@
+ #define RTL9300_NUM_PORTS			28
+ #define RTL9300_SMI_GLB_CTRL			0xca00
+ #define   RTL9300_GLB_CTRL_INTF_SEL(intf)	BIT(16 + (intf))
++#define   RTL9300_GLB_CTRL_POLL_SEL(intf)	BIT(20 + (intf))
+ #define   RTL9300_SMI_FREQ_SEL(intf)		GENMASK((intf) * 2 + 9, (intf) * 2 + 8)
+ #define RTL9300_SMI_MAC_TYPE_CTRL		0xca04
+ #define   RTL9300_MAC_TYPE_SERDES		0
+ #define   RTL9300_MAC_TYPE_MULTIGIG_PHY		1
+ #define   RTL9300_MAC_TYPE_1G_PHY		3
+ #define RTL9300_SMI_PORT0_15_POLLING_SEL	0xca08
++#define RTL9300_SMI_PRVTE_POLLING_CTRL		0xca10
+ #define RTL9300_SMI_ACCESS_PHY_CTRL_0		0xcb70
+ #define RTL9300_SMI_ACCESS_PHY_CTRL_1		0xcb74
+ #define   RTL9300_PHY_CTRL_REG_ADDR		GENMASK(24, 20)
+@@ -208,7 +210,10 @@
+ #define RTL9310_NUM_PORTS			56
+ #define RTL9310_SMI_GLB_CTRL0			0x0cc0
+ #define   RTL9310_SMI_FREQ_SEL(intf)		GENMASK((intf) * 2 + 5, (intf) * 2 + 4)
++#define   RTL9310_SMI_GLB_PRVTE0_POLL(intf)	BIT(20 + (intf))
++#define   RTL9310_SMI_GLB_PRVTE1_POLL(intf)	BIT(24 + (intf))
+ #define RTL9310_SMI_GLB_CTRL1			0x0cbc
++#define   RTL9310_SMI_GLB_FMT_SEL_FRC(intf)	BIT((intf) * 2)
+ #define   RTL9310_SMI_GLB_FMT_SEL_C45(intf)	BIT((intf) * 2 + 1)
+ #define RTL9310_SMI_INDRT_ACCESS_CTRL_0		0x0c00
+ #define   RTL9310_PHY_CTRL_REG_ADDR		GENMASK(10, 6)
+@@ -243,6 +248,16 @@
+ #define RTL_VENDOR_ID				0x001cc800
+ #define RTL_PAGE_SELECT				31
+ 
++#define RTL8218D_PHY_ID				0x001cc983
++#define RTL8218E_PHY_ID				0x001cc984
++#define RTL8221B_VB_CG_PHY_ID			0x001cc849
++#define RTL8221B_VM_CG_PHY_ID			0x001cc84a
++#define RTL8224_PHY_ID				0x001ccad0
++#define RTL8226_PHY_ID				0x001cc838
++#define RTL8261N_PHY_ID				0x001ccaf3
++#define RTL8264_PHY_ID				0x001ccaf2
++#define RTL8264B_PHY_ID				0x001cc813
++
+ #define MAP_ADDRS_PER_REG			6
+ #define MAP_BITS_PER_ADDR			5
+ #define MAP_BITS_PER_BUS			2
+@@ -263,18 +278,33 @@ struct otto_emdio_cmd_regs {
+ 	u32 ext_page;
+ };
+ 
++/* Where the polling of a bus reads the link status of its PHYs */
++enum otto_emdio_status_reg {
++	OTTO_EMDIO_STATUS_UNSET,
++	OTTO_EMDIO_STATUS_STANDARD,
++	OTTO_EMDIO_STATUS_RESOLUTION,
++};
++
+ struct otto_emdio_priv {
+ 	const struct otto_emdio_info *info;
+ 	struct regmap *regmap;
+-	struct mutex lock; /* protect HW access */
++	struct mutex lock; /* protect HW access and the polling setup below */
+ 	DECLARE_BITMAP(valid_ports, MAX_PORTS);
+ 	u16 page[MAX_PORTS];
+ 	u8 smi_bus[MAX_PORTS];
+ 	u8 smi_addr[MAX_PORTS];
+ 	bool smi_bus_is_c45[MAX_SMI_BUSSES];
++	enum otto_emdio_status_reg status_reg[MAX_SMI_BUSSES];
+ 	struct mii_bus *bus[MAX_SMI_BUSSES];
+ };
+ 
++/* What the polling needs to know about a PHY model */
++struct otto_emdio_phy {
++	u32 phy_id;
++	bool giga_lite;		/* has Realtek's proprietary 1G/2.5G Lite modes */
++	bool res_reg;		/* reports its link in a resolution register */
++};
++
+ struct otto_emdio_info {
+ 	u32 addr_map_base;
+ 	u32 bus_map_base;
+@@ -287,7 +317,9 @@ struct otto_emdio_info {
+ 	u16 num_pages;
+ 	u32 poll_ctrl;
+ 	int (*set_bus_frequency)(struct mii_bus *bus, u32 freq);
++	int (*set_giga_lite)(struct otto_emdio_priv *priv, int port, bool enable);
+ 	int (*set_link_source)(struct otto_emdio_priv *priv, int port, bool phy);
++	int (*set_status_reg)(struct otto_emdio_priv *priv, int mdio_bus, bool res_reg);
+ 	int (*setup_controller)(struct otto_emdio_priv *priv);
+ 	int (*read_c22)(struct mii_bus *bus, int port, int regnum, u32 *value);
+ 	int (*read_c45)(struct mii_bus *bus, int port, int dev_addr, int regnum, u32 *value);
+@@ -894,6 +926,18 @@ static int otto_emdio_9300_set_link_source(struct otto_emdio_priv *priv, int por
+ 				  field_prep(mask, type));
+ }
+ 
++static int otto_emdio_9300_set_giga_lite(struct otto_emdio_priv *priv, int port, bool enable)
++{
++	return regmap_assign_bits(priv->regmap, RTL9300_SMI_PRVTE_POLLING_CTRL, BIT(port), enable);
++}
++
++static int otto_emdio_9300_set_status_reg(struct otto_emdio_priv *priv, int mdio_bus,
++					  bool res_reg)
++{
++	return regmap_assign_bits(priv->regmap, RTL9300_SMI_GLB_CTRL,
++				  RTL9300_GLB_CTRL_POLL_SEL(mdio_bus), res_reg);
++}
++
+ static int otto_emdio_9310_set_bus_frequency(struct mii_bus *bus, u32 freq)
+ {
+ 	struct otto_emdio_priv *priv = otto_emdio_bus_to_priv(bus);
+@@ -934,6 +978,113 @@ static int otto_emdio_9310_set_link_source(struct otto_emdio_priv *priv, int por
+ 	return regmap_update_bits(priv->regmap, reg, mask, field_prep(mask, src));
+ }
+ 
++static int otto_emdio_9310_set_status_reg(struct otto_emdio_priv *priv, int mdio_bus,
++					  bool res_reg)
++{
++	int err;
++
++	err = regmap_assign_bits(priv->regmap, RTL9310_SMI_GLB_CTRL0,
++				 RTL9310_SMI_GLB_PRVTE0_POLL(mdio_bus), res_reg);
++	if (err)
++		return err;
++
++	/* None of the PHYs below needs the second private polling or a forced format */
++	err = regmap_clear_bits(priv->regmap, RTL9310_SMI_GLB_CTRL0,
++				RTL9310_SMI_GLB_PRVTE1_POLL(mdio_bus));
++	if (err)
++		return err;
++
++	return regmap_clear_bits(priv->regmap, RTL9310_SMI_GLB_CTRL1,
++				 RTL9310_SMI_GLB_FMT_SEL_FRC(mdio_bus));
++}
++
++/*
++ * The PHYs known to be used with these switches. For any other PHY the polling stays as the boot
++ * loader set it up.
++ */
++static const struct otto_emdio_phy otto_emdio_phys[] = {
++	{ .phy_id = RTL8218D_PHY_ID, .giga_lite = true },
++	{ .phy_id = RTL8218E_PHY_ID, .giga_lite = true },
++	{ .phy_id = RTL8221B_VB_CG_PHY_ID, .giga_lite = true },
++	{ .phy_id = RTL8221B_VM_CG_PHY_ID, .giga_lite = true },
++	{ .phy_id = RTL8224_PHY_ID, .giga_lite = true },
++	{ .phy_id = RTL8226_PHY_ID, .giga_lite = true },
++	{ .phy_id = RTL8261N_PHY_ID, .giga_lite = true, .res_reg = true },
++	{ .phy_id = RTL8264_PHY_ID, .giga_lite = true, .res_reg = true },
++	{ .phy_id = RTL8264B_PHY_ID, .giga_lite = true, .res_reg = true },
++};
++
++/* A PHY found with C45 has no C22 ID, so use the first ID one of its MMDs reports */
++static u32 otto_emdio_phy_id(struct phy_device *phydev)
++{
++	if (phydev->is_c45) {
++		for (int i = 0; i < ARRAY_SIZE(phydev->c45_ids.device_ids); i++) {
++			u32 id = phydev->c45_ids.device_ids[i];
++
++			if (id && id != 0xffffffff)
++				return id;
++		}
++	}
++
++	return phydev->phy_id;
++}
++
++static const struct otto_emdio_phy *otto_emdio_find_phy(struct phy_device *phydev)
++{
++	u32 id = otto_emdio_phy_id(phydev);
++
++	for (int i = 0; i < ARRAY_SIZE(otto_emdio_phys); i++)
++		if (otto_emdio_phys[i].phy_id == id)
++			return &otto_emdio_phys[i];
++
++	return NULL;
++}
++
++static int otto_emdio_setup_phy_polling(struct otto_emdio_priv *priv, int port,
++					struct phy_device *phydev)
++{
++	const struct otto_emdio_info *info = priv->info;
++	u8 mdio_bus = priv->smi_bus[port];
++	const struct otto_emdio_phy *phy;
++	enum otto_emdio_status_reg status;
++	int err;
++
++	if (!info->set_status_reg)
++		return 0;
++
++	phy = otto_emdio_find_phy(phydev);
++	if (!phy) {
++		phydev_info(phydev, "polling not set up for this PHY, keeping the boot loader's\n");
++		return 0;
++	}
++
++	if (info->set_giga_lite) {
++		err = info->set_giga_lite(priv, port, phy->giga_lite);
++		if (err)
++			return err;
++	}
++
++	/*
++	 * The status register is chosen for a whole bus by the first PHY that attaches, and set
++	 * again by every PHY like it. All PHYs of a bus are expected to be alike.
++	 */
++	status = phy->res_reg ? OTTO_EMDIO_STATUS_RESOLUTION : OTTO_EMDIO_STATUS_STANDARD;
++	guard(mutex)(&priv->lock);
++
++	if (priv->status_reg[mdio_bus] != OTTO_EMDIO_STATUS_UNSET &&
++	    priv->status_reg[mdio_bus] != status) {
++		phydev_warn(phydev, "polling of bus %u is set up for another PHY type\n", mdio_bus);
++	} else {
++		err = info->set_status_reg(priv, mdio_bus, phy->res_reg);
++		if (err)
++			return err;
++
++		priv->status_reg[mdio_bus] = status;
++	}
++
++	return 0;
++}
++
+ static int otto_emdio_notify_phy_attach(struct phy_device *phydev)
+ {
+ 	int port = otto_emdio_phy_to_port(phydev->mdio.bus, phydev->mdio.addr);
+@@ -963,6 +1114,10 @@ static int otto_emdio_notify_phy_attach(struct phy_device *phydev)
+ 			return err;
+ 	}
+ 
++	err = otto_emdio_setup_phy_polling(priv, port, phydev);
++	if (err)
++		return err;
++
+ 	return otto_emdio_set_port_polling(priv, port, true);
+ }
+ 
+@@ -1280,7 +1435,9 @@ static const struct otto_emdio_info otto_emdio_9300_info = {
+ 	.num_pages = RTL9300_NUM_PAGES,
+ 	.poll_ctrl = RTL9300_SMI_POLL_CTRL,
+ 	.set_bus_frequency = otto_emdio_9300_set_bus_frequency,
++	.set_giga_lite = otto_emdio_9300_set_giga_lite,
+ 	.set_link_source = otto_emdio_9300_set_link_source,
++	.set_status_reg = otto_emdio_9300_set_status_reg,
+ 	.setup_controller = otto_emdio_9300_setup_controller,
+ 	.read_c22 = otto_emdio_9300_read_c22,
+ 	.read_c45 = otto_emdio_9300_read_c45,
+@@ -1309,6 +1466,7 @@ static const struct otto_emdio_info otto_emdio_9310_info = {
+ 	.poll_ctrl = RTL9310_SMI_PORT_POLLING_CTRL,
+ 	.set_bus_frequency = otto_emdio_9310_set_bus_frequency,
+ 	.set_link_source = otto_emdio_9310_set_link_source,
++	.set_status_reg = otto_emdio_9310_set_status_reg,
+ 	.setup_controller = otto_emdio_9310_setup_controller,
+ 	.read_c22 = otto_emdio_9310_read_c22,
+ 	.read_c45 = otto_emdio_9310_read_c45,

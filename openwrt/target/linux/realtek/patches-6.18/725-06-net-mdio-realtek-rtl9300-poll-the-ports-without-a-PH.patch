@@ -1,0 +1,112 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ross Cawston <ross@r-sc.ca>
+Date: Fri, 23 Oct 2026 14:57:50 -0700
+Subject: [PATCH] net: mdio: realtek-rtl9300: poll the ports without a PHY
+
+The polling does more than read PHYs: on the RTL93xx it also hands the
+link state of a SerDes to its MAC. OpenWrt's DSA driver relies on that
+for its SFP ports, whose MACs take their link from the PCS. This driver
+turns the polling of all ports off at probe, and on again only for a
+port whose PHY attaches, so a port without a PHY is never polled.
+
+Take the ports of the ethernet-ports node without a phy-handle for
+ports driven by their SerDes, and turn their polling on at probe.
+OpenWrt's MDIO driver does so on all four families. A port with a fixed
+link, such as a CPU port, is left out, as the MAC driver forces it.
+---
+ drivers/net/mdio/mdio-realtek-rtl9300.c | 48 +++++++++++++++++++++++--
+ 1 file changed, 45 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/mdio/mdio-realtek-rtl9300.c
++++ b/drivers/net/mdio/mdio-realtek-rtl9300.c
+@@ -326,6 +326,7 @@ struct otto_emdio_priv {
+ 	struct regmap *regmap;
+ 	struct mutex lock; /* protect HW access and the polling setup below */
+ 	DECLARE_BITMAP(valid_ports, MAX_PORTS);
++	DECLARE_BITMAP(serdes_ports, MAX_PORTS); /* ports without a PHY, driven by their SerDes */
+ 	u16 page[MAX_PORTS];
+ 	u8 smi_bus[MAX_PORTS];
+ 	u8 smi_addr[MAX_PORTS];
+@@ -1300,6 +1301,33 @@ static struct device_node *otto_emdio_get_bus_node(struct device_node *dn)
+ 	return parent;
+ }
+ 
++static int otto_emdio_map_serdes_port(struct device *dev, struct device_node *port_dn)
++{
++	struct device_node *fixed_dn __free(device_node) =
++		of_get_child_by_name(port_dn, "fixed-link");
++	struct otto_emdio_priv *priv = dev_get_drvdata(dev);
++	u32 pn;
++	int err;
++
++	/* A fixed link, such as that of a CPU port, is forced by the MAC driver */
++	if (fixed_dn)
++		return 0;
++
++	err = of_property_read_u32(port_dn, "reg", &pn);
++	if (err)
++		return err;
++
++	if (pn >= priv->info->num_ports)
++		return dev_err_probe(dev, -EINVAL, "illegal port number %d\n", pn);
++
++	if (test_bit(pn, priv->valid_ports) || test_bit(pn, priv->serdes_ports))
++		return dev_err_probe(dev, -EINVAL, "duplicated port number %d\n", pn);
++
++	__set_bit(pn, priv->serdes_ports);
++
++	return 0;
++}
++
+ /* The mdio-controller is part of a switch block so we parse the sibling
+  * ethernet-ports node and build a mapping of the switch port to MDIO bus/addr
+  * based on the phy-handle.
+@@ -1321,9 +1349,12 @@ static int otto_emdio_map_ports(struct device *dev)
+ 		ctrl_dn = NULL;
+ 		bus_dn = NULL;
+ 		phy_dn = of_parse_phandle(port_dn, "phy-handle", 0);
+-		/* skip ports without phys */
+-		if (!phy_dn)
++		if (!phy_dn) {
++			err = otto_emdio_map_serdes_port(dev, port_dn);
++			if (err)
++				break;
+ 			continue;
++		}
+ 
+ 		bus_dn = otto_emdio_get_bus_node(phy_dn);
+ 		if (!bus_dn)
+@@ -1343,7 +1374,7 @@ static int otto_emdio_map_ports(struct device *dev)
+ 			goto put_nodes;
+ 		}
+ 
+-		if (test_bit(pn, priv->valid_ports)) {
++		if (test_bit(pn, priv->valid_ports) || test_bit(pn, priv->serdes_ports)) {
+ 			err = dev_err_probe(dev, -EINVAL, "duplicated port number %d\n", pn);
+ 			goto put_nodes;
+ 		}
+@@ -1412,6 +1443,7 @@ static int otto_emdio_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+ 	struct otto_emdio_priv *priv;
++	u32 port;
+ 	int err;
+ 
+ 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+@@ -1447,6 +1479,16 @@ static int otto_emdio_probe(struct platform_device *pdev)
+ 			return dev_err_probe(dev, err, "failed to setup MDIO bus controller\n");
+ 	}
+ 
++	/*
++	 * The polling also hands the link state of a SerDes to its MAC, so a port without a PHY is
++	 * polled from now on.
++	 */
++	for_each_set_bit(port, priv->serdes_ports, priv->info->num_ports) {
++		err = otto_emdio_set_port_polling(priv, port, true);
++		if (err)
++			return err;
++	}
++
+ 	for_each_available_child_of_node_scoped(dev->of_node, child) {
+ 		err = otto_emdio_probe_one(dev, priv, child);
+ 		if (err)
