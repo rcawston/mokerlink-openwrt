@@ -387,10 +387,9 @@ shows the trap on this side: a switchdev driver that copies DSA's code
 draws objections, so the driver uses the switchdev helpers
 (`switchdev_bridge_port_offload()`, the deferred FDB notifier) the way
 lan966x does, not DSA's internals. Two things could still change the
-recommendation: Markus preferring DSA for a reason not visible here, or a
-netdev maintainer saying so when asked. The coordination email asks
-Markus, and the question can go to netdev as an RFC of the binding-free
-first series before more is built.
+recommendation: a reason for DSA not visible here, from OpenWrt's side
+or from a netdev maintainer. The question can go to netdev as an RFC of
+the binding-free first series before more is built.
 
 To keep a later DSA front end possible ("one switch lib, two front
 ends"), the register-level code (tables, port and MAC control, NIC,
@@ -842,7 +841,7 @@ The table holds, per variant:
 
 Unverified: the port layouts above are read off OpenWrt board DTS files,
 not a datasheet, and the difference between the RTL9302B and RTL9302C
-doesn't show in any code. The coordination email asks.
+doesn't show in any code.
 
 ## 11. Name and place
 
@@ -1009,7 +1008,7 @@ As written (`upstream/linux/rtl930x-switch/01-*` to `09-*`, cover letter
 
 ## 14. Test plan on this board
 
-What the user has to provide, to be confirmed with them:
+What the tests need:
 
 - the serial console and TFTP setup already used for RAM boots;
 - a Linux host with a 10G NIC (or a multi-gig one) and a second port or
@@ -1071,27 +1070,16 @@ passed, on this board, booted from U-Boot after `rtk network on`, and
 
 ## 15. Open questions
 
-For Markus, Chris and Jonas:
-
-1. Is anyone working on an upstream Otto switch or NIC driver? Chris
-   said he knows of nobody, Markus that it is beyond his time for now;
-   Jonas hasn't been asked.
-2. Markus: any objection to switchdev?
-3. Markus:
-   - who sets up the polling for SerDes ports and the MAC type;
-   - his SerDes generic PHY driver;
-   - credit for the OpenWrt code;
-   - `rtl9300` or `otto` naming;
-   - the RTL9302B versus RTL9302C difference.
-4. The external-CPU mode Chris mentioned: does it use an in-frame CPU
-   tag (for a DSA front end later)?
-
-For the user:
-
-1. switchdev or DSA: switchdev (20 October).
-2. A Linux build environment: GitHub Actions for now, WSL2 with Ubuntu
-   later.
-3. What link partners and modules you have for the tests.
+1. Who sets up the MAC type and the polling of SerDes ports: the MDIO
+   driver or the switch driver.
+2. The SerDes: Markus Stockhausen's generic PHY driver for the Otto
+   SerDes (v7, May 2025, unanswered), or SerDes code in the switch
+   driver, following OpenWrt's pcs-rtl-otto.c.
+3. `rtl9300` or `otto` for the name, and whether to lay the driver out
+   for the RTL931x.
+4. The difference between the RTL9302B and the RTL9302C.
+5. Whether the external-CPU mode Chris Packham mentioned in 2024 uses
+   an in-frame CPU tag (for a DSA front end later).
 
 ## 16. Risks
 
@@ -1103,11 +1091,11 @@ For the user:
   the cover letter, check the lane mode instead of trusting it, and offer
   series 2 promptly. Or reorder, so the SerDes series comes first.
 - **Two drivers in one register block:** the MDIO driver and the switch
-  driver share `0xca00`-`0xcbbc`. Agree with Markus who owns what before
-  posting.
+  driver share `0xca00`-`0xcbbc`. Who owns which register has to be
+  settled before the SerDes series.
 - **Hardware without documentation:** everything comes from OpenWrt and
   the vendor SDK through it; there is no datasheet. Say so in the cover
   letter.
-- **OpenWrt diverges:** OpenWrt keeps its DSA driver for years. The
-  coordination is about not doing the hardware work twice, not about
-  merging the two.
+- **OpenWrt diverges:** OpenWrt keeps its DSA driver for years. Working
+  with OpenWrt's developers is about not doing the hardware work twice,
+  not about merging the two.
