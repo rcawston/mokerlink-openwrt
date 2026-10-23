@@ -1,0 +1,59 @@
+name: rtl8261n-rtl8264b
+
+# The RTL8261N and RTL8264B PHY patches for netdev, built on the tip of
+# net-next
+on:
+  push:
+    paths:
+      - 'upstream/linux/rtl8261n-rtl8264b/**'
+      - 'scripts/check-rtl8261n-rtl8264b.sh'
+      - 'scripts/make-upstream.py'
+      - '.github/workflows/rtl8261n-rtl8264b.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libelf-dev libssl-dev \
+            gcc-mips-linux-gnu shellcheck
+
+      # The build workflow, which checks the other scripts, skips this one
+      - name: Shellcheck
+        run: shellcheck -x scripts/check-rtl8261n-rtl8264b.sh
+
+      # net-next hands __typeof_unqual__ to sparse (compiler_types.h), which
+      # the 0.6.4 release Ubuntu has can't parse
+      - name: Build sparse
+        env:
+          SPARSE_TAG: v0.6.5-rc1
+          SPARSE_COMMIT: 37156835e3d725b6d750f000be33ba3814bb2310
+        run: |
+          git clone -q --depth 1 --branch "$SPARSE_TAG" \
+            https://git.kernel.org/pub/scm/devel/sparse/sparse.git \
+            "$RUNNER_TEMP/sparse"
+          test "$(git -C "$RUNNER_TEMP/sparse" rev-parse HEAD)" = "$SPARSE_COMMIT"
+          make -C "$RUNNER_TEMP/sparse" -j"$(nproc)" PREFIX="$HOME/.local" install
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Apply, checkpatch and build the patches
+        run: scripts/check-rtl8261n-rtl8264b.sh
+
+      - name: Upload the patches and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rtl8261n-rtl8264b-${{ github.sha }}
+          path: |
+            build/check/rtl8261n-rtl8264b/patches/
+            build/check/rtl8261n-rtl8264b/logs/
+          if-no-files-found: ignore

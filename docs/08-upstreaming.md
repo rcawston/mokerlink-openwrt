@@ -26,6 +26,7 @@ As of 19 October 2026:
 | shared-SCL I²C (`i2c`) | linux-i2c | [sent and withdrawn](https://lore.kernel.org/all/20261018194315.945-1-ross@r-sc.ca/): `i2c-gpio` does it |
 | board.json PoE default | netifd | [openwrt/netifd#97](https://github.com/openwrt/netifd/pull/97) |
 | the board | OpenWrt | [openwrt/openwrt#26042](https://github.com/openwrt/openwrt/pull/26042), without the PoE LEDs; depends on openwrt/netifd#97 |
+| RTL8261N and RTL8264B PHY entries (`rtl8261n-rtl8264b`) | netdev, `[PATCH net-next]` | not sent: 2 patches, so that phylib reads the board's 1 Gb/s links right. CI build and board test pending; the test plan is its `TESTING.md`. net-next is closed until the merge window ends |
 | PSE priority choices in the web UI | LuCI | [openwrt/luci#9141](https://github.com/openwrt/luci/pull/9141) |
 | RTL8239 PSE (`pse`), PSE LED trigger names (`pse-led-triggers`) | netdev, linux-leds | not sent; wait for the PSE series they depend on ([Dependencies](#dependencies)) |
 
@@ -39,6 +40,7 @@ As of 19 October 2026:
 | board.json default for netifd's `pse` option | `base-files: add a uci-defaults function for the PSE default` (`patches/0004-*`), in the board pull request; netifd itself: `device: add a board.json default for the pse option`, a pull request to [openwrt/netifd](https://github.com/openwrt/netifd) (`netifd TREE`) | none |
 | the device | `realtek: rtl930x: add support for MokerLink POE-10G07110GSM` | none |
 | PSE core fix: a PI disabled with software power control is not enabled again by the retry of its power domain | `generic: pse-pd: don't enable a PI again while disabling it`: this repository's `835-*` as `generic/pending-6.18/898-*`, a separate pull request (`openwrt TREE pse-fix`) | `pse-fix`: net tree as a fix (`Fixes: ffef61d6d273`), netdev; made against mainline |
+| PHY entries for the RTL8261N (RTL8261BE) and RTL8264B, with no firmware | none: OpenWrt has its own pending driver for them (`742-*`) | `rtl8261n-rtl8264b`: net-next, netdev; made against net-next |
 | link change fix in the switch driver | `realtek: dsa: let phylib read the PHY on a port link change` (`patches/0003-*`, a patch to OpenWrt's own driver), a separate pull request (`openwrt TREE dsa-fix`) | none |
 
 Not submitted: the `mokerlink-*` tools and the first-boot defaults in
@@ -217,6 +219,7 @@ One series at a time, each on its tree:
 |---|---|---|
 | `pse-fix` | `net/main` | `[PATCH net]` |
 | `leds` | `leds/for-leds-next` | `[PATCH]` |
+| `rtl8261n-rtl8264b` | `net-next/main` | `[PATCH net-next]` |
 | `pse` | `net-next/main`, once the PSE series it needs is in it | `[PATCH net-next]` |
 
 ```sh
@@ -256,6 +259,13 @@ carries them to `build/upstream/patches`, for a quick review without a
 tree. They are in the format of OpenWrt's `make target/linux/refresh`,
 as in the pull requests: no git header lines, and the function in each
 hunk header cut to 40 characters.
+
+The PHY entries are checked by `scripts/check-rtl8261n-rtl8264b.sh`: on
+the tip of net-next, checkpatch, then a `W=1`, sparse and kernel-doc
+build of every patch for MIPS and x86_64 that may add no warning to
+`drivers/net/phy/realtek`. The `rtl8261n-rtl8264b` workflow runs it on
+every push that changes them. The board test needs the RTL930x switch
+series' test image; its plan is in `upstream/linux/rtl8261n-rtl8264b/`.
 
 ## What reviewers will likely ask
 

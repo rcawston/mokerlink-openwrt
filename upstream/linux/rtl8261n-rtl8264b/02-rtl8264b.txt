@@ -1,0 +1,20 @@
+net: phy: realtek: add support for RTL8264B
+
+The RTL8264B is a quad-port 10GBASE-T PHY. No driver claims its PHY ID,
+0x001cc813, so the generic Clause 45 driver binds to it, and as with the
+RTL8261N a link with a 1000BASE-T partner comes up as 100Mbps/Full: the
+PHY keeps the partner's 1000BASE-T ability in its vendor MMD, where the
+generic driver doesn't look.
+
+Add an entry for it with the RTL8261N's functions, which Realtek's own
+driver also uses for both PHYs.
+
+The 5 Gbps RTL8254B reports the same PHY ID, and its model register,
+VEND1 0x103, reads 0x8254. OpenWrt's driver binds its RTL8264B entry to
+any other value, and so does this entry. The RTL8254B stays with the
+generic driver, as today.
+
+As with the RTL8261N, the entry relies on the boot loader having set the
+PHY up: it loads no firmware, doesn't reset or suspend the PHY and has
+no interrupt support. It doesn't join a PHY package either, as it
+writes no register that the four PHYs share.

@@ -18,12 +18,13 @@ openwrt  adds one pull request's commits to TREE, an openwrt.git checkout,
                   --link, the patch links to its submission to netdev
 netifd   adds the board.json default for the pse option to TREE, a
          netifd.git checkout, and writes it to build/upstream/netifd
-linux    adds one series (pse, leds, pse-led-triggers or pse-fix) as
-         commits to TREE, a Linux checkout of the subsystem tree it goes
-         to, with MAINTAINERS entries, and writes it with a cover letter and
-         the subject prefix of that tree to build/upstream/linux/SERIES.
-         The Kconfig and Makefile hunks are made against v6.18, the PSE
-         core fix against mainline; they are applied with a three-way
+linux    adds one series (pse, leds, pse-led-triggers, pse-fix or
+         rtl8261n-rtl8264b) as commits to TREE, a Linux checkout of the
+         subsystem tree it goes to, with MAINTAINERS entries, and writes it
+         with a cover letter and the subject prefix of that tree to
+         build/upstream/linux/SERIES. The Kconfig and Makefile hunks are
+         made against v6.18, the PSE core fix against mainline and the
+         PHY entries against net-next; they are applied with a three-way
          merge. Earlier patches in that directory are removed first.
 patches  writes the kernel patches as OpenWrt carries them (OpenWrt's
          kernel context) to DIR, for review; no tree needed.
@@ -106,6 +107,19 @@ SERIES = {
         'patches': [
             ('1-binding.txt', [],
              '834-dt-bindings-leds-common-add-PSE-power-interface-triggers.patch', 'common.diff'),
+        ],
+    },
+    # PHY driver entries for the board's RTL8261BE and RTL8264B, for
+    # net-next only. The second patch changes lines the first adds, so
+    # each is a diff of its own, made against net-next
+    'rtl8261n-rtl8264b': {
+        'openwrt': None,
+        'list': 'netdev@vger.kernel.org',
+        'prefix': 'PATCH net-next',
+        'maintainers': None,
+        'patches': [
+            (f'{name}.txt', [], None, f'{name}.diff')
+            for name in ('01-rtl8261n', '02-rtl8264b')
         ],
     },
     # A fix for the net tree; in OpenWrt a generic pending patch
@@ -262,6 +276,9 @@ def cmd_patches(args):
     for series, s in SERIES.items():
         n = len(s['patches'])
         for i in range(n):
+            _, files, hookpatch, _ = s['patches'][i]
+            if not files and not hookpatch:
+                continue    # not a patch OpenWrt carries
             subject, text = openwrt_patch_text(args, series, i, n)
             name = f'{series}-{i + 1:02d}-{slug(subject)}.patch'
             write(os.path.join(out, name), text)

@@ -1,0 +1,44 @@
+net: phy: realtek: add RTL8261N and RTL8264B
+
+The RTL8261N (also marked RTL8261BE) and the quad-port RTL8264B are
+10GBASE-T PHYs that no mainline driver claims. The generic Clause 45
+driver binds to them instead. It can't read the link partner's
+1000BASE-T ability, which these PHYs keep in their vendor MMD, so a
+1 Gb/s link comes up as 100 Mb/s. On an RTL9303 switch, whose MDIO
+controller sets the MAC from the PHY in hardware, the MAC then runs at
+1 Gb/s while phylib reports 100 Mb/s.
+
+These two patches add an entry for each PHY with the RTL8261C/D
+functions for features, autonegotiation and status, which read and
+write 1000BASE-T at the same vendor MMD addresses as Realtek's own
+driver for these PHYs [1]. Like that driver, they leave out the 10BASE-T
+modes that the PMA reports.
+
+The entries leave the PHY as the boot loader set it up, as the generic
+driver does today: no firmware, reset, interrupts or suspend. Realtek's
+driver patches the PHYs from register tables when they start, and
+OpenWrt's [2] from firmware files, but linux-firmware has no firmware
+for these PHYs, and a missing file shouldn't cost the link that works
+now.
+
+Each PHY ID is shared with a 5 Gbps part, the RTL8251L and the RTL8254B,
+which OpenWrt's driver tells apart by the model register VEND1 0x103.
+The entries leave those two parts to the generic driver: the RTL8261N
+entry binds only to 0x8261, and the RTL8264B one, as in OpenWrt, to
+anything but 0x8254.
+
+Javen, does Realtek plan to support the RTL8261N and RTL8264B in this
+driver, and to publish firmware for them in linux-firmware, as for the
+RTL8261C/D? Is VEND1 0x103 the right way to tell them from the RTL8251L
+and RTL8254B, and what does it read on the RTL8264B?
+
+Merge path: both patches through net-next. They depend on nothing
+outside it.
+
+Testing: the results of the CI build of this version (W=1 and sparse,
+for MIPS and x86_64) and of the hardware test on a MokerLink
+POE-10G07110GSM (RTL9303, three RTL8261BE and one RTL8264B) go here
+before this is posted.
+
+[1] https://github.com/openwrt/openwrt/tree/6ca4da2c70d8e7fadcc550af76bca27af8fc1541/target/linux/generic/files-6.12/drivers/net/phy/rtl8261n
+[2] https://github.com/openwrt/openwrt/blob/6ca4da2c70d8e7fadcc550af76bca27af8fc1541/target/linux/generic/pending-6.18/742-net-phy-realtek-add-5G-and-10G-PHY-support.patch

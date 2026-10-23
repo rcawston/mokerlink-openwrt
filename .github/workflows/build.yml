@@ -1,11 +1,22 @@
 name: build
 
-# Documentation-only changes don't change the firmware
+# Documentation-only changes don't change the firmware, nor do the
+# RTL8261N and RTL8264B PHY patches, which have a workflow of their own
 on:
   push:
-    paths-ignore: ['docs/**', '*.md']
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'upstream/linux/rtl8261n-rtl8264b/**'
+      - 'scripts/check-rtl8261n-rtl8264b.sh'
+      - '.github/workflows/rtl8261n-rtl8264b.yml'
   pull_request:
-    paths-ignore: ['docs/**', '*.md']
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'upstream/linux/rtl8261n-rtl8264b/**'
+      - 'scripts/check-rtl8261n-rtl8264b.sh'
+      - '.github/workflows/rtl8261n-rtl8264b.yml'
   workflow_dispatch:
 
 permissions:

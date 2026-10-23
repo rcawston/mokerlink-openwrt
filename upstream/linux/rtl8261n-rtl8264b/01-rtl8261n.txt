@@ -1,0 +1,35 @@
+net: phy: realtek: add support for RTL8261N
+
+The RTL8261N, also sold marked RTL8261BE, is a 10GBASE-T PHY. No driver
+claims its PHY ID, 0x001ccaf3, so the generic Clause 45 driver binds to
+it. That driver can't see the link partner's 1000BASE-T ability: Clause
+45 has no register for it, and like the other Realtek multi-gigabit PHYs
+these keep it in their vendor MMD. A link with a 1000BASE-T partner then
+comes up as 100Mbps/Full, or with no speed if the partner doesn't
+advertise 100BASE-TX.
+
+Add an entry for the PHY with the RTL8261C/D functions for features,
+autonegotiation and status. They advertise and read 1000BASE-T through
+the vendor MMD's copy of MII_CTRL1000 and MII_STAT1000, at the addresses
+that Realtek's own driver for these PHYs uses too (rtl8261n, which
+OpenWrt carries for Linux 6.12). That driver also leaves out 10BASE-T,
+which the PMA reports, as not supported; so does the entry.
+
+The 5 Gbps RTL8251L reports the same PHY ID. OpenWrt's driver tells the
+two apart by their model register, VEND1 0x103, which reads 0x8251 on
+the RTL8251L and 0x8261 on the RTL8261N, and so does the entry, which
+binds only to 0x8261. The RTL8251L stays with the generic driver, as
+today. OpenWrt tells parts marked RTL8261BE from the RTL8261N only by a
+version register, and the entry covers both.
+
+The entry relies on the boot loader having set the PHY up, as the
+generic driver does today: it loads no firmware and doesn't reset the
+PHY, so what the boot loader configured, the SerDes included, stays in
+place. It has no interrupt support, so phylib polls the PHY, and like
+the generic driver it doesn't suspend the PHY.
+
+Unlike the generic driver, the entry sets the 1000BASE-T advertisement.
+On a host that connects the PHY over 10GBASE-R without rate matching,
+where phylink only lets the PHY advertise 10GBASE-T, this takes
+1000BASE-T out of the advertisement as well, as the RTL8261C/D entries
+do.
