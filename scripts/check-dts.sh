@@ -45,9 +45,11 @@ sparse_clone() { # dir repo rev paths...
 
 echo "==> Fetching pinned sources (sparse)"
 mkdir -p "$CACHE"
+# Every path that patches/ changes, for the check that they apply
 sparse_clone "$OWRT" "$OPENWRT_REPO" "$OPENWRT_COMMIT" \
 	/target/linux/realtek/ /target/linux/generic/ \
-	/package/base-files/files/lib/functions/ /package/network/config/netifd/
+	/package/base-files/files/lib/functions/ /package/network/config/netifd/ \
+	/package/kernel/linux/modules/
 sparse_clone "$LINUX" "$LINUX_REPO" "$LINUX_TAG" \
 	/include/dt-bindings/ /include/uapi/linux/
 
