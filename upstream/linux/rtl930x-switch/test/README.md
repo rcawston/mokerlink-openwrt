@@ -36,11 +36,16 @@ scripts/build-rtl930x-test-image.sh
   (`rtl8261x_read_status`), but this board's PHY IDs, 0x001ccaf3 (RTL8261N,
   the RTL8261BE) and 0x001cc813 (RTL8264B), aren't in net-next; OpenWrt's
   pending `742-net-phy-realtek-add-5G-and-10G-PHY-support.patch` has them.
-  So the image carries `realtek-phy-rtl8261n-rtl8264b.patch`, which is not
-  part of the series: entries for those IDs with net-next's RTL8261
-  status, feature and autonegotiation functions, and no reset or
-  firmware, as U-Boot has set the PHYs up. Step 2 reports the driver that
-  bound; the cover letter names it.
+  So the image carries `phy-01-rtl8261n.diff` and `phy-02-rtl8264b.diff`,
+  which are not part of the series: the two patches of the
+  `rtl8261n-rtl8264b` series for net-next (branch `rtl8261n-rtl8264b`),
+  entries for those IDs with net-next's RTL8261 status, feature and
+  autonegotiation functions, no 10BASE-T, and no reset or firmware, as
+  U-Boot has set the PHYs up. They bind only to the 10 Gbps parts, by
+  the model register VEND1 0x103. Step 2 reports the driver that bound;
+  the cover letter names it. The plan for testing those patches
+  themselves is `upstream/linux/rtl8261n-rtl8264b/TESTING.md` on their
+  branch.
 - **No PoE driver.** Step 2 still shows that ethtool's PSE lookup reaches
   the PHY of a port that is down ("No PSE is attached", not "No PHY").
   Powering a PD from a down port needs a build with the RTL8239 driver

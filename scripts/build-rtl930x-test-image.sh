@@ -86,11 +86,12 @@ echo 'nod /dev/console 0600 0 0 c 5 1' >"$OUT/initramfs.list"
 echo "==> kernel"
 # On top of the switch series, for the test only: the MDIO polling series
 # (upstream/linux/mdio-polling), a patch that logs the polling registers
-# as the boot loader left them, and PHY driver entries the board needs for
-# 1 Gb/s links
+# as the boot loader left them, and the PHY driver entries the board needs
+# for 1 Gb/s links, the two patches of the rtl8261n-rtl8264b series
 TEST_PATCHES="$(ls "$REPO_ROOT"/upstream/linux/mdio-polling/[0-9]*.diff)
 $TEST/mdio-polling-dump.patch
-$TEST/realtek-phy-rtl8261n-rtl8264b.patch"
+$TEST/phy-01-rtl8261n.diff
+$TEST/phy-02-rtl8264b.diff"
 APPLIED=""
 # The tree goes back to the series alone however the script ends
 revert_test_patches() {

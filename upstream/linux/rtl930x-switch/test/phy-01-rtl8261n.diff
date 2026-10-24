@@ -1,0 +1,84 @@
+diff --git a/drivers/net/phy/realtek/realtek_main.c b/drivers/net/phy/realtek/realtek_main.c
+index 4927ee838de..b4d1e879fd9 100644
+--- a/drivers/net/phy/realtek/realtek_main.c
++++ b/drivers/net/phy/realtek/realtek_main.c
+@@ -146,6 +146,9 @@
+ #define RTL8261X_EXT_DATA_REG			0xa438
+ #define RTL_8261X_SUB_PHY_ID_ADDR		0x801d
+ 
++#define RTL826XB_VND1_MODEL			0x103
++#define  RTL826XB_VND1_MODEL_RTL8261N		0x8261
++
+ #define RTL822X_VND1_SERDES_OPTION			0x697a
+ #define RTL822X_VND1_SERDES_OPTION_MODE_MASK		GENMASK(5, 0)
+ #define RTL822X_VND1_SERDES_OPTION_MODE_2500BASEX_SGMII		0
+@@ -269,6 +272,7 @@
+ #define RTL_8261C_CG				0x001cc898
+ #define RTL_8261CE_CG				0x001cc899
+ #define RTL_8261D_VM				0x001cc89a
++#define RTL_8261N				0x001ccaf3
+ 
+ #define RTL8261C_CE_MODEL		0x00
+ #define RTL8261D_MODEL			0x81
+@@ -464,6 +468,23 @@ static int rtl8261x_get_features(struct phy_device *phydev)
+ 	return 0;
+ }
+ 
++static int rtl826xb_get_features(struct phy_device *phydev)
++{
++	int ret;
++
++	ret = rtl8261x_get_features(phydev);
++	if (ret)
++		return ret;
++
++	/* The PMA reports 10BASE-T, which these PHYs don't support */
++	linkmode_clear_bit(ETHTOOL_LINK_MODE_10baseT_Half_BIT,
++			   phydev->supported);
++	linkmode_clear_bit(ETHTOOL_LINK_MODE_10baseT_Full_BIT,
++			   phydev->supported);
++
++	return 0;
++}
++
+ static int rtl8261x_read_status(struct phy_device *phydev)
+ {
+ 	int ret, val = 0;
+@@ -2924,6 +2945,24 @@ static int rtl8251b_c45_match_phy_device(struct phy_device *phydev,
+ 	return rtlgen_is_c45_match(phydev, RTL_8251B, true);
+ }
+ 
++/* Realtek's 5 Gbps PHYs share the PHY IDs of 10 Gbps ones, and their model
++ * register tells them apart.
++ */
++static int rtl826xb_model(struct phy_device *phydev, unsigned int id)
++{
++	if (!rtlgen_is_c45_match(phydev, id, true))
++		return -ENODEV;
++
++	return phy_read_mmd(phydev, MDIO_MMD_VEND1, RTL826XB_VND1_MODEL);
++}
++
++static int rtl8261n_match_phy_device(struct phy_device *phydev,
++				     const struct phy_driver *phydrv)
++{
++	return rtl826xb_model(phydev, RTL_8261N) ==
++	       RTL826XB_VND1_MODEL_RTL8261N;
++}
++
+ static int rtlgen_resume(struct phy_device *phydev)
+ {
+ 	int ret = genphy_resume(phydev);
+@@ -3520,6 +3559,12 @@ static struct phy_driver realtek_drvs[] = {
+ 		.soft_reset		= genphy_c45_pma_soft_reset,
+ 		.suspend		= genphy_c45_pma_suspend,
+ 		.resume			= genphy_c45_pma_resume,
++	}, {
++		.match_phy_device	= rtl8261n_match_phy_device,
++		.name			= "Realtek RTL8261N/BE 10Gbps PHY",
++		.get_features		= rtl826xb_get_features,
++		.config_aneg		= rtl8261x_config_aneg,
++		.read_status		= rtl8261x_read_status,
+ 	},
+ };
+ 
